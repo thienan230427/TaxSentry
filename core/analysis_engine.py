@@ -18,8 +18,10 @@ class TaxSentryAnalysisEngine:
     """Bộ não phân tích AI đối chiếu luật thuế thực tế (TaxSentry AI Engine)."""
 
     def __init__(self):
-        self.api_url = "http://localhost:1234/v1"  # Cổng mặc định của LM Studio
-        self.api_key = "lm-studio"
+        # Đọc cấu hình từ biến môi trường .env
+        self.api_url = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
+        self.api_key = os.getenv("LM_STUDIO_API_KEY", "sk-lm-sVlR2otW:D3EDq8EiXWYdmvAhYsgY")
+        self.model_name = os.getenv("LM_MODEL_NAME", "google/gemma-4-e4b")
         self.client = None
 
     def connect(self) -> bool:
@@ -80,7 +82,7 @@ class TaxSentryAnalysisEngine:
         try:
             # Gọi API của LM Studio để bắt đầu suy luận
             response = self.client.chat.completions.create(
-                model="gemma-4-e4b",  # Mô hình Gemma 4 xịn sò Sếp đang tải!
+                model=self.model_name,  # Sử dụng mô hình cấu hình từ .env desu~!
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
