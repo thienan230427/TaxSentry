@@ -55,7 +55,7 @@ graph TD
 *   **Xử lý dữ liệu:** Pandas, OpenPyXL, PDFPlumber.
 *   **Tạo báo cáo:** WeasyPrint / ReportLab (HTML/CSS to PDF conversion).
 *   **Giao diện tương tác:** Telegram Bot API (`python-telegram-bot`).
-*   **Cơ sở dữ liệu:** SQLite / MySQL.
+*   **Cơ sở dữ liệu:** MySQL (Quản lý trực quan bằng MySQL Workbench, kết nối qua `mysql-connector-python` hoặc `pymysql`).
 
 ---
 
@@ -64,7 +64,7 @@ graph TD
 *   **Tuần 1: Thu thập dữ liệu & Parser**
     *   Cấu hình kết nối Email (IMAP), lọc thư của Kế toán trưởng.
     *   Viết parser đọc hiểu Excel và PDF, chuẩn hóa dữ liệu thành JSON.
-    *   Lưu lịch sử giao dịch vào SQLite.
+    *   Lưu lịch sử giao dịch vào MySQL.
 *   **Tuần 2: RAG & AI Analysis Engine**
     *   Xây dựng kho tài liệu Thuế Việt Nam (Vector DB hoặc công cụ tìm kiếm tri thức).
     *   Tích hợp LM Studio (Gemma 2 GGUF), thiết kế Prompt Chuyên gia Tài chính & Thuế.
