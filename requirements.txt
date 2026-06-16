@@ -1,0 +1,8 @@
+pandas
+openpyxl
+pdfplumber
+openai
+python-telegram-bot
+matplotlib
+seaborn
+python-dotenv
