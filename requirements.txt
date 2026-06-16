@@ -6,3 +6,4 @@ python-telegram-bot
 matplotlib
 seaborn
 python-dotenv
+rich
