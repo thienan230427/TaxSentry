@@ -11,6 +11,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.prompt import Confirm, Prompt
 
 console = Console()
 
@@ -117,9 +118,9 @@ class Header:
         grid.add_column(justify="right", ratio=1)
         grid.add_row(
             Text("🛡️ TAXSENTRY — AI AGENT GIÁM SÁT KINH DOANH & THUẾ", style="bold white"),
-            Text(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", style="bold cyan"),
+            Text(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", style="bold white"),
         )
-        return Panel(grid, style="bold white on blue", border_style="blue")
+        return Panel(grid, style="bold white on deep_sky_blue1", border_style="deep_sky_blue1")
 
 
 class Footer:
@@ -130,9 +131,9 @@ class Footer:
             Text(
                 "Phím tắt: [ctrl+c] Thoát chương trình | [r] Refresh thủ công | [t] Gửi test email",
                 justify="center",
-                style="italic gray70",
+                style="italic sky_blue1",
             ),
-            border_style="gray50",
+            border_style="deep_sky_blue1",
         )
 
 
@@ -141,13 +142,13 @@ class SystemStatusPanel:
 
     def __rich__(self) -> Panel:
         table = Table(box=None, expand=True)
-        table.add_column("Dịch vụ", style="bold cyan")
+        table.add_column("Dịch vụ", style="bold sky_blue1")
         table.add_column("Trạng thái", style="white")
 
         for service, status in SYSTEM_STATUS.items():
             table.add_row(service, status)
 
-        return Panel(table, title="[bold yellow]Trạng Thái Hệ Thống[/bold yellow]", border_style="yellow")
+        return Panel(table, title="[bold sky_blue1]Trạng Thái Hệ Thống[/bold sky_blue1]", border_style="deep_sky_blue1")
 
 
 class RecentActivityPanel:
@@ -156,14 +157,14 @@ class RecentActivityPanel:
     def __rich__(self) -> Panel:
         table = Table(expand=True, box=None)
         table.add_column("Thời gian", style="gray50", width=10)
-        table.add_column("Người gửi", style="magenta", width=25)
-        table.add_column("Tên tệp đính kèm", style="cyan")
+        table.add_column("Người gửi", style="sky_blue1", width=25)
+        table.add_column("Tên tệp đính kèm", style="deep_sky_blue1")
         table.add_column("Trạng thái", style="bold")
 
         for item in EMAILS_QUEUE:
             table.add_row(item["time"], item["sender"], item["file"], item["status"])
 
-        return Panel(table, title="[bold green]Danh Sách Báo Cáo Nhận Được[/bold green]", border_style="green")
+        return Panel(table, title="[bold sky_blue1]Danh Sách Báo Cáo Nhận Được[/bold sky_blue1]", border_style="deep_sky_blue1")
 
 
 class LogsPanel:
@@ -202,13 +203,13 @@ class LogsPanel:
                 text.append(f"❌ Lỗi đọc dữ liệu JSON: {e}\n\n", style="bold red")
 
         # 2. Hiển thị logs hệ thống
-        text.append("💬 LOGS HOẠT ĐỘNG THỜI GIAN THỰC:\n", style="bold cyan")
+        text.append("💬 LOGS HOẠT ĐỘNG THỜI GIAN THỰC:\n", style="bold deep_sky_blue1")
         for log in LOG_MESSAGES[-8:]:
             time_str = datetime.now().strftime("%H:%M:%S")
             text.append(f"[{time_str}] ", style="gray50")
             text.append(f"{log}\n", style="white")
 
-        return Panel(text, title="[bold cyan]Bảng Phân Tích & Logs Hệ Thống[/bold cyan]", border_style="cyan")
+        return Panel(text, title="[bold sky_blue1]Bảng Phân Tích & Logs Hệ Thống[/bold sky_blue1]", border_style="deep_sky_blue1")
 
 
 def background_worker():
@@ -226,6 +227,61 @@ def background_worker():
 
 
 def main():
+    console.clear()
+    
+    # 1. Bảng chào mừng và giới thiệu
+    welcome_text = Text()
+    welcome_text.append("🌟 CHÀO MỪNG SẾP THIÊN ÂN ĐẾN VỚI HỆ THỐNG TAXSENTRY 🌟\n", style="bold deep_sky_blue1")
+    welcome_text.append("\nTaxSentry là trợ lý AI giám sát kinh doanh và kiểm toán thuế tối mật,\n")
+    welcome_text.append("bảo vệ pháp lý và tối ưu hóa dòng tiền cho doanh nghiệp của Sếp.\n\n")
+    welcome_text.append("Hệ thống hoạt động cục bộ bảo mật kết hợp mô hình Gemma 4 trên LM Studio\n")
+    welcome_text.append("và hòm thư Email Kế toán trưởng để tự động đối chiếu luật thuế Việt Nam.\n\n", style="italic")
+    welcome_text.append("----------------------------------------------------------------------\n")
+    welcome_text.append("ĐIỀU KHOẢN SỬ DỤNG:\n", style="bold yellow")
+    welcome_text.append("1. Toàn bộ dữ liệu tài chính được xử lý hoàn toàn cục bộ (local) trên máy tính.\n")
+    welcome_text.append("2. Sếp chịu trách nhiệm bảo mật khóa API Key của LM Studio và Email Password.\n")
+    welcome_text.append("3. Báo cáo của AI mang tính tham khảo và hỗ trợ ra quyết định tài chính.\n")
+    
+    console.print(Panel(welcome_text, border_style="deep_sky_blue1", title="[bold sky_blue1]Welcome to TaxSentry[/bold sky_blue1]"))
+    console.print()
+    
+    # 2. Đồng ý điều khoản
+    agreed = Confirm.ask("[bold deep_sky_blue1]Sếp có đồng ý với các điều khoản bảo mật dữ liệu của TaxSentry không?[/bold deep_sky_blue1]", default=True)
+    if not agreed:
+        console.print("\n[bold red]Sếp không đồng ý điều khoản. Hệ thống sẽ tự động đóng ngay lập tức desu~! Bye bye Sếp! (｡•́︿•̀｡)[/bold red]\n")
+        time.sleep(1)
+        sys.exit(0)
+        
+    console.print("\n[bold green]Cảm ơn Sếp đã đồng ý điều khoản! Đi tiếp đến bước Setup thôi nào desu~! ♪ ヽ(>∀<☆)ノ[/bold green]\n")
+    time.sleep(1)
+    
+    # 3. Setup: Nhập Email App Password
+    console.print(Panel("[bold sky_blue1]CÀI ĐẶT EMAIL KẾ TOÁN TRƯỞNG (GMAIL APP PASSWORD)[/bold sky_blue1]\n\nNhập Gmail App Password (16 ký tự viết liền) của Kế toán trưởng để email poller hoạt động thực tế.\nNhấn [Enter] để bỏ qua và sử dụng mật khẩu đã lưu trữ sẵn trong tệp cấu hình .env desu~! ♪", border_style="deep_sky_blue1"))
+    app_pass = Prompt.ask("[bold deep_sky_blue1]Gmail App Password[/bold deep_sky_blue1]", password=True, default="")
+    
+    if app_pass.strip():
+        app_pass_clean = app_pass.strip().replace(" ", "")
+        console.print(f"\n[bold green]Đã nhận mật khẩu mới (Độ dài: {len(app_pass_clean)} ký tự). Đang tự động lưu trữ bảo mật vào tệp .env...[/bold green]")
+        
+        # Đọc và ghi đè EMAIL_PASS trong file .env
+        env_path = Path("D:/TaxSentry/.env")
+        if env_path.exists():
+            content = env_path.read_text(encoding="utf-8")
+            import re
+            new_content = re.sub(r"EMAIL_PASS=.*", f"EMAIL_PASS={app_pass_clean}", content)
+            env_path.write_text(new_content, encoding="utf-8")
+            console.print("[bold green]✅ Đã tự động cập nhật tệp .env thành công desu~![/bold green]\n")
+        else:
+            console.print("[bold red]❌ Không tìm thấy tệp .env để cập nhật mật khẩu mới![/bold red]\n")
+        time.sleep(1.5)
+    else:
+        console.print("\n[bold yellow]Sếp đã chọn sử dụng mật khẩu cũ có sẵn trong tệp .env desu~! Tiếp tục thôi nào! (◕‿◕✿)[/bold yellow]\n")
+        time.sleep(1.5)
+        
+    console.clear()
+    console.print("[bold deep_sky_blue1]Đang khởi động giao diện TaxSentry Workflow Terminal...[/bold deep_sky_blue1]\n")
+    time.sleep(1)
+
     # Tải dữ liệu Excel/JSON thực tế vào giao diện
     load_parsed_data()
 
@@ -243,10 +299,6 @@ def main():
     )
     layout["right"].update(LogsPanel())
     layout["footer"].update(Footer())
-
-    console.clear()
-    console.print("[bold green]Đang khởi động giao diện TaxSentry TUI...[/bold green]\n")
-    time.sleep(1)
 
     try:
         with Live(layout, refresh_per_second=4, screen=True) as live:
