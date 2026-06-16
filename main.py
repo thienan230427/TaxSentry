@@ -51,7 +51,7 @@ def make_layout() -> Layout:
     )
     layout["body"].split_row(
         Layout(name="left", ratio=1),
-        Layout(name="right", ratio=1.2),
+        Layout(name="right", ratio=1),  # Thay đổi từ 1.2 (float) thành 1 (integer) để tương thích 100% với Python 3.14 desu~!
     )
     return layout
 
