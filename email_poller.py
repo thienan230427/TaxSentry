@@ -21,7 +21,7 @@ class TaxSentryEmailPoller:
         self.port = int(os.getenv("EMAIL_PORT", 993))
         self.user = os.getenv("EMAIL_USER")
         self.password = os.getenv("EMAIL_PASS")
-        self.accountant_email = os.getenv("ACCOUNTANT_EMAIL", "bao25800600042@hutech.edu.vn")
+        self.accountant_email = os.getenv("ACCOUNTANT_EMAIL", "thienan12342007@gmail.com")
         self.mail = None
 
     def is_configured(self) -> bool:
