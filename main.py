@@ -45,7 +45,7 @@ def load_parsed_data():
     EMAILS_QUEUE.clear()
 
     try:
-        from db_manager import TaxSentryDBManager
+        from database.db_manager import TaxSentryDBManager
         db = TaxSentryDBManager()
         if db.connect():
             logs = db.get_recent_logs(limit=5)
