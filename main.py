@@ -148,8 +148,8 @@ def main():
     # Áp các Panels vào từng phân vùng tương ứng trong layout
     layout["header"].update(Header())
     layout["left"].split_column(
-        Layout(SystemStatusPanel(), ratio=1),
-        Layout(RecentActivityPanel(), ratio=1.2),
+        Layout(SystemStatusPanel(), ratio=5),
+        Layout(RecentActivityPanel(), ratio=6),  # Thay đổi từ 1.2 thành 6 (và 1 thành 5) để giữ nguyên tỷ lệ nhưng hoàn toàn dùng số nguyên (integers), tránh lỗi Python 3.14 desu~!
     )
     layout["right"].update(LogsPanel())
     layout["footer"].update(Footer())
