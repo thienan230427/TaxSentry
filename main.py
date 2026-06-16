@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -256,23 +257,31 @@ def main():
     time.sleep(1)
     
     # 3. Setup: Nhập Email App Password
-    console.print(Panel("[bold sky_blue1]CÀI ĐẶT EMAIL KẾ TOÁN TRƯỞNG (GMAIL APP PASSWORD)[/bold sky_blue1]\n\nNhập Gmail App Password (16 ký tự viết liền) của Kế toán trưởng để email poller hoạt động thực tế.\nNhấn [Enter] để bỏ qua và sử dụng mật khẩu đã lưu trữ sẵn trong tệp cấu hình .env desu~! ♪", border_style="deep_sky_blue1"))
-    app_pass = Prompt.ask("[bold deep_sky_blue1]Gmail App Password[/bold deep_sky_blue1]", password=True, default="")
+    console.print(Panel("[bold sky_blue1]CÀI ĐẶT EMAIL KẾ TOÁN TRƯỞNG (GMAIL APP PASSWORD)[/bold sky_blue1]\n\nNhập Gmail App Password (16 ký tự viết liền) của Kế toán trưởng để email poller hoạt động thực tế.\n\n💡 [bold yellow]Mẹo từ Grace:[/bold yellow] Em đã cấu hình cho phép hiển thị mật khẩu khi gõ hoặc dán (không bị ẩn) để Sếp dễ dàng kiểm tra xem có dán thiếu ký tự nào không nhé desu~! ♪\nNhấn [Enter] để bỏ qua và sử dụng mật khẩu đã lưu trữ sẵn trong tệp cấu hình .env.", border_style="deep_sky_blue1"))
+    app_pass = Prompt.ask("[bold deep_sky_blue1]Gmail App Password[/bold deep_sky_blue1]", password=False, default="")
     
     if app_pass.strip():
         app_pass_clean = app_pass.strip().replace(" ", "")
-        console.print(f"\n[bold green]Đã nhận mật khẩu mới (Độ dài: {len(app_pass_clean)} ký tự). Đang tự động lưu trữ bảo mật vào tệp .env...[/bold green]")
+        console.print(f"\n[bold green]Đã nhận mật khẩu mới: [bold cyan]{app_pass_clean}[/bold cyan] (Độ dài: {len(app_pass_clean)} ký tự).[/bold green]")
+        console.print("[bold green]Đang tự động cập nhật vào biến môi trường live của hệ thống và tệp .env...[/bold green]")
         
-        # Đọc và ghi đè EMAIL_PASS trong file .env
+        # Thuật toán backend 1: Cập nhật live biến môi trường cho tiến trình Python hiện tại
+        os.environ["EMAIL_PASS"] = app_pass_clean
+        
+        # Thuật toán backend 2: Đọc và hạch toán ghi đè EMAIL_PASS trong tệp .env thực tế
         env_path = Path("D:/TaxSentry/.env")
         if env_path.exists():
             content = env_path.read_text(encoding="utf-8")
             import re
-            new_content = re.sub(r"EMAIL_PASS=.*", f"EMAIL_PASS={app_pass_clean}", content)
+            # Kiểm tra xem có dòng EMAIL_PASS chưa, nếu có thì replace, nếu chưa thì append
+            if "EMAIL_PASS=" in content:
+                new_content = re.sub(r"EMAIL_PASS=.*", f"EMAIL_PASS={app_pass_clean}", content)
+            else:
+                new_content = content + f"\nEMAIL_PASS={app_pass_clean}\n"
             env_path.write_text(new_content, encoding="utf-8")
-            console.print("[bold green]✅ Đã tự động cập nhật tệp .env thành công desu~![/bold green]\n")
+            console.print("[bold green]✅ Đã tự động cập nhật tệp .env và lưu trữ bảo mật thành công desu~![/bold green]\n")
         else:
-            console.print("[bold red]❌ Không tìm thấy tệp .env để cập nhật mật khẩu mới![/bold red]\n")
+            console.print("[bold red]❌ Không tìm thấy tệp .env cục bộ để đồng bộ mật khẩu mới![/bold red]\n")
         time.sleep(1.5)
     else:
         console.print("\n[bold yellow]Sếp đã chọn sử dụng mật khẩu cũ có sẵn trong tệp .env desu~! Tiếp tục thôi nào! (◕‿◕✿)[/bold yellow]\n")
