@@ -250,9 +250,8 @@ def main():
 
     try:
         with Live(layout, refresh_per_second=4, screen=True) as live:
-            start_time = time.time()
-            # Cho chạy Live demo 15 giây để Sếp kiểm tra
-            while time.time() - start_time < 15:
+            # Chạy vô hạn cho đến khi Sếp nhấn [Ctrl+C] để thoát desu~!
+            while True:
                 time.sleep(0.5)
                 # Cập nhật thời gian thực ở Header & tải lại data
                 load_parsed_data()
