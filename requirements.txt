@@ -7,3 +7,5 @@ matplotlib
 seaborn
 python-dotenv
 rich
+pymysql
+cryptography

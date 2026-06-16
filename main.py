@@ -40,26 +40,55 @@ EMAILS_QUEUE = []
 
 
 def load_parsed_data():
-    """Tải dữ liệu đã phân tích từ tệp JSON thực tế (nếu tồn tại)."""
+    """Tải dữ liệu báo cáo từ MySQL Database thực tế."""
     global EMAILS_QUEUE
     EMAILS_QUEUE.clear()
 
-    # Thêm báo cáo mặc định
-    if EXCEL_PATH.exists():
-        status = "[green]Completed[/green]" if JSON_PATH.exists() else "[yellow]Pending[/yellow]"
-        EMAILS_QUEUE.append({
-            "time": datetime.fromtimestamp(EXCEL_PATH.stat().st_mtime).strftime("%H:%M:%S"),
-            "sender": "ke-toan-truong@company.com",
-            "subject": "Báo cáo tài chính tháng 05/2026",
-            "status": status,
-            "file": EXCEL_PATH.name,
-        })
-    else:
+    try:
+        from db_manager import TaxSentryDBManager
+        db = TaxSentryDBManager()
+        if db.connect():
+            logs = db.get_recent_logs(limit=5)
+            if logs:
+                for log in logs:
+                    # Chuyển đổi thời gian nhận
+                    if isinstance(log["received_at"], datetime):
+                        time_str = log["received_at"].strftime("%H:%M:%S")
+                    else:
+                        # Thư viện pymysql đôi khi trả về chuỗi hoặc đối tượng datetime
+                        time_str = str(log["received_at"])
+                    
+                    status_text = "[green]Processed[/green]" if log["status"] == "Processed" else f"[yellow]{log['status']}[/yellow]"
+                    EMAILS_QUEUE.append({
+                        "time": time_str,
+                        "sender": log["sender"],
+                        "subject": f"Báo cáo tài chính ({log['tax_risk_status']})",
+                        "status": status_text,
+                        "file": log["file_name"],
+                    })
+            else:
+                EMAILS_QUEUE.append({
+                    "time": "-",
+                    "sender": "-",
+                    "subject": "No reports found in DB",
+                    "status": "[red]Empty[/red]",
+                    "file": "-",
+                })
+            db.close()
+        else:
+            EMAILS_QUEUE.append({
+                "time": "-",
+                "sender": "-",
+                "subject": "Database connection error",
+                "status": "[red]Error[/red]",
+                "file": "-",
+            })
+    except Exception as e:
         EMAILS_QUEUE.append({
             "time": "-",
             "sender": "-",
-            "subject": "No reports found",
-            "status": "[red]Empty[/red]",
+            "subject": f"Error: {e}",
+            "status": "[red]Error[/red]",
             "file": "-",
         })
 

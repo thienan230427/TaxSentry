@@ -132,6 +132,53 @@ class TaxSentryParser:
             Path(output_path).write_text(json_str, encoding="utf-8")
         return json_str
 
+    def log_to_database(self) -> bool:
+        """Tự động ghi nhận báo cáo đã phân tích vào MySQL Database."""
+        from db_manager import TaxSentryDBManager
+        from datetime import datetime
+        
+        db = TaxSentryDBManager()
+        if not db.connect():
+            return False
+            
+        is_t5 = self.is_data["T5"]
+        revenue = is_t5["revenue"]
+        gross_profit = is_t5["gross_profit"]
+        total_opex = is_t5["total_opex"]
+        net_income = is_t5["net_income"]
+        no_invoice = is_t5["hospitality_no_invoice_exp"]
+        valid_hosp = is_t5["hospitality_valid_exp"]
+        
+        # Đánh giá trạng thái rủi ro thuế
+        limit = revenue * self.assumptions["hospitality_limit_pct"]
+        total_hosp = valid_hosp + no_invoice
+        
+        risks = []
+        if no_invoice > 0:
+            risks.append("Chi phí không hóa đơn")
+        if total_hosp > limit:
+            risks.append("Vượt hạn mức")
+            
+        if risks:
+            tax_risk_status = "🚨 Rủi ro (" + " & ".join(risks) + ")"
+        else:
+            tax_risk_status = "✅ An toàn"
+            
+        success = db.log_report(
+            received_at=datetime.now(), # Lấy thời điểm phân tích thực tế
+            sender="thienan12342007@gmail.com", # Email Kế toán trưởng
+            file_name=self.file_path.name,
+            revenue=revenue,
+            gross_profit=gross_profit,
+            total_opex=total_opex,
+            net_income=net_income,
+            hospitality_no_invoice=no_invoice,
+            tax_risk_status=tax_risk_status,
+            status="Processed"
+        )
+        db.close()
+        return success
+
 
 def datetime_now_str():
     from datetime import datetime
@@ -151,7 +198,15 @@ def main():
         
         # Xuất JSON
         json_output = parser.export_json(output_json)
-        print(f"✅ Đã trích xuất và chuẩn hóa dữ liệu thành công ra: {output_json}\n")
+        print(f"✅ Đã trích xuất và chuẩn hóa dữ liệu thành công ra: {output_json}")
+        
+        # Tự động ghi vào MySQL Database
+        print("Đang tự động đồng bộ kết quả phân tích vào MySQL Database...")
+        if parser.log_to_database():
+            print("✅ Đã ghi nhận và lưu trữ báo cáo thành công vào Database 'tax_sentry'!")
+        else:
+            print("❌ Lưu trữ Database thất bại.")
+        print()
         print("Dữ liệu JSON trích xuất (Trích đoạn):")
         
         # In một phần dữ liệu ra console để Sếp xem
