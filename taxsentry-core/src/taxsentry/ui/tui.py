@@ -45,7 +45,7 @@ from rich.prompt import Confirm, Prompt
 
 console = Console()
 
-from utils.path_helper import DB_PATH, EXCEL_PATH, JSON_PATH, ENV_PATH
+from taxsentry.config.paths import DB_PATH, EXCEL_PATH, JSON_PATH, ENV_PATH
 
 # --- Trạng thái hệ thống mặc định ---
 SYSTEM_STATUS = {
@@ -73,7 +73,7 @@ def load_parsed_data():
     EMAILS_QUEUE.clear()
 
     try:
-        from database.db_manager import TaxSentryDBManager
+        from taxsentry.database.db_manager import TaxSentryDBManager
         db = TaxSentryDBManager()
         if db.connect():
             logs = db.get_recent_logs(limit=5)
@@ -231,7 +231,7 @@ class LogsPanel:
 
         # 2. Hiển thị logs hệ thống thời gian thực từ Automation Workflow
         text.append("💬 NHẬT KÝ HOẠT ĐỘNG HỆ THỐNG THỜI GIAN THỰC:\n", style="bold deep_sky_blue1")
-        from core.automation import AUTOMATION_LOGS
+        from taxsentry.core.automation import AUTOMATION_LOGS
         
         combined_logs = []
         for log in LOG_MESSAGES:
@@ -287,7 +287,7 @@ def background_worker():
     """Khởi chạy Automation Workflow chạy nền định kỳ thực tế."""
     LOG_MESSAGES.append("Đang khởi tạo luồng tự động hóa chạy ngầm...")
     try:
-        from core.automation import TaxSentryAutomationWorkflow
+        from taxsentry.core.automation import TaxSentryAutomationWorkflow
         workflow = TaxSentryAutomationWorkflow()
         LOG_MESSAGES.append("Hệ thống tự động hóa khởi chạy thành công!")
         workflow.start_loop(60)
@@ -431,7 +431,7 @@ def run_onboarding_setup():
     console.print("[bold deep_sky_blue1]Đang tiến hành kiểm tra kết nối dịch vụ thử nghiệm...[/bold deep_sky_blue1]")
     time.sleep(1)
     
-    from database.db_manager import TaxSentryDBManager
+    from taxsentry.database.db_manager import TaxSentryDBManager
     db = TaxSentryDBManager()
     if db.connect():
         console.print("[bold green]  • Kết nối Database SQLite cục bộ: THÀNH CÔNG[/bold green]")
@@ -439,7 +439,7 @@ def run_onboarding_setup():
     else:
         console.print("[bold red]  • Kết nối Database SQLite cục bộ: THẤT BẠI (Vui lòng kiểm tra quyền ghi ổ đĩa)[/bold red]")
         
-    from core.analysis_engine import TaxSentryAnalysisEngine
+    from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
     engine = TaxSentryAnalysisEngine()
     if engine.connect():
         console.print("[bold green]  • Kết nối AI Server (LM Studio): THÀNH CÔNG[/bold green]")
@@ -463,7 +463,7 @@ def run_chat_mode():
     
     console.print(Panel(welcome_text, border_style="green"))
     
-    from core.analysis_engine import TaxSentryAnalysisEngine
+    from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
     engine = TaxSentryAnalysisEngine()
     if not engine.connect():
         console.print("[bold red]❌ Lỗi kết nối AI Engine (LM Studio Server chưa hoạt động).[/bold red]")
@@ -483,7 +483,7 @@ def run_chat_mode():
             pass
 
     tax_rules_str = ""
-    from utils.path_helper import KNOWLEDGE_PATH
+    from taxsentry.config.paths import KNOWLEDGE_PATH
     if KNOWLEDGE_PATH.exists():
         try:
             tax_rules_str = KNOWLEDGE_PATH.read_text(encoding="utf-8")[:3000]

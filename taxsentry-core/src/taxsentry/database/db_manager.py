@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.absolute()))
 import sqlite3
 from datetime import datetime
 from dotenv import load_dotenv
-from utils.path_helper import DB_PATH
+from taxsentry.config.paths import DB_PATH
 
 
 # Nạp cấu hình từ .env

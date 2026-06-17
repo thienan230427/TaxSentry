@@ -134,7 +134,7 @@ class TaxSentryParser:
 
     def log_to_database(self) -> bool:
         """Tự động ghi nhận báo cáo đã phân tích vào MySQL Database."""
-        from database.db_manager import TaxSentryDBManager
+        from taxsentry.database.db_manager import TaxSentryDBManager
         from datetime import datetime
         
         db = TaxSentryDBManager()

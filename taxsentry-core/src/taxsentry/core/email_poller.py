@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent.absolute()))
-from utils.path_helper import DOWNLOAD_DIR
+from taxsentry.config.paths import DOWNLOAD_DIR
 
 
 class TaxSentryEmailPoller:

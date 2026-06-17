@@ -45,9 +45,9 @@ os.environ['DB_NAME'] = os.getenv('DB_NAME', 'tax_sentry')
 
 # Thêm path của dự án
 sys.path.insert(0, str(Path(__file__).parent.absolute()))
-from core.analysis_engine import TaxSentryAnalysisEngine
-from database.db_manager import TaxSentryDBManager
-from utils.path_helper import DOWNLOAD_DIR, KNOWLEDGE_PATH
+from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
+from taxsentry.database.db_manager import TaxSentryDBManager
+from taxsentry.config.paths import DOWNLOAD_DIR, KNOWLEDGE_PATH
 
 # Telegram Bot API
 from telegram import Update
@@ -285,7 +285,7 @@ async def generate_report_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE
         report_log = logs[0]
         
         try:
-            from core.pdf_generator import TaxSentryPDFGenerator
+            from taxsentry.core.pdf_generator import TaxSentryPDFGenerator
             pdf_path = str(DOWNLOAD_DIR / "report_tele_temp.pdf")
             os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
             

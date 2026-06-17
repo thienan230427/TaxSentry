@@ -15,13 +15,13 @@ load_dotenv()
 
 # Thêm path dự án
 sys.path.insert(0, str(Path(__file__).parent.parent.absolute()))
-from core.email_poller import TaxSentryEmailPoller
-from core.excel_parser import TaxSentryParser
-from core.pdf_parser import TaxSentryPDFParser
-from core.analysis_engine import TaxSentryAnalysisEngine
-from core.pdf_generator import TaxSentryPDFGenerator
-from core.email_sender import TaxSentryEmailSender
-from utils.path_helper import DOWNLOAD_DIR, JSON_PATH
+from taxsentry.core.email_poller import TaxSentryEmailPoller
+from taxsentry.core.excel_parser import TaxSentryParser
+from taxsentry.core.pdf_parser import TaxSentryPDFParser
+from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
+from taxsentry.core.pdf_generator import TaxSentryPDFGenerator
+from taxsentry.core.email_sender import TaxSentryEmailSender
+from taxsentry.config.paths import DOWNLOAD_DIR, JSON_PATH
 
 # Toàn cục lưu logs hoạt động để main.py hiển thị trên TUI
 AUTOMATION_LOGS = []

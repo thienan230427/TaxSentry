@@ -16,8 +16,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent.absolute()))
-from core.analysis_engine import TaxSentryAnalysisEngine
-from database.db_manager import TaxSentryDBManager
+from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
+from taxsentry.database.db_manager import TaxSentryDBManager
 
 class TaxSentryPDFParser:
     """Bộ đọc và phân tích cấu trúc báo cáo tài chính PDF bằng AI."""

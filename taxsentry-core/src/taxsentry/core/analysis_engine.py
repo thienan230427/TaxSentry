@@ -6,7 +6,7 @@ import openai
 from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent.parent.absolute()))
-from utils.path_helper import JSON_PATH, KNOWLEDGE_PATH, AUDIT_REPORT_PATH
+from taxsentry.config.paths import JSON_PATH, KNOWLEDGE_PATH, AUDIT_REPORT_PATH
 
 # Nạp các biến môi trường
 load_dotenv()
