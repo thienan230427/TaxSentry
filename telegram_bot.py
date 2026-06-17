@@ -124,10 +124,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🛡️ **Chào mừng Giám đốc {director_name} đến với Hệ thống Giám sát Tài chính & Thuế TaxSentry!**\n\n"
         f"Tôi là Trợ lý AI Kiểm toán của Giám đốc {director_name}. Hệ thống đã kích hoạt thành công.\n\n"
         f"📋 **Các lệnh chức năng khả dụng:**\n"
-        f"1️⃣ `/reports` — Truy vấn dữ liệu các báo cáo tài chính gần nhất trong MySQL DB\n"
+        f"1️⃣ `/reports` hoặc `/tiendo` — Truy vấn dữ liệu các báo cáo tài chính gần nhất\n"
         f"2️⃣ `/analyze` — Gọi AI phân tích đánh giá rủi ro thuế dựa trên báo cáo mới nhất\n"
         f"3️⃣ `/audit_history` — Xem lịch sử đánh giá kiểm toán và trạng thái rủi ro thuế\n"
-        f"4️⃣ `/report_pdf` — Tạo và tải file PDF báo cáo phân tích mới nhất\n\n"
+        f"4️⃣ `/report_pdf` hoặc `/baocao` — Tạo và tải file PDF báo cáo phân tích mới nhất\n\n"
         f"💬 **Tương tác trực tiếp:** Giám đốc có thể gửi câu hỏi trực tiếp bằng tin nhắn văn bản thông thường để hỏi về tiến độ xử lý thư, truy vấn doanh thu, chi phí, hoặc giải thích các luật thuế Việt Nam. Hệ thống sẽ phân tích và phản hồi ngay lập tức."
     )
 
@@ -408,12 +408,12 @@ def main():
     # Khởi tạo Application
     app = Application.builder().token(token).build()
     
-    # Đăng ký lệnh điều hướng
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CommandHandler('reports', get_reports))
-    app.add_handler(CommandHandler('analyze', analyze_report))
-    app.add_handler(CommandHandler('audit_history', audit_history))
-    app.add_handler(CommandHandler('report_pdf', generate_report_pdf))
+    # Đăng ký lệnh điều hướng (kèm alias tiếng Việt cho phù hợp Obsidian plan)
+    app.add_handler(CommandHandler(['start'], start))
+    app.add_handler(CommandHandler(['reports', 'tiendo'], get_reports))
+    app.add_handler(CommandHandler(['analyze'], analyze_report))
+    app.add_handler(CommandHandler(['audit_history'], audit_history))
+    app.add_handler(CommandHandler(['report_pdf', 'baocao'], generate_report_pdf))
     
     # Đăng ký xử lý tin nhắn chat tự do
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_chat))
