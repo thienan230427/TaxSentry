@@ -1,6 +1,7 @@
 {
   "name": "taxsentry",
   "version": "0.1.0",
+  "type": "module",
   "description": "On-premise AI Audit Agent — automated tax risk monitoring for CFOs & SMEs, with 2-way Telegram control. Your data never leaves your machine.",
   "bin": {
     "taxsentry": "./bin/taxsentry.js",
