@@ -1,6 +1,7 @@
 import email
 import imaplib
 import os
+import sys
 from email.header import decode_header
 from pathlib import Path
 from dotenv import load_dotenv
@@ -8,9 +9,8 @@ from dotenv import load_dotenv
 # Nạp các biến môi trường từ tệp .env
 load_dotenv()
 
-# --- Cấu hình Thư mục ---
-DOWNLOAD_DIR = Path("D:/TaxSentry/downloads")
-DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, str(Path(__file__).parent.parent.absolute()))
+from utils.path_helper import DOWNLOAD_DIR
 
 
 class TaxSentryEmailPoller:
@@ -23,6 +23,14 @@ class TaxSentryEmailPoller:
         self.password = os.getenv("EMAIL_PASS")
         self.accountant_email = os.getenv("ACCOUNTANT_EMAIL", "thienan12342007@gmail.com")
         self.mail = None
+        self.log_callback = None
+
+    def log(self, message):
+        """Helper để ghi log: chuyển hướng sang callback nếu có, nếu không in ra console."""
+        if self.log_callback:
+            self.log_callback(message)
+        else:
+            print(message)
 
     def is_configured(self) -> bool:
         """Kiểm tra xem Sếp đã cấu hình .env đầy đủ chưa."""
@@ -31,8 +39,8 @@ class TaxSentryEmailPoller:
     def connect(self) -> bool:
         """Kết nối bảo mật tới máy chủ IMAP."""
         if not self.is_configured():
-            print("⚠️ Cảnh báo: Chưa cấu hình thông tin Email trong tệp .env!")
-            print("👉 Hệ thống sẽ chạy ở chế độ GIẢ LẬP (Dry-run mode) để test thử desu~!\n")
+            self.log("⚠️ Cảnh báo: Chưa cấu hình thông tin Email trong tệp .env!")
+            self.log("👉 Hệ thống sẽ chạy ở chế độ GIẢ LẬP (Dry-run mode) để test thử desu~!\n")
             return False
         try:
             # Kết nối SSL bảo mật
@@ -40,8 +48,8 @@ class TaxSentryEmailPoller:
             self.mail.login(self.user, self.password)
             return True
         except Exception as e:
-            print(f"❌ Kết nối IMAP thất bại rồi Sếp ơi: {e}")
-            print("👉 Chuyển sang chế độ GIẢ LẬP để chạy thử nghiệm desu~!\n")
+            self.log(f"❌ Kết nối IMAP thất bại rồi Sếp ơi: {e}")
+            self.log("👉 Chuyển sang chế độ GIẢ LẬP để chạy thử nghiệm desu~!\n")
             return False
 
     def check_and_download(self) -> list:
@@ -50,9 +58,9 @@ class TaxSentryEmailPoller:
 
         # Nếu không có cấu hình thực tế, chạy giả lập để không bị đơ ứng dụng
         if not self.mail:
-            print("[Dry-run] Đang quét hòm thư giả lập...")
-            print(f"[Dry-run] Kiểm tra thư mới từ Kế toán trưởng: {self.accountant_email}")
-            print("[Dry-run] Quét hoàn tất. Không có thư mới (Chế độ giả lập).")
+            self.log("[Dry-run] Đang quét hòm thư giả lập...")
+            self.log(f"[Dry-run] Kiểm tra thư mới từ Kế toán trưởng: {self.accountant_email}")
+            self.log("[Dry-run] Quét hoàn tất. Không có thư mới (Chế độ giả lập).")
             return downloaded_files
 
         try:
@@ -64,11 +72,11 @@ class TaxSentryEmailPoller:
             status, messages = self.mail.search(None, search_query)
 
             if status != "OK":
-                print("❌ Lỗi khi tìm kiếm email.")
+                self.log("❌ Lỗi khi tìm kiếm email.")
                 return downloaded_files
 
             email_ids = messages[0].split()
-            print(f"🔎 Tìm thấy {len(email_ids)} email mới chưa đọc từ Kế toán trưởng desu~!")
+            self.log(f"🔎 Tìm thấy {len(email_ids)} email mới chưa đọc từ Kế toán trưởng desu~!")
 
             for e_id in email_ids:
                 # Lấy nội dung email
@@ -84,7 +92,7 @@ class TaxSentryEmailPoller:
                 if isinstance(subject, bytes):
                     subject = subject.decode(encoding or "utf-8")
                 
-                print(f"📬 Đang xử lý email tiêu đề: '{subject}'")
+                self.log(f"📬 Đang xử lý email tiêu đề: '{subject}'")
 
                 # Quét các phần đính kèm (attachments)
                 for part in msg.walk():
@@ -103,14 +111,14 @@ class TaxSentryEmailPoller:
                         with open(file_path, "wb") as f:
                             f.write(part.get_payload(decode=True))
                         
-                        print(f"💾 Tải thành công file đính kèm: '{file_name}' -> Lưu tại: {file_path}")
+                        self.log(f"💾 Tải thành công file đính kèm: '{file_name}' -> Lưu tại: {file_path}")
                         downloaded_files.append(str(file_path))
 
                         # Đánh dấu email là ĐÃ ĐỌC (SEEN) sau khi tải xong
                         self.mail.store(e_id, "+FLAGS", "\\Seen")
 
         except Exception as e:
-            print(f"❌ Có lỗi phát sinh khi quét email: {e}")
+            self.log(f"❌ Có lỗi phát sinh khi quét email: {e}")
 
         return downloaded_files
 
@@ -120,19 +128,20 @@ class TaxSentryEmailPoller:
             try:
                 self.mail.close()
                 self.mail.logout()
-            except:
+            except Exception:
                 pass
 
 
 def main():
     print("=== CHẠY THỬ NGHIỆM EMAIL POLLER ===")
     poller = TaxSentryEmailPoller()
+    
     if poller.connect():
         files = poller.check_and_download()
-        print(f"\n🎉 Hoàn thành quét thực tế. Đã tải về {len(files)} tệp tin.")
         poller.disconnect()
+        print(f"\n🎉 Hoàn thành quét thực tế. Đã tải về {len(files)} tệp tin.")
     else:
-        # Chạy chế độ giả lập nếu chưa có cấu hình thực tế
+        # Chạy giả lập để test
         files = poller.check_and_download()
         print(f"\n🎉 Hoàn thành quét giả lập.")
 

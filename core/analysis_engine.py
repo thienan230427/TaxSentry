@@ -5,13 +5,11 @@ from pathlib import Path
 import openai
 from dotenv import load_dotenv
 
+sys.path.insert(0, str(Path(__file__).parent.parent.absolute()))
+from utils.path_helper import JSON_PATH, KNOWLEDGE_PATH, AUDIT_REPORT_PATH
+
 # Nạp các biến môi trường
 load_dotenv()
-
-# --- Định nghĩa đường dẫn ---
-JSON_PATH = Path("D:/TaxSentry/parsed_report.json")
-KNOWLEDGE_PATH = Path("D:/TaxSentry/knowledge_base/tax_rules_vietnam.md")
-AUDIT_REPORT_PATH = Path("D:/TaxSentry/audit_report.md")
 
 
 class TaxSentryAnalysisEngine:
@@ -23,6 +21,14 @@ class TaxSentryAnalysisEngine:
         self.api_key = os.getenv("LM_STUDIO_API_KEY", "sk-lm-sVlR2otW:D3EDq8EiXWYdmvAhYsgY")
         self.model_name = os.getenv("LM_MODEL_NAME", "google/gemma-4-e4b")
         self.client = None
+        self.log_callback = None
+
+    def log(self, message):
+        """Helper để ghi log: chuyển hướng sang callback nếu có, nếu không in ra console."""
+        if self.log_callback:
+            self.log_callback(message)
+        else:
+            print(message)
 
     def connect(self) -> bool:
         """Khởi tạo kết nối tới máy chủ Local LM Studio."""
@@ -30,7 +36,7 @@ class TaxSentryAnalysisEngine:
             self.client = openai.OpenAI(base_url=self.api_url, api_key=self.api_key)
             return True
         except Exception as e:
-            print(f"❌ Khởi tạo kết nối LM Studio thất bại: {e}")
+            self.log(f"❌ Khởi tạo kết nối LM Studio thất bại: {e}")
             return False
 
     def run_audit(self) -> str:
@@ -76,8 +82,8 @@ class TaxSentryAnalysisEngine:
         {tax_knowledge}
         """
 
-        print("🧠 Đang truyền dữ liệu và gửi yêu cầu phân tích tới Local Gemma 4 qua LM Studio...")
-        print("💡 Quá trình suy luận và đối chiếu tri thức (RAG) đang diễn ra cục bộ, vui lòng chờ trong giây lát desu~!\n")
+        self.log("🧠 Đang truyền dữ liệu và gửi yêu cầu phân tích tới Local Gemma 4 qua LM Studio...")
+        self.log("💡 Quá trình suy luận và đối chiếu tri thức (RAG) đang diễn ra cục bộ, vui lòng chờ trong giây lát desu~!\n")
 
         try:
             # Gọi API của LM Studio để bắt đầu suy luận
@@ -97,7 +103,24 @@ class TaxSentryAnalysisEngine:
             return audit_result
 
         except Exception as e:
-            return f"❌ Có lỗi phát sinh khi gọi mô hình Gemma 4 trên LM Studio: {e}\n(Sếp nhớ đảm bảo đã Start Server trong LM Studio tại cổng 1234 nha Sếp ơi~!)"
+            return f"❌ Có lỗi phát sinh khi gọi mô hình Gemma 4 trên LM Studio:\n{e}\n(Sếp nhớ đảm bảo đã Start Server trong LM Studio tại cổng 1234 nha Sếp ơi~!)"
+
+    def analyze_report(self, prompt: str) -> str:
+        """Gửi prompt tùy chỉnh tới LM Studio AI Server và nhận kết quả (Dùng cho Chat 2 chiều)."""
+        if not self.client:
+            if not self.connect():
+                return "❌ Lỗi kết nối AI Engine. Vui lòng kiểm tra LM Studio."
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            return f"❌ Lỗi kết nối AI Server (LM Studio): {e}"
 
 
 def main():

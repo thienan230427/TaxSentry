@@ -142,15 +142,17 @@ class TaxSentryParser:
             return False
             
         is_t5 = self.is_data["T5"]
-        revenue = is_t5["revenue"]
-        gross_profit = is_t5["gross_profit"]
-        total_opex = is_t5["total_opex"]
-        net_income = is_t5["net_income"]
-        no_invoice = is_t5["hospitality_no_invoice_exp"]
-        valid_hosp = is_t5["hospitality_valid_exp"]
         
-        # Đánh giá trạng thái rủi ro thuế
-        limit = revenue * self.assumptions["hospitality_limit_pct"]
+        # Kiểm tra null trước khi truy cập - tránh lỗi nếu T5 không có data
+        revenue = is_t5.get("revenue")
+        gross_profit = is_t5.get("gross_profit")
+        total_opex = is_t5.get("total_opex")
+        net_income = is_t5.get("net_income")
+        no_invoice = is_t5.get("hospitality_no_invoice_exp", 0) or 0
+        valid_hosp = is_t5.get("hospitality_valid_exp", 0) or 0
+        
+        # Đánh giá trạng thái rủi ro thuế - kiểm tra null trước khi tính toán
+        limit = revenue * self.assumptions["hospitality_limit_pct"] if revenue else 0
         total_hosp = valid_hosp + no_invoice
         
         risks = []

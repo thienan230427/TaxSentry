@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local database and scratch files
+taxsentry.db
+*.db
+scratch/
+mock_report.xlsx
+parsed_report.json
+audit_report.md
