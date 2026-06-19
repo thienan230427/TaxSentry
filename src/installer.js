@@ -46,7 +46,7 @@ export async function createVenv(pythonCmd) {
     });
     
     if (!isVenvInstalled()) {
-      throw new Error('Tạo venv thất bại: không tìm thấy python.exe hoặc pip.exe mới.');
+      throw new Error('Tạo venv thất bại: không tìm thấy Python hoặc pip trong môi trường ảo mới.');
     }
     
     spinner.succeed('Môi trường ảo Python được tạo thành công! 🐍');

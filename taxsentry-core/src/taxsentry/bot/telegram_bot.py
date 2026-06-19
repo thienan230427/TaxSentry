@@ -1,28 +1,14 @@
 import sys
 import os
-import subprocess
+from pathlib import Path
 
-def bootstrap_venv():
-    """Tự động phát hiện và khởi chạy lại chương trình bằng Python của môi trường ảo .venv nếu đang chạy ngoài venv."""
-    in_venv = (sys.prefix != sys.base_prefix) or ('VIRTUAL_ENV' in os.environ)
-    
-    if not in_venv:
-        root_dir = os.path.dirname(os.path.abspath(__file__))
-        venv_python = os.path.join(root_dir, ".venv", "Scripts", "python.exe")
-        
-        if not os.path.exists(venv_python):
-            venv_python = os.path.join(root_dir, ".venv", "bin", "python")
-            
-        if os.path.exists(venv_python):
-            args = [venv_python] + sys.argv
-            try:
-                sys.exit(subprocess.run(args).returncode)
-            except Exception as e:
-                print(f"Không thể tự động chuyển hướng sang môi trường ảo: {e}")
-                sys.exit(1)
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from taxsentry.utils.runtime import bootstrap_into_venv
 
 # Tự động kích hoạt môi trường ảo nếu cần thiết
-bootstrap_venv()
+bootstrap_into_venv(["-m", "taxsentry.bot.telegram_bot", *sys.argv[1:]])
 
 """
 🛡️ TaxSentry — Telegram Bot Integration
@@ -33,7 +19,6 @@ Sử dụng văn phong chuyên nghiệp, trang trọng chuẩn mực kiểm toá
 import asyncio
 import json
 from datetime import datetime
-from pathlib import Path
 
 # Load .env from taxsentry-core root
 from dotenv import load_dotenv

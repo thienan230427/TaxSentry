@@ -224,6 +224,11 @@ scratch/
 mock_report.xlsx
 parsed_report.json
 audit_report.md
+.processed_ids.json
+.env.*.bak
+.env.old.backup
+dogfood-report.md
+test_config.mjs
 
 # Node.js
 node_modules/

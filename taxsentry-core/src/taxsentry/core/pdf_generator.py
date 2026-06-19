@@ -4,7 +4,6 @@ Chuyển đổi báo cáo phân tích Markdown của AI thành tệp PDF chuyên
 sử dụng thư viện reportlab, hỗ trợ tiếng Việt không bị lỗi font (nạp font Arial từ hệ thống Windows).
 """
 
-import os
 import re
 from pathlib import Path
 from reportlab.lib.pagesizes import letter
@@ -23,6 +22,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 
+from taxsentry.config.paths import DOWNLOAD_DIR
+
 class TaxSentryPDFGenerator:
     """Bộ tạo PDF từ báo cáo Markdown chuyên nghiệp."""
 
@@ -32,54 +33,111 @@ class TaxSentryPDFGenerator:
         self._setup_custom_styles()
 
     def _register_vietnamese_font(self):
-        """Đăng ký font TrueType hỗ trợ tiếng Việt từ thư mục font của Windows."""
-        # Các đường dẫn font phổ biến trên Windows
-        font_dir = "C:/Windows/Fonts"
-        normal_font_path = os.path.join(font_dir, "arial.ttf")
-        bold_font_path = os.path.join(font_dir, "arialbd.ttf")
-        italic_font_path = os.path.join(font_dir, "ariali.ttf")
+        """Đăng ký font hỗ trợ tiếng Việt trên Windows, macOS và Linux."""
+        self.font_regular = 'Helvetica'
+        self.font_bold = 'Helvetica-Bold'
+        self.font_italic = 'Helvetica-Oblique'
 
-        # Fallback nếu không chạy trên Windows hoặc không tìm thấy font Arial
-        if not os.path.exists(normal_font_path):
-            # Thử tìm trong thư mục hiện tại hoặc các đường dẫn khác
-            normal_font_path = "arial.ttf"
-            bold_font_path = "arialbd.ttf"
-            italic_font_path = "ariali.ttf"
+        font_candidates = [
+            (
+                'Arial',
+                [
+                    Path('C:/Windows/Fonts/arial.ttf'),
+                    Path('/Library/Fonts/Arial.ttf'),
+                    Path.home() / 'Library/Fonts/Arial.ttf',
+                ],
+                [
+                    Path('C:/Windows/Fonts/arialbd.ttf'),
+                    Path('/Library/Fonts/Arial Bold.ttf'),
+                    Path.home() / 'Library/Fonts/Arial Bold.ttf',
+                ],
+                [
+                    Path('C:/Windows/Fonts/ariali.ttf'),
+                    Path('/Library/Fonts/Arial Italic.ttf'),
+                    Path.home() / 'Library/Fonts/Arial Italic.ttf',
+                ],
+            ),
+            (
+                'DejaVuSans',
+                [
+                    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
+                    Path('/usr/local/share/fonts/DejaVuSans.ttf'),
+                    Path.home() / '.fonts/DejaVuSans.ttf',
+                ],
+                [
+                    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
+                    Path('/usr/local/share/fonts/DejaVuSans-Bold.ttf'),
+                    Path.home() / '.fonts/DejaVuSans-Bold.ttf',
+                ],
+                [
+                    Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf'),
+                    Path('/usr/local/share/fonts/DejaVuSans-Oblique.ttf'),
+                    Path.home() / '.fonts/DejaVuSans-Oblique.ttf',
+                ],
+            ),
+            (
+                'NotoSans',
+                [
+                    Path('/usr/share/fonts/opentype/noto/NotoSans-Regular.ttf'),
+                    Path('/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf'),
+                    Path.home() / 'Library/Fonts/NotoSans-Regular.ttf',
+                ],
+                [
+                    Path('/usr/share/fonts/opentype/noto/NotoSans-Bold.ttf'),
+                    Path('/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf'),
+                    Path.home() / 'Library/Fonts/NotoSans-Bold.ttf',
+                ],
+                [
+                    Path('/usr/share/fonts/opentype/noto/NotoSans-Italic.ttf'),
+                    Path('/usr/share/fonts/truetype/noto/NotoSans-Italic.ttf'),
+                    Path.home() / 'Library/Fonts/NotoSans-Italic.ttf',
+                ],
+            ),
+        ]
 
-        try:
-            # Đăng ký font thường
-            if os.path.exists(normal_font_path):
-                pdfmetrics.registerFont(TTFont('Arial', normal_font_path))
-                print(f"✅ Đã đăng ký font Arial từ: {normal_font_path}")
-            else:
-                pdfmetrics.registerFont(TTFont('Arial', 'Helvetica'))
-                print("⚠️ Không tìm thấy font Arial, sử dụng Helvetica (Không hỗ trợ tốt tiếng Việt)")
+        def first_existing(paths):
+            for candidate in paths:
+                if candidate.exists():
+                    return candidate
+            return None
 
-            # Đăng ký font đậm
-            if os.path.exists(bold_font_path):
-                pdfmetrics.registerFont(TTFont('Arial-Bold', bold_font_path))
-            else:
-                pdfmetrics.registerFont(TTFont('Arial-Bold', 'Helvetica-Bold'))
+        for family_name, regular_candidates, bold_candidates, italic_candidates in font_candidates:
+            regular_path = first_existing(regular_candidates)
+            if not regular_path:
+                continue
 
-            # Đăng ký font nghiêng
-            if os.path.exists(italic_font_path):
-                pdfmetrics.registerFont(TTFont('Arial-Italic', italic_font_path))
-            else:
-                pdfmetrics.registerFont(TTFont('Arial-Italic', 'Helvetica-Oblique'))
+            bold_path = first_existing(bold_candidates) or regular_path
+            italic_path = first_existing(italic_candidates) or regular_path
 
-        except Exception as e:
-            print(f"❌ Lỗi khi đăng ký font tiếng Việt: {e}")
+            try:
+                regular_name = f'{family_name}-Regular'
+                bold_name = f'{family_name}-Bold'
+                italic_name = f'{family_name}-Italic'
+                pdfmetrics.registerFont(TTFont(regular_name, str(regular_path)))
+                pdfmetrics.registerFont(TTFont(bold_name, str(bold_path)))
+                pdfmetrics.registerFont(TTFont(italic_name, str(italic_path)))
+                self.font_regular = regular_name
+                self.font_bold = bold_name
+                self.font_italic = italic_name
+                print(f"✅ Đã đăng ký font PDF đa nền tảng: {regular_path}")
+                return
+            except Exception as e:
+                print(f"⚠️ Không thể đăng ký font {family_name}: {e}")
+
+        print("⚠️ Không tìm thấy font Unicode hệ thống phù hợp, dùng Helvetica fallback.")
 
     def _setup_custom_styles(self):
         """Thiết lập các kiểu định dạng văn bản (Paragraph Styles) đẹp mắt, hiện đại."""
         # Lấy font đã đăng ký
-        font_family = 'Arial'
+        font_regular = self.font_regular
+        font_bold = self.font_bold
+        font_italic = self.font_italic
         
         # Tiêu đề chính (Title)
         self.title_style = ParagraphStyle(
             'DocTitle',
             parent=self.styles['Normal'],
-            fontName=f'{font_family}-Bold',
+            fontName=font_bold,
             fontSize=22,
             leading=26,
             textColor=colors.HexColor('#1F4E79'),  # Xanh navy cổ điển
@@ -91,7 +149,7 @@ class TaxSentryPDFGenerator:
         self.h1_style = ParagraphStyle(
             'DocH1',
             parent=self.styles['Normal'],
-            fontName=f'{font_family}-Bold',
+            fontName=font_bold,
             fontSize=15,
             leading=18,
             textColor=colors.HexColor('#1F4E79'),
@@ -104,7 +162,7 @@ class TaxSentryPDFGenerator:
         self.h2_style = ParagraphStyle(
             'DocH2',
             parent=self.styles['Normal'],
-            fontName=f'{font_family}-Bold',
+            fontName=font_bold,
             fontSize=12,
             leading=15,
             textColor=colors.HexColor('#2E75B6'),  # Xanh nhạt hơn
@@ -117,7 +175,7 @@ class TaxSentryPDFGenerator:
         self.body_style = ParagraphStyle(
             'DocBody',
             parent=self.styles['Normal'],
-            fontName=font_family,
+            fontName=font_regular,
             fontSize=10.5,
             leading=14,
             textColor=colors.HexColor('#333333'),  # Xám đậm dễ đọc
@@ -130,7 +188,7 @@ class TaxSentryPDFGenerator:
         self.alert_style = ParagraphStyle(
             'DocAlert',
             parent=self.styles['Normal'],
-            fontName=font_family,
+            fontName=font_regular,
             fontSize=10,
             leading=13,
             textColor=colors.HexColor('#9C0006'),  # Đỏ đậm
@@ -142,7 +200,7 @@ class TaxSentryPDFGenerator:
         self.caption_style = ParagraphStyle(
             'DocCaption',
             parent=self.styles['Normal'],
-            fontName=f'{font_family}-Italic',
+            fontName=font_italic,
             fontSize=9,
             leading=11,
             textColor=colors.HexColor('#666666'),
@@ -296,7 +354,7 @@ class TaxSentryPDFGenerator:
                     style = ParagraphStyle(
                         'TableHeader',
                         parent=self.styles['Normal'],
-                        fontName='Arial-Bold',
+                        fontName=self.font_bold,
                         fontSize=9.5,
                         textColor=colors.white,
                         alignment=TA_LEFT
@@ -305,7 +363,7 @@ class TaxSentryPDFGenerator:
                     style = ParagraphStyle(
                         'TableCell',
                         parent=self.styles['Normal'],
-                        fontName='Arial',
+                        fontName=self.font_regular,
                         fontSize=9,
                         textColor=colors.HexColor('#333333'),
                         alignment=TA_LEFT
@@ -401,7 +459,7 @@ Tháng này hoạt động kinh doanh của doanh nghiệp ghi nhận các kết
 | Chi phí không hóa đơn | 45,000,000 | Nguy hiểm |
 """
     generator = TaxSentryPDFGenerator()
-    generator.generate(markdown_test, "D:/TaxSentry/downloads/test_report.pdf")
+    generator.generate(markdown_test, str(DOWNLOAD_DIR / "test_report.pdf"))
 
 if __name__ == "__main__":
     main()

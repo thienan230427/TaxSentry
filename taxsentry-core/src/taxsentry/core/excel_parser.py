@@ -9,6 +9,8 @@ from typing import Any
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
 
+from taxsentry.config.paths import EXCEL_PATH, JSON_PATH
+
 
 CANONICAL_LABEL_KEYWORDS = {
     "revenue": ["doanh thu", "doanh thu thuan", "sales", "revenue"],
@@ -894,8 +896,8 @@ def datetime_now_str():
 
 def main():
     print("--- CHẠY THỬ NGHIỆM TAXSENTRY PARSER ---")
-    input_file = "D:/TaxSentry/mock_report.xlsx"
-    output_json = "D:/TaxSentry/parsed_report.json"
+    input_file = str(EXCEL_PATH)
+    output_json = str(JSON_PATH)
 
     parser = TaxSentryParser(input_file)
     try:
@@ -919,7 +921,6 @@ def main():
             "canonical_metrics": data["data"]["canonical_metrics"],
             "income_statement_summary_T5": data["data"]["income_statement"]["T5_Actual"],
         }, indent=4, ensure_ascii=False))
-
     except Exception as e:
         print(f"❌ Có lỗi trong quá trình đọc file: {e}")
 

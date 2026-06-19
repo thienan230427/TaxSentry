@@ -5,6 +5,7 @@
  */
 import { startBackground, isRunning, getPid } from '../launcher.js';
 import { loadConfig, getValue } from '../config.js';
+import { getServiceAdapter } from '../utils/service-manager.js';
 import { info, warn, success, error } from '../utils/logger.js';
 import chalk from 'chalk';
 
@@ -38,12 +39,15 @@ export default async function botCommand() {
 
     // Bot script path relative to Python working dir
     const args = ['-m', 'taxsentry.bot.telegram_bot', '--admin-chat-id', adminChatId];
+    const adapter = getServiceAdapter('telegram_bot');
 
     const pid = startBackground('telegram_bot', args);
 
     if (pid) {
       success('Bot Telegram đã được khởi chạy thành công ở chế độ nền! 🤖');
       console.log(chalk.dim(`   PID: ${pid}`));
+      console.log(chalk.dim(`   Adapter: ${adapter.runtimeMode}`));
+      console.log(chalk.dim(`   Supervisor đề xuất: ${adapter.recommendedSupervisor}`));
       console.log(chalk.dim(`   Để xem log: taxsentry logs --service bot`));
       console.log(chalk.dim(`   Để dừng bot: taxsentry stop`));
     } else {

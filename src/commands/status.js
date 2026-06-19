@@ -5,8 +5,10 @@
  */
 import { detectPython, printDetectionResult } from '../utils/python-detector.js';
 import { isConfigured, loadConfig, getValue } from '../config.js';
-import { getServiceStatus, isProcessRunning } from '../launcher.js';
-import { info, success, warn } from '../utils/logger.js';
+import { getPlatformName } from '../utils/paths.js';
+import { getServiceAdapter, formatServiceAdapterSummary } from '../utils/service-manager.js';
+import { getServiceStatus } from '../launcher.js';
+import { success, warn } from '../utils/logger.js';
 import chalk from 'chalk';
 
 export default async function statusCommand() {
@@ -16,7 +18,15 @@ export default async function statusCommand() {
   const py = detectPython();
   printDetectionResult(py);
 
-  // 2. Configuration Status
+  // 2. Runtime Platform
+  console.log();
+  console.log(chalk.bold.cyan('Nền tảng runtime:'));
+  console.log(chalk.dim(`   → OS hiện tại: ${getPlatformName()}`));
+  const platformAdapter = getServiceAdapter('telegram_bot');
+  console.log(chalk.dim(`   → Service adapter: ${formatServiceAdapterSummary('telegram_bot')}`));
+  console.log(chalk.dim(`   → Ghi chú: ${platformAdapter.notes}`));
+
+  // 3. Configuration Status
   console.log();
   if (isConfigured()) {
     success('Cấu hình: Đã được thiết lập ✅');
@@ -43,7 +53,7 @@ export default async function statusCommand() {
     warn('Cấu hình: Chưa thiết lập ❌ (chạy `taxsentry setup`)');
   }
 
-  // 3. Service Status
+  // 4. Service Status
   console.log();
   console.log(chalk.bold.cyan('Trạng thái dịch vụ:'));
   const botStatus = getServiceStatus('telegram_bot');
@@ -53,7 +63,7 @@ export default async function statusCommand() {
     warn(`   Telegram Bot: Không đang chạy`);
   }
 
-  // 4. Tips
+  // 5. Tips
   console.log();
   console.log(chalk.gray('─'.repeat(40)));
   console.log(chalk.dim('💡 Quản lý cấu hình linh hoạt:'));

@@ -5,8 +5,9 @@
 
 import { spawn, spawnSync } from 'child_process';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, openSync } from 'fs';
-import { join } from 'path';
+import { join, delimiter } from 'path';
 import { getPythonPath, RUN_DIR, CORE_DIR, LOGS_DIR, ensureDirectories } from './utils/paths.js';
+import { getServiceAdapter } from './utils/service-manager.js';
 import { info, success, error, warn, debug } from './utils/logger.js';
 import chalk from 'chalk';
 
@@ -54,6 +55,18 @@ function getPythonExecutable() {
     return devPythonPath;
   }
   return getPythonPath();
+}
+
+/**
+ * Build a cross-platform PYTHONPATH for spawned Python processes.
+ */
+function buildPythonEnv(cwd) {
+  const srcPath = join(cwd, 'src');
+  const existing = process.env.PYTHONPATH;
+  return {
+    ...process.env,
+    PYTHONPATH: existing ? `${srcPath}${delimiter}${existing}` : srcPath,
+  };
 }
 
 /**
@@ -122,10 +135,7 @@ export function startAttached(serviceName, args) {
     cwd,
     stdio: ['ignore', logStream, logStream],
     detached: false, // NOT detached → dies when terminal closes
-    env: {
-      ...process.env,
-      PYTHONPATH: `${cwd}\\src${process.env.PYTHONPATH ? `;${process.env.PYTHONPATH}` : ''}`,
-    },
+    env: buildPythonEnv(cwd),
   });
 
   // Don't unref — keep reference for cleanup
@@ -149,6 +159,7 @@ export function startBackground(serviceName, args) {
   const cwd = getPythonWorkingDir();
   const logFile = getLogFile(serviceName);
   const pidFile = getPidFile(serviceName);
+  const adapter = getServiceAdapter(serviceName);
 
   ensureDirectories();
 
@@ -164,6 +175,7 @@ export function startBackground(serviceName, args) {
   }
 
   info(`Đang khởi chạy ${serviceName} ở chế độ nền...`);
+  debug(`Service adapter: ${adapter.runtimeMode} / ${adapter.recommendedSupervisor}`, true);
   debug(`Args: ${args.join(' ')}`, true);
 
   const logStream = openSync(logFile, 'a');
@@ -171,14 +183,13 @@ export function startBackground(serviceName, args) {
   const child = spawn(pyPath, args, {
     cwd,
     stdio: ['ignore', logStream, logStream],
-    detached: true,
-    env: {
-      ...process.env,
-      PYTHONPATH: `${cwd}\\src${process.env.PYTHONPATH ? `;${process.env.PYTHONPATH}` : ''}`,
-    },
+    detached: adapter.detached,
+    env: buildPythonEnv(cwd),
   });
 
-  child.unref();
+  if (adapter.detached && typeof child.unref === 'function') {
+    child.unref();
+  }
 
   if (child.pid) {
     writeFileSync(pidFile, child.pid.toString(), 'utf-8');
@@ -228,6 +239,7 @@ export function isRunning(serviceName) {
  */
 export function stopService(serviceName) {
   const pid = getPid(serviceName);
+  const adapter = getServiceAdapter(serviceName);
   if (!pid || !isProcessRunning(pid)) {
     warn(`${serviceName} không đang chạy hoặc PID không hợp lệ.`);
     // Clean up stale PID file
@@ -237,16 +249,15 @@ export function stopService(serviceName) {
   }
 
   try {
-    // Graceful: SIGTERM first
-    process.kill(pid, 'SIGTERM');
-    info(`Đã gửi tín hiệu tắt (SIGTERM) đến ${serviceName} (PID: ${pid}).`);
+    process.kill(pid, adapter.gracefulSignal);
+    info(`Đã gửi tín hiệu tắt (${adapter.gracefulSignal}) đến ${serviceName} (PID: ${pid}).`);
 
     // Wait a moment and check
     setTimeout(() => {
       if (isProcessRunning(pid)) {
-        warn(`${serviceName} vẫn đang chạy. Đang buộc tắt (SIGKILL)...`);
+        warn(`${serviceName} vẫn đang chạy. Đang buộc tắt (${adapter.forceSignal})...`);
         try {
-          process.kill(pid, 'SIGKILL');
+          process.kill(pid, adapter.forceSignal);
         } catch {
           // Ignore if already dead
         }

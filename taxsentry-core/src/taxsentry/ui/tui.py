@@ -1,38 +1,21 @@
 import sys
 import os
 import subprocess
+from pathlib import Path
 
-def bootstrap_venv():
-    """Tự động phát hiện và khởi chạy lại chương trình bằng Python của môi trường ảo .venv nếu đang chạy ngoài venv."""
-    in_venv = (sys.prefix != sys.base_prefix) or ('VIRTUAL_ENV' in os.environ)
-    
-    if not in_venv:
-        root_dir = os.path.dirname(os.path.abspath(__file__))
-        venv_python = os.path.join(root_dir, ".venv", "Scripts", "python.exe")
-        
-        if not os.path.exists(venv_python):
-            venv_python = os.path.join(root_dir, ".venv", "bin", "python")
-            
-        if os.path.exists(venv_python):
-            args = [venv_python] + sys.argv
-            try:
-                sys.exit(subprocess.run(args).returncode)
-            except Exception as e:
-                print(f"Không thể tự động chuyển hướng sang môi trường ảo: {e}")
-                print("Vui lòng kích hoạt thủ công .venv và chạy lại.")
-                sys.exit(1)
-        else:
-            print("⚠️ Cảnh báo: Không tìm thấy môi trường ảo .venv cục bộ. Hệ thống sẽ cố gắng chạy bằng Python hệ thống.")
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from taxsentry.utils.runtime import bootstrap_into_venv, get_project_root, get_venv_python
 
 # Tự động kích hoạt môi trường ảo nếu cần thiết
-bootstrap_venv()
+bootstrap_into_venv(["-m", "taxsentry", *sys.argv[1:]])
 
 # Tiến hành import các thư viện sau khi đã chắc chắn chạy trong môi trường ảo
 import json
 import time
 import re
 from datetime import datetime
-from pathlib import Path
 from threading import Thread
 
 from rich.console import Console
@@ -350,12 +333,8 @@ def start_telegram_gateway():
         return False
 
     # Tìm Python executable
-    root_dir = Path(__file__).resolve().parent.parent.parent.parent
-    venv_python = root_dir / ".venv" / "Scripts" / "python.exe"
-    if not venv_python.exists():
-        venv_python = root_dir / ".venv" / "bin" / "python"
-    if not venv_python.exists():
-        venv_python = sys.executable
+    root_dir = get_project_root(Path(__file__).resolve())
+    venv_python = get_venv_python(root_dir) or Path(sys.executable)
 
     try:
         # Chạy bot qua module path (dùng cấu trúc src layout mới)
