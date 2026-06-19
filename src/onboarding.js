@@ -1,12 +1,12 @@
 /**
- * 🛡️ TaxSentry CLI - Onboarding Wizard
- * Interactive setup with Telegram Bot Token verification.
+ * 🛡️ TaxSentry CLI - Onboarding Wizard (Flexible Config v2)
+ * Interactive setup với dynamic schema — dùng schema từ config để hỏi user.
  */
 
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import boxen from 'boxen';
-import { getEmptyConfig, saveConfig, writeEnvFile, updateConfig } from './config.js';
+import { loadConfig, saveConfig, writeEnvFile, updateConfig, setValue, getValue } from './config.js';
 import { info, success, error, warn, divider } from './utils/logger.js';
 
 /**
@@ -26,21 +26,18 @@ export async function verifyTelegramToken(token) {
 }
 
 /**
- * Validate MySQL connection (basic check, can be extended).
- * For now, we just verify the format of the inputs.
+ * Validate MySQL connection (basic format check).
  */
 export function validateMySQL(config) {
-  if (!config.mysql.port || isNaN(config.mysql.port) || config.mysql.port < 1 || config.mysql.port > 65535) {
+  const port = getValue(config, 'mysql', 'port');
+  if (isNaN(port) || port < 1 || port > 65535) {
     return 'Port phải là số từ 1 đến 65535.';
-  }
-  if (!config.mysql.host || config.mysql.host.trim() === '') {
-    return 'Host không được để trống.';
   }
   return true;
 }
 
 /**
- * Main Onboarding Wizard.
+ * Run the onboarding wizard using the dynamic schema.
  */
 export async function runOnboarding() {
   console.log(
@@ -48,7 +45,8 @@ export async function runOnboarding() {
       chalk.bold.cyan(
         '🛡️ Bộ cài đặt cấu hình hệ thống TaxSentry (AI Co-pilot)\n\n' +
         'Chào mừng bạn đến với trình thiết lập cấu hình Onboarding.\n' +
-        'Hệ thống sẽ lưu trữ bảo mật các tham số và tự động ghi nhận.'
+        'Hệ thống sẽ lưu trữ bảo mật các tham số và tự động ghi nhận.\n' +
+        'Bạn có thể thêm/sửa field sau bằng lệnh: taxsentry config'
       ),
       {
         padding: 1,
@@ -66,6 +64,7 @@ export async function runOnboarding() {
   console.log(chalk.yellow('1. Toàn bộ dữ liệu (API key, DB pass, App Password) được lưu cục bộ.'));
   console.log(chalk.yellow('2. Hệ thống AI xử lý cục bộ hoặc qua dịch vụ được chỉ định rõ ràng.'));
   console.log(chalk.yellow('3. Bạn chịu trách nhiệm bảo vệ file ~/.taxsentry/config.json.'));
+  console.log(chalk.yellow('4. Bạn có thể thêm/sửa field bất kỳ lúc nào: taxsentry config add-field'));
   divider();
 
   const { agreed } = await inquirer.prompt([
@@ -84,137 +83,77 @@ export async function runOnboarding() {
 
   console.log(chalk.green('\n✅ Bắt đầu thiết lập cấu hình...\n'));
 
-  let config = getEmptyConfig();
+  let config = loadConfig();
+  // Start fresh values if not already configured
+  if (!config.isConfigured) {
+    config.values = {};
+  }
 
-  // 1. Director Name
-  const { directorName } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'directorName',
-      message: 'Tên Giám đốc / Người quản lý (dùng để hiển thị):',
-      default: 'Giám đốc',
-      validate: (input) => (input.trim().length > 2 ? true : 'Tên phải có ít nhất 3 ký tự.'),
-    },
-  ]);
-  config.directorName = directorName.trim();
+  // Walk through each group in schema
+  for (const group of config.schema.groups) {
+    console.log(chalk.cyan(`\n📋 Cấu hình: ${group.label}`));
+    console.log(chalk.dim(`   (Group: ${group.id})`));
 
-  // 2. Telegram Bot
-  console.log(chalk.cyan('\n📱 Bước 1/4: Cấu hình Telegram Bot'));
-  console.log(chalk.dim('   → Tạo bot mới tại @BotFather trên Telegram'));
-  console.log(chalk.dim('   → Lấy "Bot Token" (định dạng: 123456789:ABCdefGHI...)\n'));
+    const prompts = [];
 
-  let tokenValid = false;
-  let botToken = '';
-  let botInfo = null;
+    for (const field of group.fields) {
+      const currentVal = getValue(config, group.id, field.key);
+      const defaultVal = currentVal || field.default || '';
 
-  while (!tokenValid) {
-    const answers = await inquirer.prompt([
-      {
-        type: 'password',
-        name: 'token',
-        message: 'Nhập Telegram Bot Token:',
-        validate: (input) => (input.match(/^\d+:.+/) ? true : 'Token phải bắt đầu bằng số và dấu hai chấm.'),
-      },
-    ]);
-    botToken = answers.token;
+      const promptConfig = {
+        type: field.type === 'password' ? 'password' : 'input',
+        name: `${group.id}.${field.key}`,
+        message: `${field.label}:`,
+        default: field.type === 'password' ? '' : defaultVal,
+      };
 
-    info('Đang xác thực Token với Telegram API...');
-    const result = await verifyTelegramToken(botToken);
-    
-    if (result.valid) {
-      tokenValid = true;
-      botInfo = result;
-      success(`Token hợp lệ! Bot: @${result.botName}`);
-    } else {
-      error(`Token không hợp lệ: ${result.error}`);
-      const { retry } = await inquirer.prompt([
-        { type: 'confirm', name: 'retry', message: 'Nhập lại Token?', default: true },
-      ]);
-      if (!retry) {
-        console.log(chalk.yellow('\n👋 Thiết lập bị hủy.'));
-        process.exit(0);
+      // Validation cho required fields
+      if (field.required) {
+        promptConfig.validate = (input) => {
+          if (!input || input.trim() === '') return `${field.label} không được để trống.`;
+          // Special validation for Telegram Bot Token
+          if (field.key === 'telegramBotToken') {
+            return input.match(/^\d+:.+/) ? true : 'Token phải bắt đầu bằng số và dấu hai chấm.';
+          }
+          // Validation for Admin Chat ID
+          if (field.key === 'adminChatId') {
+            return /^-?\d+$/.test(input.trim()) ? true : 'Chat ID phải là số nguyên.';
+          }
+          return true;
+        };
+      }
+
+      prompts.push(promptConfig);
+    }
+
+    if (prompts.length > 0) {
+      const answers = await inquirer.prompt(prompts);
+
+      // Save answers
+      for (const [fullKey, value] of Object.entries(answers)) {
+        const [gid, fk] = fullKey.split('.');
+        // For password type, if empty and had previous value, keep it
+        if (value === '' && getValue(config, gid, fk)) {
+          // Keep existing
+        } else {
+          setValue(config, gid, fk, value);
+        }
       }
     }
   }
-  config.telegramBotToken = botToken;
 
-  // 3. Admin Chat ID
-  console.log(chalk.cyan('\n👤 Bước 2/4: Cấu hình Admin Chat ID'));
-  console.log(chalk.dim(`   → Mở Telegram, tìm bot @${botInfo.botName}`));
-  console.log(chalk.dim('   → Nhấn /start và gửi một tin nhắn bất kỳ'));
-  console.log(chalk.dim('   → (Hoặc tự nhập nếu bạn đã có ID)\n'));
-
-  const { adminChatId } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'adminChatId',
-      message: 'Nhập Chat ID của Giám đốc (số hoặc -số):',
-      validate: (input) => (/^-?\d+$/.test(input.trim()) ? true : 'Chat ID phải là số nguyên.'),
-    },
-  ]);
-  config.adminChatId = adminChatId.trim();
-
-  // 4. MySQL Config
-  console.log(chalk.cyan('\n🗄️ Bước 3/4: Cấu hình MySQL Database'));
-  const mysqlAnswers = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'host',
-      message: 'MySQL Host:',
-      default: 'localhost',
-    },
-    {
-      type: 'number',
-      name: 'port',
-      message: 'MySQL Port:',
-      default: 3306,
-    },
-    {
-      type: 'input',
-      name: 'user',
-      message: 'MySQL User:',
-      default: 'root',
-    },
-    {
-      type: 'password',
-      name: 'password',
-      message: 'MySQL Password:',
-      default: '',
-    },
-    {
-      type: 'input',
-      name: 'database',
-      message: 'Tên Database:',
-      default: 'tax_sentry',
-    },
-  ]);
-  config.mysql = mysqlAnswers;
-
-  // 5. Email App Password
-  console.log(chalk.cyan('\n📧 Bước 4/4: Cấu hình Email Kế toán (IMAP)'));
-  console.log(chalk.dim('   → Vào Cài đặt Gmail/Tài khoản → Ứng dụng & Mật khẩu ứng dụng'));
-  console.log(chalk.dim('   → Tạo mật khẩu ứng dụng (App Password) mới\n'));
-
-  const emailAnswers = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'address',
-      message: 'Địa chỉ email Kế toán trưởng (IMAP):',
-      default: 'ketoan@company.com',
-    },
-    {
-      type: 'password',
-      name: 'appPassword',
-      message: 'Gmail App Password (16 ký tự, không dấu cách):',
-      validate: (input) => (input.replace(/\s/g, '').length === 16 ? true : 'App Password phải đủ 16 ký tự.'),
-      filter: (input) => input.replace(/\s/g, ''), // Remove spaces automatically
-    },
-  ]);
-  config.email = {
-    ...config.email,
-    address: emailAnswers.address.trim(),
-    appPassword: emailAnswers.appPassword,
-  };
+  // Special: verify Telegram token
+  const tgToken = getValue(config, 'telegram', 'telegramBotToken');
+  if (tgToken && tgToken !== 'YOUR_BOT_TOKEN_HERE') {
+    info('Đang xác thực Telegram Token với API...');
+    const result = await verifyTelegramToken(tgToken);
+    if (result.valid) {
+      success(`Token hợp lệ! Bot: @${result.botName}`);
+    } else {
+      warn(`Không thể xác thực Token: ${result.error}`);
+      warn('Bạn vẫn có thể tiếp tục và sửa sau: taxsentry config set telegram.telegramBotToken');
+    }
+  }
 
   // Finalize
   config.isConfigured = true;
@@ -224,9 +163,25 @@ export async function runOnboarding() {
   console.log();
   success('Cấu hình đã được lưu thành công vào ~/.taxsentry! 🎉');
   success(`Python .env file cũng đã được generate tại core.`);
-  console.log(chalk.cyan('\nBạn có thể chạy lệnh sau để khởi động hệ thống:'));
-  console.log(chalk.bold.white('  taxsentry start'));
+
+  // Show summary
+  console.log(chalk.cyan('\n📊 Tổng kết cấu hình:'));
+  for (const group of config.schema.groups) {
+    console.log(chalk.bold(`  ${group.label}:`));
+    for (const field of group.fields) {
+      const val = getValue(config, group.id, field.key);
+      const displayVal = field.secret ? '••••••••' : (val || '(trống)');
+      console.log(chalk.dim(`    ${field.label}: ${displayVal}`));
+    }
+  }
+
+  console.log(chalk.cyan('\n💡 Các lệnh hữu ích:'));
+  console.log(chalk.dim('  taxsentry config             → Xem toàn bộ config'));
+  console.log(chalk.dim('  taxsentry config set <key> <value>  → Sửa 1 field'));
+  console.log(chalk.dim('  taxsentry config add-field   → Thêm field mới'));
+  console.log(chalk.dim('  taxsentry config rename-field → Đổi tên field'));
+  console.log(chalk.dim('  taxsentry up                 → Chạy hệ thống'));
   console.log();
-  
+
   return config;
 }

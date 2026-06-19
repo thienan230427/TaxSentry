@@ -35,6 +35,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+# Load .env from taxsentry-core root
+from dotenv import load_dotenv
+dotenv_path = Path(__file__).resolve().parent.parent.parent.parent / '.env'
+load_dotenv(dotenv_path)
+
 # Nạp cấu hình biến môi trường
 os.environ['EMAIL_PASS'] = os.getenv('EMAIL_PASS', '')  # App Password
 os.environ['DB_HOST'] = os.getenv('DB_HOST', 'localhost')
@@ -44,10 +49,13 @@ os.environ['DB_PASS'] = os.getenv('DB_PASS', '')
 os.environ['DB_NAME'] = os.getenv('DB_NAME', 'tax_sentry')
 
 # Thêm path của dự án
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(BASE_DIR / 'src'))
 sys.path.insert(0, str(Path(__file__).parent.absolute()))
 from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
 from taxsentry.database.db_manager import TaxSentryDBManager
-from taxsentry.config.paths import DOWNLOAD_DIR, KNOWLEDGE_PATH
+from taxsentry.config.paths import DOWNLOAD_DIR, KNOWLEDGE_PATH, JSON_PATH, EVIDENCE_CONTEXT_PATH
+from taxsentry.core.evidence_preview import build_evidence_preview_text, load_evidence_context
 
 # Telegram Bot API
 from telegram import Update
@@ -68,9 +76,69 @@ def format_markdown(text: str) -> str:
     """Định dạng văn bản cho Telegram."""
     return text
 
+
+def _load_financial_json() -> dict:
+    if not JSON_PATH.exists():
+        return {}
+    try:
+        return json.loads(JSON_PATH.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+
+
+async def _send_evidence_preview(bot, chat_id: str, evidence_context: dict) -> None:
+    preview_text = build_evidence_preview_text(evidence_context, os.getenv('DIRECTOR_NAME', '') or 'Sếp')
+    if preview_text:
+        await bot.send_message(chat_id=chat_id, text=preview_text)
+
+    for image in evidence_context.get('image_attachments', [])[:5]:
+        image_path = image.get('path')
+        if image_path and os.path.exists(image_path):
+            with open(image_path, 'rb') as img_file:
+                await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=img_file,
+                    caption=f"Preview attachment: {image.get('file_name', 'image')}"
+                )
+
+
+def _build_free_chat_prompt(user_query: str, director_name: str, financial_context, tax_rules_snippet: str, evidence_context: dict) -> str:
+    financial_json = _load_financial_json()
+    return f"""# Vai trò: TaxSentry Copilot đồng hành cùng Sếp {director_name}
+Bạn là trợ lý tài chính-thuế của Sếp {director_name}. Hãy trả lời bằng tiếng Việt thật tự nhiên như một người trợ lý đang nói chuyện trực tiếp với Sếp.
+
+YÊU CẦU GIỌNG VĂN:
+- Xưng 'em', gọi người dùng là 'Sếp'.
+- Ưu tiên nói tự nhiên, rõ ràng, ngắn gọn, không giáo điều, không mở đầu kiểu công văn.
+- Không trình bày thành một khối báo cáo máy móc trừ khi Sếp thực sự yêu cầu báo cáo formal.
+- Nếu dữ liệu chưa đủ để kết luận, nói thẳng phần nào đã thấy, phần nào chưa đủ.
+- Khi đang dựa trên file/bảng lương gần nhất, hãy bám vào chứng cứ đầu vào đã được preview trước đó.
+
+## Chứng cứ đầu vào gần nhất đã parse:
+{json.dumps(evidence_context, ensure_ascii=False, indent=2)}
+
+## Dữ liệu báo cáo tài chính gần đây trong cơ sở dữ liệu:
+{json.dumps(financial_context, default=str, indent=2, ensure_ascii=False)}
+
+## JSON phân tích gần nhất:
+{json.dumps(financial_json, ensure_ascii=False, indent=2)}
+
+## Trích lục quy định pháp luật Thuế Việt Nam:
+{tax_rules_snippet}
+
+## Câu hỏi của Sếp:
+\"{user_query}\"
+
+Hãy trả lời như một người trợ lý hiểu việc, ưu tiên:
+1. Xác nhận nhanh mình đang nhìn vào dữ liệu nào.
+2. Trả lời đúng trọng tâm câu hỏi.
+3. Nếu cần phân tích, nêu các số chính trước rồi mới nhận xét.
+4. Tránh văn phong khuôn mẫu kiểu 'dưới đây là báo cáo gồm 3 phần'.
+"""
+
 # --- Helper: Gửi thông báo chủ động từ hệ thống quét chạy ngầm ---
-async def send_active_report_to_director(pdf_path: str, summary_text: str) -> bool:
-    """Gửi báo cáo chủ động kèm file PDF tới Telegram của Giám đốc."""
+async def send_active_report_to_director(pdf_path: str, summary_text: str, evidence_context_path: str | None = None) -> bool:
+
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     chat_id = os.getenv('ADMIN_CHAT_ID')
     
@@ -81,11 +149,18 @@ async def send_active_report_to_director(pdf_path: str, summary_text: str) -> bo
     try:
         from telegram import Bot
         bot = Bot(token=token)
-        
-        # Gửi tin nhắn tóm tắt rủi ro
+        evidence_context = load_evidence_context(Path(evidence_context_path) if evidence_context_path else EVIDENCE_CONTEXT_PATH)
+
+        if evidence_context:
+            await _send_evidence_preview(bot, chat_id, evidence_context)
+
+        # Gửi tin nhắn tóm tắt rủi ro sau khi đã show chứng cứ đầu vào
         await bot.send_message(
             chat_id=chat_id,
-            text=f"📊 **[THÔNG BÁO TỰ ĐỘNG] CẬP NHẬT BÁO CÁO TÀI CHÍNH MỚI**\n\n{summary_text}"
+            text=(
+                "📊 Em bắt đầu phần nhận xét nhanh đây Sếp:\n\n"
+                f"{summary_text or 'Hiện em đã parse xong dữ liệu, nhưng phần tóm tắt ngắn đang trống nên em gửi Sếp PDF chi tiết ngay bên dưới.'}"
+            )
         )
         
         # Gửi kèm tệp tin PDF báo cáo chi tiết của AI
@@ -95,9 +170,9 @@ async def send_active_report_to_director(pdf_path: str, summary_text: str) -> bo
                     chat_id=chat_id,
                     document=f,
                     filename=os.path.basename(pdf_path),
-                    caption="📄 Báo cáo đánh giá hiệu quả kinh doanh & Kiểm toán rủi ro thuế chi tiết."
+                    caption="📄 Báo cáo đánh giá hiệu quả kinh doanh & kiểm toán rủi ro thuế chi tiết."
                 )
-        print("✅ Đã gửi thông báo và PDF báo cáo thành công qua Telegram!")
+        print("✅ Đã gửi preview chứng cứ, thông báo và PDF báo cáo thành công qua Telegram!")
         return True
     except Exception as e:
         print(f"❌ Lỗi khi gửi thông báo qua Telegram: {e}")
@@ -119,7 +194,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    director_name = os.getenv('DIRECTOR_NAME', 'Thiên Ân')
+    director_name = os.getenv('DIRECTOR_NAME', '') or 'Sếp'
     await update.message.reply_text(
         f"🛡️ **Chào mừng Giám đốc {director_name} đến với Hệ thống Giám sát Tài chính & Thuế TaxSentry!**\n\n"
         f"Tôi là Trợ lý AI Kiểm toán của Giám đốc {director_name}. Hệ thống đã kích hoạt thành công.\n\n"
@@ -192,7 +267,8 @@ async def analyze_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("⚠️ Yêu cầu bị từ chối: Quyền truy cập không hợp lệ.")
         return
 
-    await update.message.reply_text("🧠 Hệ thống đang kết nối tới AI Engine (Local Gemma 2) để phân tích báo cáo và rủi ro thuế. Vui lòng chờ...")
+    model_name = os.getenv('LM_MODEL_NAME', 'AI') or 'AI'
+    await update.message.reply_text(f"🧠 Hệ thống đang kết nối tới AI Engine ({model_name}) để phân tích báo cáo và rủi ro thuế. Vui lòng chờ...")
 
     engine = TaxSentryAnalysisEngine()
     if not engine.connect():
@@ -352,24 +428,19 @@ async def handle_free_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if tax_rules_path.exists():
         tax_rules_snippet = tax_rules_path.read_text(encoding='utf-8')[:2000]
 
+    evidence_context = load_evidence_context(EVIDENCE_CONTEXT_PATH)
+    if evidence_context:
+        await _send_evidence_preview(context.bot, update.effective_chat.id, evidence_context)
+
     # 3. Tạo Prompt chi tiết gửi cho LLM Local
-    director_name = os.getenv('DIRECTOR_NAME', 'Thiên Ân')
-    prompt = f"""# Role: Trợ lý AI Kiểm toán của Giám đốc {director_name}
-Nhiệm vụ của bạn là giải đáp câu hỏi của Giám đốc {director_name} một cách trang trọng, lịch sự, chuẩn mực và khách quan (xưng hô 'Tôi/Hệ thống' và gọi 'Giám đốc').
-Bạn được cung cấp thông tin tài chính mới nhất của doanh nghiệp và trích lục pháp luật thuế để làm ngữ cảnh trả lời.
-
-## Dữ liệu báo cáo tài chính gần đây trong cơ sở dữ liệu:
-{json.dumps(financial_context, default=str, indent=2, ensure_ascii=False)}
-
-## Trích lục quy định pháp luật Thuế Việt Nam:
-{tax_rules_snippet}
-
-## Yêu cầu/Câu hỏi của Giám đốc:
-"{user_query}"
-
-Hãy phân tích và trả lời Giám đốc một cách chuyên nghiệp, chính xác dựa trên dữ liệu ngữ cảnh được cung cấp.
-Nếu Giám đốc hỏi về tiến độ, hãy báo cáo rằng hệ thống tự động hóa đang hoạt động chạy ngầm liên tục để quét hòm thư của Kế toán trưởng và sẽ tự động xử lý ngay khi phát hiện báo cáo mới.
-"""
+    director_name = os.getenv('DIRECTOR_NAME', '') or 'Sếp'
+    prompt = _build_free_chat_prompt(
+        user_query=user_query,
+        director_name=director_name,
+        financial_context=financial_context,
+        tax_rules_snippet=tax_rules_snippet,
+        evidence_context=evidence_context,
+    )
 
     engine = TaxSentryAnalysisEngine()
     if engine.connect():
@@ -407,7 +478,7 @@ def main():
 
     # Khởi tạo Application
     app = Application.builder().token(token).build()
-    
+
     # Đăng ký lệnh điều hướng (kèm alias tiếng Việt cho phù hợp Obsidian plan)
     app.add_handler(CommandHandler(['start'], start))
     app.add_handler(CommandHandler(['reports', 'tiendo'], get_reports))
@@ -420,9 +491,9 @@ def main():
     
     print(f"✅ Telegram Bot online thành công! Admin Chat ID: {ADMIN_CHAT_ID}")
     
-    # Chạy bot polling
+    # Chạy bot polling — drop_pending_updates=true để tránh Conflict
     try:
-        app.run_polling()
+        app.run_polling(drop_pending_updates=True)
     except KeyboardInterrupt:
         print("\n👋 Bot đang dừng an toàn...")
 

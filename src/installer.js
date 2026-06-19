@@ -4,12 +4,19 @@
  */
 
 import { execSync } from 'child_process';
-import { existsSync, rmSync } from 'fs';
-import { join } from 'path';
+import { existsSync, rmSync, cpSync, readFileSync, writeFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import ora from 'ora';
 import chalk from 'chalk';
-import { VENV_DIR, CORE_DIR, getPythonPath, getPipPath } from './utils/paths.js';
+import { VENV_DIR, CORE_DIR, getPythonPath, getPipPath, ensureDirectories } from './utils/paths.js';
 import { info, success, error, warn } from './utils/logger.js';
+
+// Project root = two levels up from installer.js (src/installer.js → project root)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const PROJECT_ROOT = join(__dirname, '..');
+const PROJECT_CORE_DIR = join(PROJECT_ROOT, 'taxsentry-core');
 
 /**
  * Check if virtual environment already exists and is valid.
@@ -52,7 +59,7 @@ export async function createVenv(pythonCmd) {
 /**
  * Install Python dependencies via pip.
  */
-export async function installDependencies() {
+export async function installDependencies(pythonCmd) {
   const requirementsPath = join(CORE_DIR, 'requirements.txt');
   if (!existsSync(requirementsPath)) {
     throw new Error(`Không tìm thấy file requirements.txt tại ${requirementsPath}`);
@@ -75,14 +82,14 @@ export async function installDependencies() {
     // Windows command chaining might need cmd /c, but cross-platform requires different approach
     // Let's do it in two steps for safety
     
-    // 1. Upgrade pip
-    execSync(`"${pipCmd}" -m pip install --upgrade pip setuptools wheel`, {
+    // 1. Upgrade pip (must use python -m pip on pip 25+ to modify itself)
+    execSync(`"${pythonCmd}" -m pip install --upgrade pip setuptools wheel`, {
       stdio: 'pipe',
       timeout: 120000,
     });
 
     // 2. Install requirements
-    execSync(`"${pipCmd}" -m pip install -r "${requirementsPath}"`, {
+    execSync(`"${pipCmd}" install -r "${requirementsPath}"`, {
       stdio: 'pipe',
       cwd: CORE_DIR,
       timeout: 300000, // 5 minutes for large packages like reportlab, pandas
@@ -92,6 +99,48 @@ export async function installDependencies() {
   } catch (err) {
     spinner.fail(`Cài đặt dependencies thất bại: ${err.message}`);
     console.log(chalk.dim('\nGợi ý: Kiểm tra kết nối mạng và đảm bảo Python tương thích.\n'));
+    throw err;
+  }
+}
+
+/**
+ * Copy the taxsentry-core source code from the project to ~/.taxsentry/taxsentry-core/
+ */
+export async function copyCoreSource() {
+  const spinner = ora('Đang copy mã nguồn taxsentry-core...').start();
+
+  if (!existsSync(PROJECT_CORE_DIR)) {
+    spinner.fail(`Không tìm thấy thư mục taxsentry-core tại ${PROJECT_CORE_DIR}`);
+    throw new Error(`Thư mục taxsentry-core không tồn tại. Kiểm tra lại cấu trúc dự án.`);
+  }
+
+  try {
+    // Preserve existing .env before overwriting
+    let existingEnv = null;
+    const envFile = join(CORE_DIR, '.env');
+    if (existsSync(envFile)) {
+      existingEnv = readFileSync(envFile, 'utf-8');
+    }
+
+    // Ensure target directory exists
+    ensureDirectories();
+
+    // Remove old copy if exists
+    if (existsSync(CORE_DIR)) {
+      rmSync(CORE_DIR, { recursive: true, force: true });
+    }
+
+    // Copy recursively
+    cpSync(PROJECT_CORE_DIR, CORE_DIR, { recursive: true });
+
+    // Restore .env so config is not overwritten
+    if (existingEnv) {
+      writeFileSync(envFile, existingEnv, 'utf-8');
+    }
+
+    spinner.succeed('Đã copy mã nguồn taxsentry-core thành công! 📁');
+  } catch (err) {
+    spinner.fail(`Copy mã nguồn thất bại: ${err.message}`);
     throw err;
   }
 }
@@ -120,7 +169,8 @@ export async function runInstallation(pythonCmd, forceReinstall = false) {
   }
 
   await createVenv(pythonCmd);
-  await installDependencies();
+  await copyCoreSource();
+  await installDependencies(pythonCmd);
 
   success('Cài đặt môi trường Python hoàn tất! 🎉\n');
   return true;

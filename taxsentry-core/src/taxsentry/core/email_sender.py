@@ -23,7 +23,7 @@ class TaxSentryEmailSender:
         self.smtp_port = int(os.getenv("SMTP_PORT", 465))  # Mặc định cổng SSL 465
         self.user = os.getenv("EMAIL_USER")
         self.password = os.getenv("EMAIL_PASS")
-        self.director_email = os.getenv("DIRECTOR_EMAIL", "thienan12342007@gmail.com")
+        self.director_email = os.getenv("DIRECTOR_EMAIL", "")
         self.director_name = os.getenv("DIRECTOR_NAME", "Giám đốc")
 
     def is_configured(self) -> bool:

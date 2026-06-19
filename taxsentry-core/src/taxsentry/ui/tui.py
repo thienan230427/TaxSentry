@@ -47,9 +47,39 @@ console = Console()
 
 from taxsentry.config.paths import DB_PATH, EXCEL_PATH, JSON_PATH, ENV_PATH
 
-# --- Trạng thái hệ thống mặc định ---
+# --- Dynamic config readers (đọc từ env, không hardcode) ---
+def get_model_display_name() -> str:
+    """Lấy tên model từ config, format đẹp để hiển thị."""
+    model = os.getenv("LM_MODEL_NAME", "")
+    if not model:
+        return "[yellow]Not Configured[/yellow]"
+    # Lấy phần cuối của model name (sau /) và capitalize
+    display = model.split("/")[-1] if "/" in model else model
+    return f"[green]Connected ({display})[/green]"
+
+def get_llm_server_url() -> str:
+    """Lấy URL server AI từ config."""
+    return os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
+
+def get_director_name() -> str:
+    """Lấy tên Giám đốc từ config."""
+    return os.getenv("DIRECTOR_NAME", "") or ""
+
+def get_director_email() -> str:
+    """Lấy email Giám đốc từ config."""
+    return os.getenv("DIRECTOR_EMAIL", "") or ""
+
+def get_accountant_email() -> str:
+    """Lấy email Kế toán trưởng từ config."""
+    return os.getenv("ACCOUNTANT_EMAIL", "") or ""
+
+def get_email_user() -> str:
+    """Lấy email hệ thống (IMAP login) từ config."""
+    return os.getenv("EMAIL_USER", "") or ""
+
+# --- Trạng thái hệ thống (dynamic, cập nhật từ config) ---
 SYSTEM_STATUS = {
-    "LM Studio": "[green]Connected (Local Gemma 2)[/green]",
+    "LM Studio": "[yellow]Checking...[/yellow]",
     "Automation Workflow": "[green]Active (Polling 60s)[/green]",
     "Telegram Bot": "[yellow]Offline (Connecting...)[/yellow]",
     "Database (SQLite)": "[green]Connected (Local DB)[/green]",
@@ -58,10 +88,6 @@ SYSTEM_STATUS = {
 LOG_MESSAGES = [
     "Hệ thống giám sát TaxSentry bắt đầu khởi chạy.",
     f"Đang liên kết cơ sở dữ liệu SQLite cục bộ (Zero-Setup).",
-    "Kiểm thái máy chủ trí tuệ nhân tạo LM Studio tại http://localhost:1234/v1...",
-    "LM Studio kết nối thành công. Đã xác định mô hình hoạt động.",
-    "Hệ thống Email Poller sẵn sàng. Đang giám sát thư điện tử từ Kế toán trưởng...",
-    "Hệ thống Telegram Bot sẵn sàng. Đang kết nối kênh tương tác...",
 ]
 
 EMAILS_QUEUE = []
@@ -141,9 +167,10 @@ class Header:
         grid = Table.grid(expand=True)
         grid.add_column(justify="left", ratio=1)
         grid.add_column(justify="right", ratio=1)
-        director_name = os.getenv("DIRECTOR_NAME", "Thiên Ân")
+        director_name = os.getenv("DIRECTOR_NAME", "")
+        title_text = f"🛡️ TAXSENTRY — HỆ THỐNG AI KIỂM TOÁN DÀNH CHO GIÁM ĐỐC: {director_name.upper()}" if director_name else "🛡️ TAXSENTRY — HỆ THỐNG AI KIỂM TOÁN"
         grid.add_row(
-            Text(f"🛡️ TAXSENTRY — HỆ THỐNG AI KIỂM TOÁN DÀNH CHO GIÁM ĐỐC: {director_name.upper()}", style="bold white"),
+            Text(title_text, style="bold white"),
             Text(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", style="bold white"),
         )
         return Panel(grid, style="bold white on deep_sky_blue1", border_style="deep_sky_blue1")
@@ -196,50 +223,113 @@ class RecentActivityPanel:
 class LogsPanel:
     """Hiển thị logs hệ thống đang chạy thời gian thực và thông tin báo cáo đã trích xuất."""
 
+    @staticmethod
+    def _fmt_currency(value) -> str:
+        if isinstance(value, (int, float)):
+            return f"{value:,.0f} VND"
+        return "n/a"
+
+    def _append_report_summary(self, text: Text, data: dict) -> None:
+        metadata = data.get("metadata", {})
+        parsed_at = metadata.get("parsed_at", "")
+        period_display = f"({parsed_at})" if parsed_at else f"(Cập nhật: {datetime.now().strftime('%m/%Y')})"
+
+        income_statement = data.get("data", {}).get("income_statement", {})
+        is_t5 = income_statement.get("T5_Actual", {}) or {}
+        assumptions = data.get("assumptions", {}) or {}
+        canonical = data.get("data", {}).get("canonical_metrics", {}) or {}
+        document_types = metadata.get("document_types", []) or data.get("data", {}).get("workbook_overview", {}).get("document_types", []) or []
+
+        if all(key in is_t5 for key in ("revenue", "gross_profit", "total_opex", "net_income")):
+            text.append(f"📊 THÔNG TIN BÁO CÁO KINH DOANH {period_display}\n", style="bold green")
+            text.append(f"  • Doanh thu thuần:  {self._fmt_currency(is_t5.get('revenue'))}\n", style="white")
+            text.append(f"  • Lợi nhuận gộp:   {self._fmt_currency(is_t5.get('gross_profit'))}\n", style="white")
+            text.append(f"  • Chi phí vận hành: {self._fmt_currency(is_t5.get('total_opex'))}\n", style="white")
+            text.append(f"  • Lợi nhuận ròng:   {self._fmt_currency(is_t5.get('net_income'))}\n", style="bold yellow")
+
+            revenue = is_t5.get("revenue")
+            hospitality_limit_pct = assumptions.get("hospitality_limit_pct")
+            hospitality_valid = is_t5.get("hospitality_valid_exp") or 0
+            hospitality_no_invoice = is_t5.get("hospitality_no_invoice_exp") or 0
+            limit = revenue * hospitality_limit_pct if revenue is not None and hospitality_limit_pct is not None else None
+            actual_hospitality = hospitality_valid + hospitality_no_invoice
+
+            text.append("\n⚠️ ĐÁNH GIÁ RỦI RO THUẾ BAN ĐẦU:\n", style="bold red")
+            if hospitality_no_invoice > 0:
+                text.append(
+                    f"  🚨 Phát hiện {hospitality_no_invoice:,.0f} VND chi phí tiếp khách không có hóa đơn đỏ (có thể bị loại khi quyết toán thuế TNDN).\n",
+                    style="bold red",
+                )
+            if limit is not None and actual_hospitality > limit:
+                text.append(
+                    f"  🚨 Chi phí tiếp khách ({actual_hospitality:,.0f} VND) vượt hạn mức quy định ({limit:,.0f} VND).\n",
+                    style="bold red",
+                )
+            else:
+                text.append("  ✅ Chưa thấy cảnh báo hạn mức tiếp khách từ dữ liệu hiện tại.\n", style="green")
+            text.append("=" * 50 + "\n\n", style="gray50")
+            return
+
+        if "payroll" in document_types or any(key in canonical for key in ("total_income", "personal_income_tax", "social_insurance", "net_pay")):
+            text.append(f"📋 THÔNG TIN BẢNG LƯƠNG / CHI TRẢ NHÂN SỰ {period_display}\n", style="bold green")
+            text.append(
+                f"  • Tổng thu nhập chi trả: {self._fmt_currency(canonical.get('total_income', {}).get('value'))}\n",
+                style="white",
+            )
+            text.append(
+                f"  • Bảo hiểm bắt buộc:    {self._fmt_currency(canonical.get('social_insurance', {}).get('value'))}\n",
+                style="white",
+            )
+            text.append(
+                f"  • Thuế TNCN tạm khấu trừ: {self._fmt_currency(canonical.get('personal_income_tax', {}).get('value'))}\n",
+                style="white",
+            )
+            text.append(
+                f"  • Thực lĩnh:            {self._fmt_currency(canonical.get('net_pay', {}).get('value'))}\n",
+                style="bold yellow",
+            )
+            text.append("\nℹ️ Đây là file payroll, nên bảng bên này hiển thị số chi trả nhân sự thay vì chỉ tiêu doanh thu/lợi nhuận.\n", style="cyan")
+            text.append("=" * 50 + "\n\n", style="gray50")
+            return
+
+        text.append(f"📄 ĐÃ NHẬN DỮ LIỆU MỚI {period_display}\n", style="bold green")
+        if document_types:
+            text.append(f"  • Loại dữ liệu nhận diện: {', '.join(document_types)}\n", style="white")
+        if canonical:
+            for key, label in [
+                ("revenue", "Doanh thu"),
+                ("gross_profit", "Lợi nhuận gộp"),
+                ("total_opex", "Tổng chi phí vận hành"),
+                ("net_income", "Lợi nhuận ròng"),
+                ("total_income", "Tổng thu nhập chi trả"),
+            ]:
+                metric = canonical.get(key)
+                if metric:
+                    text.append(f"  • {label}: {self._fmt_currency(metric.get('value'))}\n", style="white")
+        text.append("=" * 50 + "\n\n", style="gray50")
+
     def __rich__(self) -> Panel:
         text = Text()
-        
-        # 1. Hiển thị thông tin báo cáo thực tế trích xuất từ JSON (nếu có)
+
         if JSON_PATH.exists():
             try:
                 with open(JSON_PATH, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                
-                is_t5 = data["data"]["income_statement"]["T5_Actual"]
-                text.append("📊 THÔNG TIN BÁO CÁO KINH DOANH THÁNG 05/2026 (TRÍCH XUẤT)\n", style="bold green")
-                text.append(f"  • Doanh thu thuần:  {is_t5['revenue']:,.0f} VND\n", style="white")
-                text.append(f"  • Lợi nhuận gộp:   {is_t5['gross_profit']:,.0f} VND\n", style="white")
-                text.append(f"  • Chi phí vận hành: {is_t5['total_opex']:,.0f} VND\n", style="white")
-                text.append(f"  • Lợi nhuận ròng:   {is_t5['net_income']:,.0f} VND\n", style="bold yellow")
-                
-                # Cảnh báo rủi ro thuế
-                limit = is_t5["revenue"] * data["assumptions"]["hospitality_limit_pct"]
-                actual_hospitality = is_t5["hospitality_valid_exp"] + is_t5["hospitality_no_invoice_exp"]
-                no_invoice = is_t5["hospitality_no_invoice_exp"]
-                
-                text.append("\n⚠️ ĐÁNH GIÁ RỦI RO THUẾ BAN ĐẦU:\n", style="bold red")
-                
-                if no_invoice is not None and no_invoice > 0:
-                    text.append(f"  🚨 Phát hiện {no_invoice:,.0f} VND chi phí Tiếp khách KHÔNG có hóa đơn đỏ (Sẽ bị loại khi quyết toán thuế TNDN!).\n", style="bold red")
-                if actual_hospitality is not None and limit is not None and actual_hospitality > limit:
-                    text.append(f"  🚨 Chi phí tiếp khách ({actual_hospitality:,.0f} VND) vượt hạn mức quy định ({limit:,.0f} VND).\n", style="bold red")
-                else:
-                    text.append("  ✅ Chi phí tiếp khách nằm trong hạn mức cho phép theo quy định hiện hành.\n", style="green")
-                text.append("=" * 50 + "\n\n", style="gray50")
+                self._append_report_summary(text, data)
             except Exception as e:
-                text.append(f"❌ Lỗi cấu trúc tệp dữ liệu phân tích JSON: {e}\n\n", style="bold red")
+                text.append(f"❌ Không thể đọc tệp dữ liệu phân tích JSON: {e}\n\n", style="bold red")
 
-        # 2. Hiển thị logs hệ thống thời gian thực từ Automation Workflow
         text.append("💬 NHẬT KÝ HOẠT ĐỘNG HỆ THỐNG THỜI GIAN THỰC:\n", style="bold deep_sky_blue1")
         from taxsentry.core.automation import AUTOMATION_LOGS
-        
-        combined_logs = []
-        for log in LOG_MESSAGES:
-            combined_logs.append(f"[gray50][Khởi tạo][/gray50] {log}")
-        for log in AUTOMATION_LOGS:
-            combined_logs.append(log)
-            
-        for log in combined_logs[-10:]:
+
+        for log in LOG_MESSAGES[-10:]:
+            line = Text()
+            line.append("[Khởi tạo] ", style="gray50")
+            line.append(str(log), style="white")
+            text.append_text(line)
+            text.append("\n")
+
+        for log in AUTOMATION_LOGS[-10:]:
             text.append(f"{log}\n", style="white")
 
         return Panel(text, title="[bold sky_blue1]Nhật Ký Hoạt Động & Đánh Giá Ban Đầu[/bold sky_blue1]", border_style="deep_sky_blue1")
@@ -251,7 +341,7 @@ def start_telegram_gateway():
     """Khởi chạy Telegram Bot chạy ngầm dưới dạng tiến trình con."""
     global TELEGRAM_PROCESS
     LOG_MESSAGES.append("Đang kích hoạt kết nối Telegram Bot Gateway...")
-    
+
     # Kiểm tra Token và Chat ID trong .env trước khi start
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("ADMIN_CHAT_ID")
@@ -259,22 +349,23 @@ def start_telegram_gateway():
         LOG_MESSAGES.append("⚠️ Telegram Bot Gateway: Chưa cấu hình token/chat id trong .env. Bỏ qua khởi động.")
         return False
 
-    root_dir = os.path.dirname(os.path.abspath(__file__))
-    venv_python = os.path.join(root_dir, ".venv", "Scripts", "python.exe")
-    if not os.path.exists(venv_python):
-        venv_python = os.path.join(root_dir, ".venv", "bin", "python")
-    if not os.path.exists(venv_python):
+    # Tìm Python executable
+    root_dir = Path(__file__).resolve().parent.parent.parent.parent
+    venv_python = root_dir / ".venv" / "Scripts" / "python.exe"
+    if not venv_python.exists():
+        venv_python = root_dir / ".venv" / "bin" / "python"
+    if not venv_python.exists():
         venv_python = sys.executable
 
-    script_path = os.path.join(root_dir, "telegram_bot.py")
-
     try:
-        # Khởi chạy bot qua subprocess, chuyển hướng stdout/stderr để chạy ngầm hoàn toàn
+        # Chạy bot qua module path (dùng cấu trúc src layout mới)
+        # python -m taxsentry.bot.telegram_bot --admin-chat-id <id>
         TELEGRAM_PROCESS = subprocess.Popen(
-            [venv_python, script_path],
+            [str(venv_python), '-m', 'taxsentry.bot.telegram_bot', '--admin-chat-id', chat_id],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            cwd=str(root_dir),
         )
         LOG_MESSAGES.append("✅ Telegram Bot Gateway: Khởi chạy kết nối thành công!")
         return True
@@ -304,7 +395,11 @@ def write_env_file(config: dict):
         
         for key, value in config.items():
             os.environ[key] = str(value)
-            
+
+            # Bo qua ghi neu gia tri rong va key da ton tai trong .env (giu nguyen gia tri cu)
+            if not value and f"{key}=" in content:
+                continue
+
             if f"{key}=" in content:
                 content = re.sub(rf"{key}=.*", f"{key}={value}", content)
             else:
@@ -325,7 +420,7 @@ def run_onboarding_setup():
     from dotenv import load_dotenv
     load_dotenv(dotenv_path=ENV_PATH)
     
-    current_director = os.getenv("DIRECTOR_NAME", "Thiên Ân")
+    current_director = get_director_name() or ""
     
     console.clear()
     
@@ -359,7 +454,7 @@ def run_onboarding_setup():
     
     config_data["DIRECTOR_NAME"] = Prompt.ask(
         "[bold deep_sky_blue1]1. Họ và tên của Giám đốc[/bold deep_sky_blue1]",
-        default=os.getenv("DIRECTOR_NAME", "Thiên Ân")
+        default=os.getenv("DIRECTOR_NAME", "")
     ).strip()
     
     # Nhận diện tên mới ngay lập tức
@@ -367,23 +462,25 @@ def run_onboarding_setup():
     
     config_data["DIRECTOR_EMAIL"] = Prompt.ask(
         f"[bold deep_sky_blue1]2. Email nhận báo cáo của Giám đốc {new_director_name}[/bold deep_sky_blue1]",
-        default=os.getenv("DIRECTOR_EMAIL", "thienan12342007@gmail.com")
+        default=os.getenv("DIRECTOR_EMAIL", "")
     ).strip()
     
     config_data["ACCOUNTANT_EMAIL"] = Prompt.ask(
         "[bold deep_sky_blue1]3. Email gửi báo cáo của Kế toán trưởng[/bold deep_sky_blue1]",
-        default=os.getenv("ACCOUNTANT_EMAIL", "thienan12342007@gmail.com")
+        default=os.getenv("ACCOUNTANT_EMAIL", "")
     ).strip()
     
     config_data["EMAIL_USER"] = Prompt.ask(
-        "[bold deep_sky_blue1]4. Email hệ thống (dùng để quét và gửi thư)[/bold deep_sky_blue1]",
-        default=os.getenv("EMAIL_USER", "an25800600029@hutech.edu.vn")
+        "[bold deep_sky_blue1]4. Email hệ thống (IMAP login - thường là email Giám đốc)[/bold deep_sky_blue1]",
+        default=os.getenv("EMAIL_USER", "")
     ).strip()
     
-    config_data["EMAIL_PASS"] = Prompt.ask(
-        "[bold deep_sky_blue1]5. Gmail App Password (16 ký tự viết liền của Email hệ thống)[/bold deep_sky_blue1]",
-        default=os.getenv("EMAIL_PASS", "")
+    email_pass = Prompt.ask(
+        "[bold deep_sky_blue1]5. Gmail App Password (16 ky tu) (bo trong de giu nguyen)[/bold deep_sky_blue1]",
+        default=""
     ).strip()
+    if email_pass:
+        config_data["EMAIL_PASS"] = email_pass
     
     # --- PHẦN 2: CẤU HÌNH AI SERVER (LM STUDIO) ---
     console.print("\n", end="")
@@ -394,10 +491,12 @@ def run_onboarding_setup():
         default=os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
     ).strip()
     
-    config_data["LM_STUDIO_API_KEY"] = Prompt.ask(
-        "[bold deep_sky_blue1]2. LM Studio API Key[/bold deep_sky_blue1]",
-        default=os.getenv("LM_STUDIO_API_KEY", "sk-lm-sVlR2otW:D3EDq8EiXWYdmvAhYsgY")
+    lm_api_key = Prompt.ask(
+        "[bold deep_sky_blue1]2. LM Studio API Key (bo trong de giu nguyen)[/bold deep_sky_blue1]",
+        default=""
     ).strip()
+    if lm_api_key:
+        config_data["LM_STUDIO_API_KEY"] = lm_api_key
     
     config_data["LM_MODEL_NAME"] = Prompt.ask(
         "[bold deep_sky_blue1]3. Tên mô hình AI kích hoạt (Model Name)[/bold deep_sky_blue1]",
@@ -453,7 +552,7 @@ def run_onboarding_setup():
 def run_chat_mode():
     """Chế độ trò chuyện CLI trực tiếp với Trợ lý AI TaxSentry."""
     console.clear()
-    director_name = os.getenv("DIRECTOR_NAME", "Thiên Ân")
+    director_name = get_director_name() or "Sếp"
     
     welcome_text = Text()
     welcome_text.append(f"💬 PHÒNG TRÒ CHUYỆN AI COPILOT — GIÁM ĐỐC: {director_name.upper()}\n", style="bold green")
@@ -505,9 +604,14 @@ def run_chat_mode():
 
             console.print("[italic gray50]🤖 TaxSentry đang suy nghĩ...[/italic gray50]")
             
-            prompt = f"""# Role: Trợ lý AI Kiểm toán TaxSentry của Giám đốc {director_name}
-Nhiệm vụ của bạn là trả lời câu hỏi của Giám đốc {director_name} một cách trang trọng, chính xác, sắc bén chuẩn chuyên gia CFO/Kiểm toán cấp cao.
-Sử dụng dữ liệu tài chính của doanh nghiệp và tri thức luật thuế Việt Nam dưới đây làm ngữ cảnh.
+            prompt = f"""# Vai trò: TaxSentry Copilot đồng hành cùng Sếp {director_name}
+Bạn là trợ lý tài chính-thuế của Sếp {director_name}. Hãy trả lời bằng tiếng Việt thật tự nhiên như một người trợ lý đang nói chuyện trực tiếp với Sếp.
+
+YÊU CẦU GIỌNG VĂN:
+- Xưng 'em', gọi người dùng là 'Sếp'.
+- Ưu tiên nói tự nhiên, rõ ràng, ngắn gọn, không giáo điều, không mở đầu kiểu công văn.
+- Không trình bày thành một khối báo cáo máy móc trừ khi Sếp thực sự yêu cầu báo cáo formal.
+- Nếu dữ liệu chưa đủ để kết luận, nói thẳng phần nào đã thấy, phần nào chưa đủ.
 
 ## Dữ liệu báo cáo tài chính hiện tại:
 {financial_data_str}
@@ -515,12 +619,19 @@ Sử dụng dữ liệu tài chính của doanh nghiệp và tri thức luật t
 ## Trích lục quy định thuế liên quan:
 {tax_rules_str}
 
-## Câu hỏi của Giám đốc:
-"{user_input}"
+## Câu hỏi của Sếp:
+\"{user_input}\"
+
+Hãy trả lời như một người trợ lý hiểu việc, ưu tiên:
+1. Xác nhận nhanh mình đang nhìn vào dữ liệu nào.
+2. Trả lời đúng trọng tâm câu hỏi.
+3. Nếu cần phân tích, nêu các số chính trước rồi mới nhận xét.
+4. Tránh văn phong khuôn mẫu kiểu 'dưới đây là báo cáo gồm 3 phần'.
 """
             response = engine.analyze_report(prompt)
             
             console.print(f"\n[bold sky_blue1]🛡️ TaxSentry Copilot[/bold sky_blue1]:")
+
             console.print(Panel(response, border_style="sky_blue1"))
             
         except KeyboardInterrupt:
@@ -530,9 +641,40 @@ Sử dụng dữ liệu tài chính của doanh nghiệp và tri thức luật t
 def main():
     run_onboarding_setup()
 
-    # Đồng bộ thông điệp chào mừng trong logs hệ thống
-    director_name = os.getenv("DIRECTOR_NAME", "Thiên Ân")
-    LOG_MESSAGES.append(f"Kính chào Giám đốc {director_name}. Hệ thống giám sát đã sẵn sàng làm việc.")
+    # Đồng bộ thông điệp chào mừng trong logs hệ thống — tất cả ĐỌC TỪ CONFIG
+    director_name = get_director_name()
+    director_email = get_director_email()
+    accountant_email = get_accountant_email()
+    email_user = get_email_user()
+    model_name = os.getenv("LM_MODEL_NAME", "")
+    llm_url = get_llm_server_url()
+
+    if director_name:
+        LOG_MESSAGES.append(f"Kính chào Giám đốc {director_name}. Hệ thống giám sát đã sẵn sàng làm việc.")
+    else:
+        LOG_MESSAGES.append("Kính chào Sếp. Hệ thống giám sát đã sẵn sàng làm việc.")
+
+    # Hiển thị cấu hình thực tế (dynamic, không hardcode)
+    LOG_MESSAGES.append(f"🤖 AI Server: {llm_url} | Model: {model_name or '[chưa cấu hình]'}")
+    LOG_MESSAGES.append(f"📧 IMAP Login: {email_user or '[chưa cấu hình]'}")
+    LOG_MESSAGES.append(f"👩‍💼 Đang giám sát thư từ Kế toán trưởng: {accountant_email or '[chưa cấu hình]'}")
+    if director_email:
+        LOG_MESSAGES.append(f"📬 Báo cáo PDF sẽ gửi tới: {director_email}")
+    LOG_MESSAGES.append(f"📡 Telegram Bot đang khởi động...")
+
+    # Kiểm tra kết nối AI thực tế → cập nhật status động
+    try:
+        from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
+        engine = TaxSentryAnalysisEngine()
+        if engine.connect():
+            SYSTEM_STATUS["LM Studio"] = get_model_display_name()
+            LOG_MESSAGES.append(f"✅ Kết nối AI Server thành công: {model_name}")
+        else:
+            SYSTEM_STATUS["LM Studio"] = f"[red]Disconnected[/red]"
+            LOG_MESSAGES.append(f"❌ Không thể kết nối AI Server tại {llm_url}")
+    except Exception as e:
+        SYSTEM_STATUS["LM Studio"] = f"[red]Error: {e}[/red]"
+        LOG_MESSAGES.append(f"❌ Lỗi AI: {e}")
 
     # Khởi động Telegram Bot Gateway
     start_telegram_gateway()

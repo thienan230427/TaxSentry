@@ -4,7 +4,7 @@
  */
 
 import { spawn, spawnSync } from 'child_process';
-import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, openSync } from 'fs';
 import { join } from 'path';
 import { getPythonPath, RUN_DIR, CORE_DIR, LOGS_DIR, ensureDirectories } from './utils/paths.js';
 import { info, success, error, warn, debug } from './utils/logger.js';
@@ -89,6 +89,58 @@ export function startForeground(args = ['-m', 'taxsentry']) {
 }
 
 /**
+ * Start a Python process in BACKGROUND, attached to parent lifecycle.
+ * Unlike startBackground(), this one does NOT use detached mode,
+ * so when the terminal closes, the child process dies automatically.
+ * Returns the child process reference on success, null on failure.
+ */
+export function startAttached(serviceName, args) {
+  const pyPath = getPythonExecutable();
+  const cwd = getPythonWorkingDir();
+  const logFile = getLogFile(serviceName);
+  const pidFile = getPidFile(serviceName);
+
+  ensureDirectories();
+
+  if (!existsSync(pyPath)) {
+    error(`Không tìm thấy Python tại: ${pyPath}`);
+    return null;
+  }
+
+  // Check if already running
+  if (isRunning(serviceName)) {
+    warn(`Dịch vụ '${serviceName}' đang chạy với PID: ${getPid(serviceName)}`);
+    return null;
+  }
+
+  info(`Đang khởi chạy ${serviceName} ở chế độ nền (attached)...`);
+  debug(`Args: ${args.join(' ')}`, true);
+
+  const logStream = openSync(logFile, 'a');
+
+  const child = spawn(pyPath, args, {
+    cwd,
+    stdio: ['ignore', logStream, logStream],
+    detached: false, // NOT detached → dies when terminal closes
+    env: {
+      ...process.env,
+      PYTHONPATH: `${cwd}\\src${process.env.PYTHONPATH ? `;${process.env.PYTHONPATH}` : ''}`,
+    },
+  });
+
+  // Don't unref — keep reference for cleanup
+
+  if (child.pid) {
+    writeFileSync(pidFile, child.pid.toString(), 'utf-8');
+    success(`${serviceName} được khởi chạy ở chế độ nền (PID: ${child.pid})`);
+    return child;
+  } else {
+    error('Không thể lấy PID của tiến trình nền.');
+    return null;
+  }
+}
+
+/**
  * Start a Python process in BACKGROUND, detached, and log its PID.
  * Returns the PID on success, null on failure.
  */
@@ -114,13 +166,16 @@ export function startBackground(serviceName, args) {
   info(`Đang khởi chạy ${serviceName} ở chế độ nền...`);
   debug(`Args: ${args.join(' ')}`, true);
 
-  const logStream = require('fs').openSync(logFile, 'a');
+  const logStream = openSync(logFile, 'a');
   
   const child = spawn(pyPath, args, {
     cwd,
     stdio: ['ignore', logStream, logStream],
     detached: true,
-    env: process.env,
+    env: {
+      ...process.env,
+      PYTHONPATH: `${cwd}\\src${process.env.PYTHONPATH ? `;${process.env.PYTHONPATH}` : ''}`,
+    },
   });
 
   child.unref();

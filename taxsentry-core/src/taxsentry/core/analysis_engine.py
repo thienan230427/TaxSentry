@@ -18,7 +18,7 @@ class TaxSentryAnalysisEngine:
     def __init__(self):
         # Đọc cấu hình từ biến môi trường .env
         self.api_url = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
-        self.api_key = os.getenv("LM_STUDIO_API_KEY", "sk-lm-sVlR2otW:D3EDq8EiXWYdmvAhYsgY")
+        self.api_key = os.getenv("LM_STUDIO_API_KEY", "")
         self.model_name = os.getenv("LM_MODEL_NAME", "google/gemma-4-e4b")
         self.client = None
         self.log_callback = None
@@ -62,20 +62,22 @@ class TaxSentryAnalysisEngine:
         # 3. Chuẩn bị prompt chuyên gia hệ thống (System Prompt) và Dữ liệu đầu vào (User Prompt)
         system_prompt = """
         Bạn là một Giám đốc Tài chính (CFO) kiêm Chuyên gia Kiểm toán Thuế cấp cao tại Việt Nam.
-        Nhiệm vụ của bạn là nhận dữ liệu hoạt động kinh doanh thực tế của doanh nghiệp, đối chiếu nghiêm ngặt với các quy định pháp luật Thuế Việt Nam hiện hành (được cung cấp trong kho tri thức), phát hiện các sai sót, bóc tách các chi phí rủi ro, tính toán lại tiền thuế/tiền phạt, và viết một Báo cáo Đánh giá Hiệu quả Kinh doanh & Rủi ro Thuế cực kỳ chuyên nghiệp, sắc sảo cho Giám đốc.
+        Nhiệm vụ của bạn là nhận dữ liệu kế toán/tài chính/thuế thực tế của doanh nghiệp từ nhiều định dạng workbook Excel khác nhau (báo cáo kết quả kinh doanh, bảng lương, tổng hợp thuế-BHXH, bảng số liệu thô, workbook nhiều sheet), đối chiếu nghiêm ngặt với các quy định pháp luật Thuế Việt Nam hiện hành (được cung cấp trong kho tri thức), phát hiện sai sót, bóc tách rủi ro, tính toán lại nghĩa vụ thuế khi có đủ dữ liệu, và viết Báo cáo Đánh giá Hiệu quả Kinh doanh & Rủi ro Thuế chuyên nghiệp cho Giám đốc.
 
         YÊU CẦU BÁO CÁO CỦA BẠN PHẢI TUÂN THỦ:
-        1. Phân tích cụ thể các chỉ số: Doanh thu tăng trưởng thế nào? Biên lợi nhuận gộp ra sao? Chi phí OPEX có bất thường không?
-        2. Bóc tách chi tiết các rủi ro thuế dựa trên số liệu thực tế: Chỉ ra chính xác dòng chi phí nào vi phạm luật thuế (ví dụ: Chi phí tiếp khách không hóa đơn đỏ).
-        3. Tính toán lại Thu nhập chịu thuế thực tế sau khi loại bỏ chi phí rủi ro, tính lại số Thuế TNDN thực tế phải nộp, và số tiền thuế bị truy thu/bị phạt chậm nộp nếu có.
-        4. Đưa ra các kiến nghị, giải pháp khắc phục cụ thể, thiết thực cho doanh nghiệp để tối ưu hóa vận hành và tuân thủ pháp luật thuế.
-        5. Trình bày báo cáo rõ ràng, mạch lạc bằng tiếng Việt, sử dụng các đề mục chuyên nghiệp (Markdown).
+        1. Trước tiên hãy nhận diện loại workbook/dữ liệu đang được cung cấp (P&L, payroll, tax summary, balance sheet, raw financial table, workbook hỗn hợp nhiều sheet).
+        2. Nếu có dữ liệu kinh doanh: phân tích doanh thu, biên lợi nhuận, cơ cấu chi phí, OPEX và các biến động bất thường.
+        3. Nếu có dữ liệu lương/thuế/BHXH: phân tích tổng quỹ lương, thuế TNCN, bảo hiểm bắt buộc, khoản thực lĩnh, điểm bất thường và rủi ro tuân thủ.
+        4. Nếu có dữ liệu đủ chi tiết: tính toán lại Thu nhập chịu thuế, thuế phải nộp, các khoản bị loại, truy thu hoặc phạt chậm nộp nếu có.
+        5. Nếu dữ liệu KHÔNG đủ để kết luận định lượng hoàn chỉnh, phải nêu rõ phần nào đủ dữ liệu, phần nào thiếu, và các tài liệu cần bổ sung.
+        6. Đưa ra kiến nghị, giải pháp khắc phục cụ thể, thiết thực cho doanh nghiệp để tối ưu hóa vận hành và tuân thủ pháp luật thuế.
+        7. Trình bày báo cáo rõ ràng, mạch lạc bằng tiếng Việt, sử dụng các đề mục chuyên nghiệp (Markdown).
         """
 
         user_prompt = f"""
         Chào chuyên gia, dưới đây là dữ liệu hoạt động kinh doanh tháng này của chúng tôi và kho tri thức luật thuế liên quan. Hãy tiến hành kiểm toán và lập báo cáo chi tiết:
 
-        === 📊 1. DỮ LIỆU BÁO CÁO TÀI CHÍNH THÁNG 05/2026 (JSON) ===
+        === 📊 1. DỮ LIỆU BÁO CÁO TÀI CHÍNH MỚI NHẤT (JSON) ===
         {json.dumps(financial_data, indent=2, ensure_ascii=False)}
 
         === 📖 2. KHO TRI THỨC PHÁP LUẬT THUẾ VIỆT NAM LIÊN QUAN ===
@@ -83,17 +85,17 @@ class TaxSentryAnalysisEngine:
         """
 
         self.log("🧠 Đang truyền dữ liệu và gửi yêu cầu phân tích tới Local Gemma 4 qua LM Studio...")
-        self.log("💡 Quá trình suy luận và đối chiếu tri thức (RAG) đang diễn ra cục bộ, vui lòng chờ trong giây lát desu~!\n")
+        self.log("💡 Quá trình suy luận và đối chiếu tri thức (RAG) đang diễn ra cục bộ, vui lòng chờ trong giây lát.\n")
 
         try:
             # Gọi API của LM Studio để bắt đầu suy luận
             response = self.client.chat.completions.create(
-                model=self.model_name,  # Sử dụng mô hình cấu hình từ .env desu~!
+                model=self.model_name,  # Sử dụng mô hình cấu hình từ .env
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.2  # Giữ nhiệt độ thấp để AI phân tích số liệu chuẩn xác, logic và nghiêm túc desu~!
+                temperature=0.2  # Giữ nhiệt độ thấp để AI phân tích số liệu chuẩn xác, logic và nghiêm túc
             )
             
             audit_result = response.choices[0].message.content
@@ -111,12 +113,22 @@ class TaxSentryAnalysisEngine:
             if not self.connect():
                 return "❌ Lỗi kết nối AI Engine. Vui lòng kiểm tra LM Studio."
         try:
+            system_prompt = """
+            Bạn là TaxSentry Copilot — một trợ lý tài chính/thuế nói tiếng Việt tự nhiên.
+            Khi trả lời người dùng:
+            - xưng 'em', gọi người dùng là 'Sếp'
+            - nói như người thật, ngắn gọn, rõ ràng, có trọng tâm
+            - không dùng văn phong máy móc hoặc khuôn mẫu công văn nếu không được yêu cầu
+            - ưu tiên nêu chứng cứ/số chính trước rồi mới diễn giải
+            - nếu dữ liệu chưa đủ thì nói thẳng phần thiếu thay vì suy đoán
+            """
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7
+                temperature=0.45
             )
             return response.choices[0].message.content
         except Exception as e:

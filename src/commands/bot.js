@@ -1,10 +1,10 @@
 /**
  * 🛡️ TaxSentry CLI - Bot Command
  * Background runner for the Telegram Bot.
+ * Dùng new flexible config (getValue).
  */
-
 import { startBackground, isRunning, getPid } from '../launcher.js';
-import { loadConfig } from '../config.js';
+import { loadConfig, getValue } from '../config.js';
 import { info, warn, success, error } from '../utils/logger.js';
 import chalk from 'chalk';
 
@@ -14,7 +14,11 @@ import chalk from 'chalk';
 export default async function botCommand() {
   try {
     const config = loadConfig();
-    info(`Định cấu hình Bot cho: ${config.directorName}`);
+    const directorName = getValue(config, 'director', 'directorName');
+    const adminChatId = getValue(config, 'telegram', 'adminChatId');
+    const botToken = getValue(config, 'telegram', 'telegramBotToken');
+
+    info(`Định cấu hình Bot cho: ${directorName}`);
 
     // Check if already running
     if (isRunning('telegram_bot')) {
@@ -22,15 +26,24 @@ export default async function botCommand() {
       process.exit(0);
     }
 
+    if (!botToken || botToken === 'YOUR_BOT_TOKEN_HERE') {
+      error('Chưa cấu hình Telegram Bot Token. Chạy: taxsentry setup');
+      process.exit(1);
+    }
+
+    if (!adminChatId) {
+      error('Chưa cấu hình Admin Chat ID. Chạy: taxsentry setup');
+      process.exit(1);
+    }
+
     // Bot script path relative to Python working dir
-    // In our src layout: src/taxsentry/bot/telegram_bot.py
-    const args = ['-m', 'taxsentry.bot.telegram_bot', '--admin-chat-id', config.adminChatId];
-    
+    const args = ['-m', 'taxsentry.bot.telegram_bot', '--admin-chat-id', adminChatId];
+
     const pid = startBackground('telegram_bot', args);
 
     if (pid) {
       success('Bot Telegram đã được khởi chạy thành công ở chế độ nền! 🤖');
-      console.log(chalk.cyan(`   PID: ${pid}`));
+      console.log(chalk.dim(`   PID: ${pid}`));
       console.log(chalk.dim(`   Để xem log: taxsentry logs --service bot`));
       console.log(chalk.dim(`   Để dừng bot: taxsentry stop`));
     } else {

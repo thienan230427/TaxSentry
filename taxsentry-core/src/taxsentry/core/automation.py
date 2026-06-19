@@ -21,7 +21,8 @@ from taxsentry.core.pdf_parser import TaxSentryPDFParser
 from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
 from taxsentry.core.pdf_generator import TaxSentryPDFGenerator
 from taxsentry.core.email_sender import TaxSentryEmailSender
-from taxsentry.config.paths import DOWNLOAD_DIR, JSON_PATH
+from taxsentry.core.evidence_preview import build_evidence_context, save_evidence_context
+from taxsentry.config.paths import DOWNLOAD_DIR, JSON_PATH, EVIDENCE_CONTEXT_PATH
 
 # Toàn cục lưu logs hoạt động để main.py hiển thị trên TUI
 AUTOMATION_LOGS = []
@@ -86,7 +87,14 @@ class TaxSentryAutomationWorkflow:
                     parser.load()
                     parser.parse_assumptions()
                     parser.parse_income_statement()
+                    # Parser mới đọc linh hoạt nhiều workbook; chỉ bỏ qua nếu thật sự không trích xuất được dữ liệu nào.
+                    if not parser.has_meaningful_data():
+                        log_activity("⚠️ File Excel không có đủ dữ liệu kế toán/tài chính để phân tích. Bỏ qua.")
+                        continue
                     parser.export_json(json_output_path)
+                    file_context = self.poller.get_file_context(str(file_path))
+                    evidence_context = build_evidence_context(parser, file_context)
+                    save_evidence_context(evidence_context, EVIDENCE_CONTEXT_PATH)
                     db_success = parser.log_to_database()
                 elif is_pdf:
                     log_activity("📊 Trích xuất dữ liệu từ tài liệu PDF bằng AI...")
@@ -140,12 +148,18 @@ class TaxSentryAutomationWorkflow:
                     log_activity("❌ Gửi Email báo cáo thất bại.")
 
                 # 7. Gửi tin nhắn tóm tắt và PDF qua Telegram Bot cho Giám đốc
-                log_activity("📡 Đang gửi tóm tắt và PDF báo cáo qua Telegram Bot...")
+                log_activity("📡 Đang gửi preview attachment, tóm tắt và PDF báo cáo qua Telegram Bot...")
                 
                 # Để tránh chặn tiến trình chính, chạy async qua loop
                 try:
-                    from telegram_bot import send_active_report_to_director
-                    tele_success = asyncio.run(send_active_report_to_director(str(pdf_report_path), summary_text))
+                    from taxsentry.bot.telegram_bot import send_active_report_to_director
+                    tele_success = asyncio.run(
+                        send_active_report_to_director(
+                            str(pdf_report_path),
+                            summary_text,
+                            evidence_context_path=str(EVIDENCE_CONTEXT_PATH),
+                        )
+                    )
                     if tele_success:
                         log_activity("✅ Đã gửi thông báo Telegram thành công.")
                     else:
@@ -154,10 +168,18 @@ class TaxSentryAutomationWorkflow:
                     log_activity(f"❌ Lỗi tích hợp Telegram: {tele_err}")
 
                 processed_count += 1
+
                 log_activity(f"🎉 Hoàn thành xử lý tự động hoàn toàn cho file: '{file_path.name}'!")
 
             except Exception as ex:
                 log_activity(f"❌ Lỗi nghiêm trọng khi xử lý file '{file_path.name}': {ex}")
+                log_activity(f"⚠️ Email này sẽ được QUÉT LẠI ở chu kỳ tiếp theo (chưa đánh dấu processed).")
+
+        # Chỉ đánh dấu processed SAU KHI toàn bộ file đã xử lý thành công
+        # Email nào fail sẽ KHÔNG được mark → tự động retry chu kỳ sau
+        if processed_count > 0:
+            self.poller.mark_as_processed()
+            log_activity(f"✅ Đã đánh dấu {processed_count} email là đã xử lý thành công.")
 
         return processed_count
 

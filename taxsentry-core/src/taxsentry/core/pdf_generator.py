@@ -367,7 +367,7 @@ class TaxSentryPDFGenerator:
         # Chữ ký chân trang
         story.append(Spacer(1, 25))
         story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#CCCCCC'), spaceAfter=10))
-        story.append(Paragraph("Báo cáo được thực hiện tự động và bảo mật hoàn toàn bởi hệ thống TaxSentry Co-Pilot desu~! 💖", self.caption_style))
+        story.append(Paragraph("Báo cáo được thực hiện tự động và bảo mật hoàn toàn bởi hệ thống TaxSentry Co-Pilot.", self.caption_style))
 
         # Build PDF
         try:

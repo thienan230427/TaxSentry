@@ -14,8 +14,10 @@ BASE_DIR = BASE_DIR.resolve()
 
 # Fallback for legacy execution (if run directly from old path)
 if not (BASE_DIR / "pyproject.toml").exists() and not (BASE_DIR / "requirements.txt").exists():
-    # Try assuming BASE_DIR is the absolute project path
-    BASE_DIR = Path("D:/TaxSentry")
+    # Use home directory as fallback (KHÔNG HARDCODE path cụ thể)
+    fallback_dir = Path.home() / ".taxsentry" / "taxsentry-core"
+    if (fallback_dir / "requirements.txt").exists():
+        BASE_DIR = fallback_dir.resolve()
 
 # Ensure base directory exists
 BASE_DIR.mkdir(parents=True, exist_ok=True)
@@ -34,6 +36,7 @@ SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = BASE_DIR / "taxsentry.db"
 EXCEL_PATH = BASE_DIR / "mock_report.xlsx"
 JSON_PATH = BASE_DIR / "parsed_report.json"
+EVIDENCE_CONTEXT_PATH = SCRATCH_DIR / "latest_evidence_context.json"
 ENV_PATH = BASE_DIR / ".env"
 KNOWLEDGE_PATH = KNOWLEDGE_DIR / "tax_rules_vietnam.md"
 AUDIT_REPORT_PATH = BASE_DIR / "audit_report.md"

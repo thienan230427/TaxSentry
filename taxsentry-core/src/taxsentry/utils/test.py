@@ -44,4 +44,4 @@ except Exception as e:
     print(f"❌ Failed to import visualization libraries: {e}")
 
 print("-------------------------------------")
-print("🎉 Everything is set up perfectly desu~! ヽ(>∀<☆)ノ")
+print("🎉 Everything is set up perfectly!")
