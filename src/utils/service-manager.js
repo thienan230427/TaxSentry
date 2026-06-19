@@ -88,6 +88,20 @@ export function getServiceLabel(serviceName) {
   return `TaxSentry ${serviceName}`;
 }
 
+export function getAppliedServiceName(serviceName) {
+  const profile = getPlatformServiceProfile();
+
+  if (profile.artifactType === 'launchd') {
+    return `com.taxsentry.${serviceName}`;
+  }
+
+  if (profile.artifactType === 'systemd') {
+    return `${serviceName}.service`;
+  }
+
+  return `TaxSentry-${serviceName}`;
+}
+
 export function getServiceModuleArgs(serviceName, adminChatId = '') {
   if (serviceName === 'telegram_bot') {
     const args = ['-m', 'taxsentry.bot.telegram_bot'];
@@ -102,27 +116,29 @@ export function getServiceModuleArgs(serviceName, adminChatId = '') {
 
 export function getInstallHintLines(serviceName, artifactPath) {
   const adapter = getServiceAdapter(serviceName);
+  const appliedName = getAppliedServiceName(serviceName);
 
   if (adapter.artifactType === 'systemd') {
     return [
       `mkdir -p ~/.config/systemd/user`,
-      `cp "${artifactPath}" ~/.config/systemd/user/`,
+      `cp "${artifactPath}" ~/.config/systemd/user/${appliedName}`,
       `systemctl --user daemon-reload`,
-      `systemctl --user enable --now ${serviceName}.service`,
+      `systemctl --user enable ${appliedName}`,
+      `systemctl --user start ${appliedName}`,
     ];
   }
 
   if (adapter.artifactType === 'launchd') {
     return [
       `mkdir -p ~/Library/LaunchAgents`,
-      `cp "${artifactPath}" ~/Library/LaunchAgents/`,
-      `launchctl unload ~/Library/LaunchAgents/com.taxsentry.${serviceName}.plist 2>/dev/null || true`,
-      `launchctl load ~/Library/LaunchAgents/com.taxsentry.${serviceName}.plist`,
+      `cp "${artifactPath}" ~/Library/LaunchAgents/${appliedName}.plist`,
+      `launchctl unload ~/Library/LaunchAgents/${appliedName}.plist 2>/dev/null || true`,
+      `launchctl load ~/Library/LaunchAgents/${appliedName}.plist`,
     ];
   }
 
   return [
-    `schtasks /Create /TN "TaxSentry\\${serviceName}" /XML "${artifactPath}" /F`,
-    `schtasks /Run /TN "TaxSentry\\${serviceName}"`,
+    `schtasks /Create /TN "${appliedName}" /XML "${artifactPath}" /F`,
+    `schtasks /Run /TN "${appliedName}"`,
   ];
 }

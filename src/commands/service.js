@@ -1,12 +1,20 @@
 /**
  * 🛡️ TaxSentry CLI - Service Command
- * Generate/remove platform-specific service definitions for background bot runtime.
+ * Generate/apply/remove platform-specific service definitions for background bot runtime.
  */
 
 import chalk from 'chalk';
 import { isConfigured, loadConfig, getValue } from '../config.js';
-import { getServiceArtifactPreview, installServiceArtifacts, uninstallServiceArtifacts } from '../utils/service-artifacts.js';
-import { getServiceAdapter, getServiceLabel } from '../utils/service-manager.js';
+import {
+  applyServiceDefinition,
+  getAppliedServiceStatus,
+  getServiceArtifactPreview,
+  installServiceArtifacts,
+  readServiceLog,
+  removeAppliedService,
+  uninstallServiceArtifacts,
+} from '../utils/service-artifacts.js';
+import { getAppliedServiceName, getServiceAdapter, getServiceLabel } from '../utils/service-manager.js';
 import { info, success, warn } from '../utils/logger.js';
 
 function resolveAdminChatId() {
@@ -18,6 +26,7 @@ function resolveAdminChatId() {
 export function showServiceStatus(serviceName = 'telegram_bot') {
   const adapter = getServiceAdapter(serviceName);
   const preview = getServiceArtifactPreview(serviceName);
+  const applied = getAppliedServiceStatus(serviceName);
 
   console.log(chalk.bold.cyan(`\n🧩 Service Definition: ${getServiceLabel(serviceName)}\n`));
   console.log(chalk.dim(`   Adapter: ${adapter.runtimeMode}`));
@@ -28,6 +37,16 @@ export function showServiceStatus(serviceName = 'telegram_bot') {
   if (preview.supportScriptPath) {
     console.log(chalk.dim(`   Script hỗ trợ: ${preview.supportScriptPath}`));
     console.log(chalk.dim(`   Đã tạo script hỗ trợ: ${preview.supportScriptExists ? 'Có' : 'Chưa'}`));
+  }
+  if (preview.appliedTargetPath) {
+    console.log(chalk.dim(`   Target OS file: ${preview.appliedTargetPath}`));
+    console.log(chalk.dim(`   Target OS file tồn tại: ${preview.appliedTargetExists ? 'Có' : 'Chưa'}`));
+  }
+  console.log(chalk.dim(`   Tên đăng ký trên OS: ${getAppliedServiceName(serviceName)}`));
+  console.log(chalk.dim(`   Đã apply vào OS: ${applied.registered ? 'Có' : 'Chưa'}`));
+  console.log(chalk.dim(`   Trạng thái OS hiện tại: ${applied.active ? 'Active/Registered' : 'Chưa active'}`));
+  if (applied.detail) {
+    console.log(chalk.dim(`   Chi tiết OS: ${applied.detail}`));
   }
   console.log(chalk.dim(`   Ghi chú: ${adapter.notes}`));
   console.log();
@@ -45,12 +64,64 @@ export function installServiceCommand(serviceName = 'telegram_bot') {
   if (result.supportScriptPath) {
     console.log(chalk.dim(`   Script hỗ trợ: ${result.supportScriptPath}`));
   }
+  if (result.appliedTargetPath) {
+    console.log(chalk.dim(`   Target OS file: ${result.appliedTargetPath}`));
+  }
   console.log(chalk.dim(`   Log runtime: ${result.runtimeLogPath}`));
   console.log(chalk.dim(`   PID runtime: ${result.runtimePidPath}`));
   console.log();
   info('Bước cài thủ công đề xuất:');
   for (const line of result.installHints) {
     console.log(chalk.dim(`   ${line}`));
+  }
+  console.log();
+}
+
+export function applyServiceCommand(serviceName = 'telegram_bot') {
+  const adminChatId = resolveAdminChatId();
+  if (!adminChatId) {
+    warn('Chưa tìm thấy Admin Chat ID trong cấu hình. Service vẫn sẽ được apply nhưng command bot có thể thiếu tham số runtime cụ thể.');
+  }
+
+  const result = applyServiceDefinition(serviceName, adminChatId);
+  if (result.ok) {
+    success(`Đã apply service vào OS cho ${getServiceLabel(serviceName)}.`);
+  } else {
+    warn(`Apply service chưa hoàn tất trọn vẹn cho ${getServiceLabel(serviceName)}.`);
+  }
+  console.log(chalk.dim(`   Tên đăng ký: ${result.appliedName}`));
+  if (result.installResult?.artifactPath) {
+    console.log(chalk.dim(`   Artifact: ${result.installResult.artifactPath}`));
+  }
+  if (result.targetPath) {
+    console.log(chalk.dim(`   Target OS file: ${result.targetPath}`));
+  }
+  if (result.detail) {
+    console.log(chalk.dim(`   Chi tiết: ${result.detail}`));
+    if (/access is denied/i.test(result.detail)) {
+      console.log(chalk.yellow('   Gợi ý: hãy mở terminal với quyền phù hợp rồi chạy lại `taxsentry service apply`.'));
+    }
+  }
+  console.log();
+}
+
+export function removeServiceCommand(serviceName = 'telegram_bot', purgeArtifacts = false) {
+  const result = removeAppliedService(serviceName);
+  if (result.ok) {
+    success(`Đã gỡ service khỏi OS cho ${getServiceLabel(serviceName)}.`);
+  } else {
+    warn(`Không thể xác nhận đã gỡ service khỏi OS cho ${getServiceLabel(serviceName)}.`);
+  }
+  console.log(chalk.dim(`   Tên đăng ký: ${result.appliedName}`));
+  if (result.targetPath) {
+    console.log(chalk.dim(`   Target OS file: ${result.targetPath}`));
+  }
+  if (result.detail) {
+    console.log(chalk.dim(`   Chi tiết: ${result.detail}`));
+  }
+  if (purgeArtifacts) {
+    const purge = uninstallServiceArtifacts(serviceName);
+    console.log(chalk.dim(`   Xóa artifact local: ${purge.removed ? 'Thành công' : 'Chưa xác nhận'}`));
   }
   console.log();
 }
@@ -65,6 +136,23 @@ export function uninstallServiceCommand(serviceName = 'telegram_bot') {
   console.log(chalk.dim(`   Artifact: ${result.artifactPath}`));
   if (result.supportScriptPath) {
     console.log(chalk.dim(`   Script hỗ trợ: ${result.supportScriptPath}`));
+  }
+  console.log();
+}
+
+export function showServiceLogsCommand(serviceName = 'telegram_bot', lines = 40) {
+  const result = readServiceLog(serviceName, lines);
+  console.log(chalk.bold.cyan(`\n📜 Service Logs: ${getServiceLabel(serviceName)}\n`));
+  console.log(chalk.dim(`   Log file: ${result.logPath}`));
+  if (!result.exists) {
+    warn('Chưa có log file để hiển thị.');
+    console.log();
+    return;
+  }
+  console.log(chalk.dim(`   Số dòng hiển thị: ${result.lines.length}`));
+  console.log();
+  for (const line of result.lines) {
+    console.log(chalk.dim(line));
   }
   console.log();
 }

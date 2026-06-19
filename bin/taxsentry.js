@@ -18,7 +18,7 @@ import botCommand from '../src/commands/bot.js';
 import stopCommand from '../src/commands/stop.js';
 import statusCommand from '../src/commands/status.js';
 import upCommand from '../src/commands/up.js';
-import { installServiceCommand, showServiceStatus, uninstallServiceCommand } from '../src/commands/service.js';
+import { installServiceCommand, applyServiceCommand, removeServiceCommand, showServiceLogsCommand, showServiceStatus, uninstallServiceCommand } from '../src/commands/service.js';
 import {
   displayConfig,
   setConfigValue,
@@ -65,6 +65,9 @@ program
 🧩 SERVICE ARTIFACTS:
   taxsentry service status     → Xem định nghĩa service đa nền tảng hiện tại
   taxsentry service install    → Tạo file systemd / launchd / Task Scheduler
+  taxsentry service apply      → Đăng ký service vào OS thật
+  taxsentry service remove     → Gỡ service khỏi OS thật
+  taxsentry service logs       → Xem log runtime nhanh
   taxsentry service uninstall  → Xóa file service đã sinh
 
 ⚙️ QUẢN LÝ CẤU HÌNH LINH HOẠT (không hardcode):
@@ -283,6 +286,35 @@ serviceCommand
   .action((options) => {
     printBanner();
     installServiceCommand(options.service);
+  });
+
+serviceCommand
+  .command('apply')
+  .description('Đăng ký service vào OS thật (Task Scheduler / systemd / launchd)')
+  .option('--service <name>', 'Tên service cần thao tác', 'telegram_bot')
+  .action((options) => {
+    printBanner();
+    applyServiceCommand(options.service);
+  });
+
+serviceCommand
+  .command('remove')
+  .description('Gỡ service khỏi OS thật')
+  .option('--service <name>', 'Tên service cần thao tác', 'telegram_bot')
+  .option('--purge-artifacts', 'Xóa luôn artifact local sau khi remove khỏi OS', false)
+  .action((options) => {
+    printBanner();
+    removeServiceCommand(options.service, options.purgeArtifacts);
+  });
+
+serviceCommand
+  .command('logs')
+  .description('Xem log runtime gần nhất của service')
+  .option('--service <name>', 'Tên service cần thao tác', 'telegram_bot')
+  .option('--lines <n>', 'Số dòng log muốn xem', '40')
+  .action((options) => {
+    printBanner();
+    showServiceLogsCommand(options.service, Number(options.lines || 40));
   });
 
 serviceCommand
