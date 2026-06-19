@@ -251,6 +251,112 @@ export function applyServiceDefinition(serviceName, adminChatId = '') {
   };
 }
 
+export function startAppliedService(serviceName) {
+  const profile = getPlatformServiceProfile();
+  const appliedName = getAppliedServiceName(serviceName);
+
+  if (profile.artifactType === 'task-scheduler') {
+    const start = runCommand('schtasks', ['/Run', '/TN', appliedName]);
+    return {
+      ok: start.status === 0,
+      action: 'start',
+      detail: start.stdout || start.stderr || start.error || '',
+      appliedName,
+    };
+  }
+
+  if (profile.artifactType === 'systemd') {
+    const start = runCommand('systemctl', ['--user', 'start', appliedName]);
+    return {
+      ok: start.status === 0,
+      action: 'start',
+      detail: start.stdout || start.stderr || start.error || '',
+      appliedName,
+    };
+  }
+
+  const macDomain = `gui/${typeof process.getuid === 'function' ? process.getuid() : ''}/${appliedName}`;
+  const kickstart = runCommand('launchctl', ['kickstart', '-k', macDomain]);
+  return {
+    ok: kickstart.status === 0,
+    action: 'start',
+    detail: kickstart.stdout || kickstart.stderr || kickstart.error || '',
+    appliedName,
+  };
+}
+
+export function stopAppliedService(serviceName) {
+  const profile = getPlatformServiceProfile();
+  const appliedName = getAppliedServiceName(serviceName);
+
+  if (profile.artifactType === 'task-scheduler') {
+    const stop = runCommand('schtasks', ['/End', '/TN', appliedName]);
+    const detail = stop.stdout || stop.stderr || stop.error || '';
+    const missing = /cannot find the file specified/i.test(detail);
+    return {
+      ok: stop.status === 0 || missing,
+      action: 'stop',
+      detail,
+      appliedName,
+    };
+  }
+
+  if (profile.artifactType === 'systemd') {
+    const stop = runCommand('systemctl', ['--user', 'stop', appliedName]);
+    return {
+      ok: stop.status === 0,
+      action: 'stop',
+      detail: stop.stdout || stop.stderr || stop.error || '',
+      appliedName,
+    };
+  }
+
+  const stop = runCommand('launchctl', ['stop', appliedName]);
+  return {
+    ok: stop.status === 0,
+    action: 'stop',
+    detail: stop.stdout || stop.stderr || stop.error || '',
+    appliedName,
+  };
+}
+
+export function restartAppliedService(serviceName) {
+  const profile = getPlatformServiceProfile();
+  const appliedName = getAppliedServiceName(serviceName);
+
+  if (profile.artifactType === 'task-scheduler') {
+    const stop = runCommand('schtasks', ['/End', '/TN', appliedName]);
+    const start = runCommand('schtasks', ['/Run', '/TN', appliedName]);
+    const detail = [stop.stdout || stop.stderr, start.stdout || start.stderr || start.error].filter(Boolean).join(' | ');
+    const missing = /cannot find the file specified/i.test(detail);
+    return {
+      ok: start.status === 0 || missing,
+      action: 'restart',
+      detail,
+      appliedName,
+    };
+  }
+
+  if (profile.artifactType === 'systemd') {
+    const restart = runCommand('systemctl', ['--user', 'restart', appliedName]);
+    return {
+      ok: restart.status === 0,
+      action: 'restart',
+      detail: restart.stdout || restart.stderr || restart.error || '',
+      appliedName,
+    };
+  }
+
+  const macDomain = `gui/${typeof process.getuid === 'function' ? process.getuid() : ''}/${appliedName}`;
+  const restart = runCommand('launchctl', ['kickstart', '-k', macDomain]);
+  return {
+    ok: restart.status === 0,
+    action: 'restart',
+    detail: restart.stdout || restart.stderr || restart.error || '',
+    appliedName,
+  };
+}
+
 export function removeAppliedService(serviceName) {
   const profile = getPlatformServiceProfile();
   const appliedName = getAppliedServiceName(serviceName);

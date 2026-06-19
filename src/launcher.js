@@ -4,52 +4,42 @@
  */
 
 import { spawn, spawnSync } from 'child_process';
-import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, openSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, rmSync, openSync } from 'fs';
 import { join, delimiter } from 'path';
 import { getPythonPath, RUN_DIR, CORE_DIR, LOGS_DIR, ensureDirectories } from './utils/paths.js';
 import { getServiceAdapter } from './utils/service-manager.js';
 import { info, success, error, warn, debug } from './utils/logger.js';
 import chalk from 'chalk';
 
-/**
- * Get the path to the PID file for a given service.
- */
 function getPidFile(serviceName) {
   return join(RUN_DIR, `${serviceName}.pid`);
 }
 
-/**
- * Get the path to the log file for a given service.
- */
 function getLogFile(serviceName) {
   return join(LOGS_DIR, `${serviceName}.log`);
 }
 
-/**
- * Determine the correct working directory for the Python process.
- * In development, use the project root's taxsentry-core.
- * In production, use ~/.taxsentry/taxsentry-core.
- */
+function getServiceCommandMarker(serviceName) {
+  if (serviceName === 'telegram_bot') {
+    return 'taxsentry.bot.telegram_bot';
+  }
+  return `taxsentry.${serviceName}`;
+}
+
 function getPythonWorkingDir() {
-  // Dev mode: if we're in the repo, use taxsentry-core relative to CWD
   const devCoreDir = join(process.cwd(), 'taxsentry-core');
   if (existsSync(join(devCoreDir, 'pyproject.toml'))) {
     return devCoreDir;
   }
-  
-  // Prod mode: use installed core directory
   return CORE_DIR;
 }
 
-/**
- * Determine the correct Python executable path.
- * In development, use the venv in project root.
- * In production, use ~/.taxsentry/.venv.
- */
 function getPythonExecutable() {
-  const devPythonPath = join(process.cwd(), '.venv', 
+  const devPythonPath = join(
+    process.cwd(),
+    '.venv',
     process.platform === 'win32' ? 'Scripts' : 'bin',
-    process.platform === 'win32' ? 'python.exe' : 'python'
+    process.platform === 'win32' ? 'python.exe' : 'python',
   );
   if (existsSync(devPythonPath)) {
     return devPythonPath;
@@ -57,9 +47,6 @@ function getPythonExecutable() {
   return getPythonPath();
 }
 
-/**
- * Build a cross-platform PYTHONPATH for spawned Python processes.
- */
 function buildPythonEnv(cwd) {
   const srcPath = join(cwd, 'src');
   const existing = process.env.PYTHONPATH;
@@ -69,10 +56,60 @@ function buildPythonEnv(cwd) {
   };
 }
 
-/**
- * Start a Python process in FOREGROUND with stdio inherited (for TUI).
- * Returns the exit code when the process exits.
- */
+function parsePidList(output) {
+  return String(output || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => parseInt(line, 10))
+    .filter(pid => Number.isInteger(pid) && pid > 0);
+}
+
+function readPidFromFile(serviceName) {
+  const pidFile = getPidFile(serviceName);
+  if (!existsSync(pidFile)) return null;
+  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+function listServiceProcessPids(serviceName) {
+  const marker = getServiceCommandMarker(serviceName);
+
+  if (process.platform === 'win32') {
+    const psScript = [
+      '$ErrorActionPreference = "SilentlyContinue"',
+      `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -like '*${marker}*' } | Select-Object -ExpandProperty ProcessId`
+    ].join('; ');
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', psScript], { encoding: 'utf-8' });
+    return parsePidList(result.stdout);
+  }
+
+  const result = spawnSync('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf-8' });
+  return String(result.stdout || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line.includes(marker) && !line.includes('grep'))
+    .map(line => parseInt(line.split(/\s+/, 1)[0], 10))
+    .filter(pid => Number.isInteger(pid) && pid > 0);
+}
+
+function getTrackedServicePids(serviceName) {
+  const discovered = listServiceProcessPids(serviceName);
+  const filePid = readPidFromFile(serviceName);
+  const merged = new Set(discovered);
+  if (filePid && isProcessRunning(filePid)) {
+    merged.add(filePid);
+  }
+  return Array.from(merged).sort((a, b) => a - b);
+}
+
+function cleanupStalePidFile(serviceName) {
+  const pidFile = getPidFile(serviceName);
+  if (existsSync(pidFile)) {
+    rmSync(pidFile, { force: true });
+  }
+}
+
 export function startForeground(args = ['-m', 'taxsentry']) {
   const pyPath = getPythonExecutable();
   const cwd = getPythonWorkingDir();
@@ -90,7 +127,7 @@ export function startForeground(args = ['-m', 'taxsentry']) {
   try {
     const result = spawnSync(pyPath, args, {
       cwd,
-      stdio: 'inherit', // Allow Rich TUI to render properly
+      stdio: 'inherit',
       env: process.env,
     });
 
@@ -101,12 +138,6 @@ export function startForeground(args = ['-m', 'taxsentry']) {
   }
 }
 
-/**
- * Start a Python process in BACKGROUND, attached to parent lifecycle.
- * Unlike startBackground(), this one does NOT use detached mode,
- * so when the terminal closes, the child process dies automatically.
- * Returns the child process reference on success, null on failure.
- */
 export function startAttached(serviceName, args) {
   const pyPath = getPythonExecutable();
   const cwd = getPythonWorkingDir();
@@ -120,9 +151,9 @@ export function startAttached(serviceName, args) {
     return null;
   }
 
-  // Check if already running
-  if (isRunning(serviceName)) {
-    warn(`Dịch vụ '${serviceName}' đang chạy với PID: ${getPid(serviceName)}`);
+  const existingPids = getTrackedServicePids(serviceName);
+  if (existingPids.length > 0) {
+    warn(`Dịch vụ '${serviceName}' đang chạy với PID(s): ${existingPids.join(', ')}`);
     return null;
   }
 
@@ -130,30 +161,23 @@ export function startAttached(serviceName, args) {
   debug(`Args: ${args.join(' ')}`, true);
 
   const logStream = openSync(logFile, 'a');
-
   const child = spawn(pyPath, args, {
     cwd,
     stdio: ['ignore', logStream, logStream],
-    detached: false, // NOT detached → dies when terminal closes
+    detached: false,
     env: buildPythonEnv(cwd),
   });
-
-  // Don't unref — keep reference for cleanup
 
   if (child.pid) {
     writeFileSync(pidFile, child.pid.toString(), 'utf-8');
     success(`${serviceName} được khởi chạy ở chế độ nền (PID: ${child.pid})`);
     return child;
-  } else {
-    error('Không thể lấy PID của tiến trình nền.');
-    return null;
   }
+
+  error('Không thể lấy PID của tiến trình nền.');
+  return null;
 }
 
-/**
- * Start a Python process in BACKGROUND, detached, and log its PID.
- * Returns the PID on success, null on failure.
- */
 export function startBackground(serviceName, args) {
   const pyPath = getPythonExecutable();
   const cwd = getPythonWorkingDir();
@@ -168,10 +192,10 @@ export function startBackground(serviceName, args) {
     return null;
   }
 
-  // Check if already running
-  if (isRunning(serviceName)) {
-    warn(`Dịch vụ '${serviceName}' đang chạy với PID: ${getPid(serviceName)}`);
-    return getPid(serviceName);
+  const existingPids = getTrackedServicePids(serviceName);
+  if (existingPids.length > 0) {
+    warn(`Dịch vụ '${serviceName}' đang chạy với PID(s): ${existingPids.join(', ')}`);
+    return existingPids[0];
   }
 
   info(`Đang khởi chạy ${serviceName} ở chế độ nền...`);
@@ -179,7 +203,6 @@ export function startBackground(serviceName, args) {
   debug(`Args: ${args.join(' ')}`, true);
 
   const logStream = openSync(logFile, 'a');
-  
   const child = spawn(pyPath, args, {
     cwd,
     stdio: ['ignore', logStream, logStream],
@@ -195,104 +218,86 @@ export function startBackground(serviceName, args) {
     writeFileSync(pidFile, child.pid.toString(), 'utf-8');
     success(`${serviceName} được khởi chạy ở chế độ nền (PID: ${child.pid})`);
     return child.pid;
-  } else {
-    error('Không thể lấy PID của tiến trình nền.');
-    return null;
   }
+
+  error('Không thể lấy PID của tiến trình nền.');
+  return null;
 }
 
-/**
- * Read the PID for a given service.
- */
 export function getPid(serviceName) {
-  const pidFile = getPidFile(serviceName);
-  if (!existsSync(pidFile)) return null;
-  const pid = parseInt(readFileSync(pidFile, 'utf-8').trim(), 10);
-  return isNaN(pid) ? null : pid;
+  const pids = getTrackedServicePids(serviceName);
+  if (pids.length > 0) {
+    return pids[0];
+  }
+
+  cleanupStalePidFile(serviceName);
+  return null;
 }
 
-/**
- * Check if a process with the given PID is running.
- * Works cross-platform using `process.kill(pid, 0)` - does NOT actually kill.
- */
 export function isProcessRunning(pid) {
   if (!pid) return false;
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return err.code === 'EPERM'; // Permission error = process exists but owned by another user
+    return err.code === 'EPERM';
   }
 }
 
-/**
- * Check if a named service is currently running.
- */
 export function isRunning(serviceName) {
-  const pid = getPid(serviceName);
-  return isProcessRunning(pid);
+  return getTrackedServicePids(serviceName).length > 0;
 }
 
-/**
- * Stop a named service by killing its PID.
- * Returns true on success, false on failure or if not running.
- */
 export function stopService(serviceName) {
-  const pid = getPid(serviceName);
   const adapter = getServiceAdapter(serviceName);
-  if (!pid || !isProcessRunning(pid)) {
+  const pids = getTrackedServicePids(serviceName);
+
+  if (pids.length === 0) {
     warn(`${serviceName} không đang chạy hoặc PID không hợp lệ.`);
-    // Clean up stale PID file
-    const pidFile = getPidFile(serviceName);
-    if (existsSync(pidFile)) rmSync(pidFile);
+    cleanupStalePidFile(serviceName);
     return false;
   }
 
-  try {
-    process.kill(pid, adapter.gracefulSignal);
-    info(`Đã gửi tín hiệu tắt (${adapter.gracefulSignal}) đến ${serviceName} (PID: ${pid}).`);
-
-    // Wait a moment and check
-    setTimeout(() => {
+  let stoppedAny = false;
+  for (const pid of pids) {
+    try {
+      process.kill(pid, adapter.gracefulSignal);
+      info(`Đã gửi tín hiệu tắt (${adapter.gracefulSignal}) đến ${serviceName} (PID: ${pid}).`);
       if (isProcessRunning(pid)) {
-        warn(`${serviceName} vẫn đang chạy. Đang buộc tắt (${adapter.forceSignal})...`);
         try {
           process.kill(pid, adapter.forceSignal);
+          info(`Đã buộc dừng ${serviceName} (PID: ${pid}) bằng ${adapter.forceSignal}.`);
         } catch {
-          // Ignore if already dead
+          // ignore
         }
       }
-    }, 2000);
-
-    // Clean up PID file
-    const pidFile = getPidFile(serviceName);
-    if (existsSync(pidFile)) rmSync(pidFile);
-
-    success(`Đã dừng ${serviceName} thành công.`);
-    return true;
-  } catch (err) {
-    error(`Không thể dừng ${serviceName}: ${err.message}`);
-    return false;
+      stoppedAny = true;
+    } catch (err) {
+      warn(`Không thể dừng ${serviceName} PID ${pid}: ${err.message}`);
+    }
   }
+
+  cleanupStalePidFile(serviceName);
+
+  if (stoppedAny) {
+    success(`Đã dừng ${serviceName} thành công.`);
+  }
+  return stoppedAny;
 }
 
-/**
- * Get the status of a named service.
- */
 export function getServiceStatus(serviceName) {
-  const pid = getPid(serviceName);
+  const pids = getTrackedServicePids(serviceName);
   return {
     name: serviceName,
-    running: isProcessRunning(pid),
-    pid: pid,
+    running: pids.length > 0,
+    pid: pids[0] || null,
+    pids,
     pidFile: getPidFile(serviceName),
     logFile: getLogFile(serviceName),
+    discoveredViaProcessScan: pids.length > 0,
   };
 }
 
-/**
- * Print the tail of a service log file.
- */
 export function tailLog(serviceName, lines = 20) {
   const logFile = getLogFile(serviceName);
   if (!existsSync(logFile)) {

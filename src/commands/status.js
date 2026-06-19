@@ -58,7 +58,8 @@ export default async function statusCommand() {
   console.log(chalk.bold.cyan('Trạng thái dịch vụ:'));
   const botStatus = getServiceStatus('telegram_bot');
   if (botStatus.running) {
-    success(`   Telegram Bot: Đang chạy (PID: ${botStatus.pid})`);
+    const pidLabel = botStatus.pids?.length > 1 ? botStatus.pids.join(', ') : botStatus.pid;
+    success(`   Telegram Bot: Đang chạy (PID${botStatus.pids?.length > 1 ? 's' : ''}: ${pidLabel})`);
   } else {
     warn(`   Telegram Bot: Không đang chạy`);
   }

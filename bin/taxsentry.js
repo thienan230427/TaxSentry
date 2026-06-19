@@ -18,7 +18,7 @@ import botCommand from '../src/commands/bot.js';
 import stopCommand from '../src/commands/stop.js';
 import statusCommand from '../src/commands/status.js';
 import upCommand from '../src/commands/up.js';
-import { installServiceCommand, applyServiceCommand, removeServiceCommand, showServiceLogsCommand, showServiceStatus, uninstallServiceCommand } from '../src/commands/service.js';
+import { installServiceCommand, applyServiceCommand, removeServiceCommand, restartServiceCommand, showServiceLogsCommand, showServiceStatus, startServiceCommand, stopServiceCommand, uninstallServiceCommand } from '../src/commands/service.js';
 import {
   displayConfig,
   setConfigValue,
@@ -66,6 +66,9 @@ program
   taxsentry service status     → Xem định nghĩa service đa nền tảng hiện tại
   taxsentry service install    → Tạo file systemd / launchd / Task Scheduler
   taxsentry service apply      → Đăng ký service vào OS thật
+  taxsentry service start      → Yêu cầu OS start service đã đăng ký
+  taxsentry service stop       → Yêu cầu OS stop service đã đăng ký
+  taxsentry service restart    → Yêu cầu OS restart service đã đăng ký
   taxsentry service remove     → Gỡ service khỏi OS thật
   taxsentry service logs       → Xem log runtime nhanh
   taxsentry service uninstall  → Xóa file service đã sinh
@@ -295,6 +298,33 @@ serviceCommand
   .action((options) => {
     printBanner();
     applyServiceCommand(options.service);
+  });
+
+serviceCommand
+  .command('start')
+  .description('Yêu cầu OS start service đã đăng ký')
+  .option('--service <name>', 'Tên service cần thao tác', 'telegram_bot')
+  .action((options) => {
+    printBanner();
+    startServiceCommand(options.service);
+  });
+
+serviceCommand
+  .command('stop')
+  .description('Yêu cầu OS stop service đã đăng ký')
+  .option('--service <name>', 'Tên service cần thao tác', 'telegram_bot')
+  .action((options) => {
+    printBanner();
+    stopServiceCommand(options.service);
+  });
+
+serviceCommand
+  .command('restart')
+  .description('Yêu cầu OS restart service đã đăng ký')
+  .option('--service <name>', 'Tên service cần thao tác', 'telegram_bot')
+  .action((options) => {
+    printBanner();
+    restartServiceCommand(options.service);
   });
 
 serviceCommand

@@ -12,6 +12,9 @@ import {
   installServiceArtifacts,
   readServiceLog,
   removeAppliedService,
+  restartAppliedService,
+  startAppliedService,
+  stopAppliedService,
   uninstallServiceArtifacts,
 } from '../utils/service-artifacts.js';
 import { getAppliedServiceName, getServiceAdapter, getServiceLabel } from '../utils/service-manager.js';
@@ -105,6 +108,48 @@ export function applyServiceCommand(serviceName = 'telegram_bot') {
   console.log();
 }
 
+export function startServiceCommand(serviceName = 'telegram_bot') {
+  const result = startAppliedService(serviceName);
+  if (result.ok) {
+    success(`Đã yêu cầu OS start service cho ${getServiceLabel(serviceName)}.`);
+  } else {
+    warn(`OS chưa start được service cho ${getServiceLabel(serviceName)}.`);
+  }
+  console.log(chalk.dim(`   Tên đăng ký: ${result.appliedName}`));
+  if (result.detail) {
+    console.log(chalk.dim(`   Chi tiết: ${result.detail}`));
+  }
+  console.log();
+}
+
+export function stopServiceCommand(serviceName = 'telegram_bot') {
+  const result = stopAppliedService(serviceName);
+  if (result.ok) {
+    success(`Đã yêu cầu OS stop service cho ${getServiceLabel(serviceName)}.`);
+  } else {
+    warn(`OS chưa stop được service cho ${getServiceLabel(serviceName)}.`);
+  }
+  console.log(chalk.dim(`   Tên đăng ký: ${result.appliedName}`));
+  if (result.detail) {
+    console.log(chalk.dim(`   Chi tiết: ${result.detail}`));
+  }
+  console.log();
+}
+
+export function restartServiceCommand(serviceName = 'telegram_bot') {
+  const result = restartAppliedService(serviceName);
+  if (result.ok) {
+    success(`Đã yêu cầu OS restart service cho ${getServiceLabel(serviceName)}.`);
+  } else {
+    warn(`OS chưa restart được service cho ${getServiceLabel(serviceName)}.`);
+  }
+  console.log(chalk.dim(`   Tên đăng ký: ${result.appliedName}`));
+  if (result.detail) {
+    console.log(chalk.dim(`   Chi tiết: ${result.detail}`));
+  }
+  console.log();
+}
+
 export function removeServiceCommand(serviceName = 'telegram_bot', purgeArtifacts = false) {
   const result = removeAppliedService(serviceName);
   if (result.ok) {
@@ -150,6 +195,11 @@ export function showServiceLogsCommand(serviceName = 'telegram_bot', lines = 40)
     return;
   }
   console.log(chalk.dim(`   Số dòng hiển thị: ${result.lines.length}`));
+  const joined = result.lines.join('\n');
+  if (/Conflict: terminated by other getUpdates request/i.test(joined)) {
+    console.log(chalk.yellow('   Cảnh báo: bot đang bị Telegram polling conflict — có khả năng đang tồn tại instance khác của telegram_bot.'));
+    console.log(chalk.yellow('   Gợi ý: chạy `taxsentry stop` để dọn bot local trước, rồi kiểm tra lại service apply/start.'));
+  }
   console.log();
   for (const line of result.lines) {
     console.log(chalk.dim(line));
