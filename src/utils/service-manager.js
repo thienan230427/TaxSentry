@@ -1,7 +1,7 @@
 /**
  * 🛡️ TaxSentry CLI - Cross-platform Service Adapter Foundation
  * Provides platform-aware metadata for local background services and
- * leaves a clean seam for future systemd / launchd / Task Scheduler adapters.
+ * a clean seam for future systemd / launchd / Task Scheduler adapters.
  */
 
 function getPlatformKey() {
@@ -10,41 +10,53 @@ function getPlatformKey() {
   return 'linux';
 }
 
-export function getPlatformServiceProfile() {
-  const platform = getPlatformKey();
-
+function getSupervisorProfile(platform) {
   if (platform === 'windows') {
     return {
-      platform,
       manager: 'local-process',
-      supervisor: 'Task Scheduler (future adapter)',
+      supervisor: 'Task Scheduler',
       detached: true,
       gracefulSignal: 'SIGTERM',
       forceSignal: 'SIGKILL',
+      artifactType: 'task-scheduler',
+      artifactExtension: '.xml',
+      installScope: 'per-user',
       notes: 'Hiện dùng PID file + child process local; có thể nâng cấp sang Task Scheduler.',
     };
   }
 
   if (platform === 'macos') {
     return {
-      platform,
       manager: 'local-process',
-      supervisor: 'launchd (future adapter)',
+      supervisor: 'launchd',
       detached: true,
       gracefulSignal: 'SIGTERM',
       forceSignal: 'SIGKILL',
+      artifactType: 'launchd',
+      artifactExtension: '.plist',
+      installScope: 'per-user',
       notes: 'Hiện dùng PID file + child process local; phù hợp để nâng cấp sang launchd agent.',
     };
   }
 
   return {
-    platform,
     manager: 'local-process',
-    supervisor: 'systemd --user (future adapter)',
+    supervisor: 'systemd --user',
     detached: true,
     gracefulSignal: 'SIGTERM',
     forceSignal: 'SIGKILL',
+    artifactType: 'systemd',
+    artifactExtension: '.service',
+    installScope: 'per-user',
     notes: 'Hiện dùng PID file + child process local; phù hợp để nâng cấp sang systemd user service.',
+  };
+}
+
+export function getPlatformServiceProfile() {
+  const platform = getPlatformKey();
+  return {
+    platform,
+    ...getSupervisorProfile(platform),
   };
 }
 
@@ -57,6 +69,9 @@ export function getServiceAdapter(serviceName) {
     detached: profile.detached,
     gracefulSignal: profile.gracefulSignal,
     forceSignal: profile.forceSignal,
+    artifactType: profile.artifactType,
+    artifactExtension: profile.artifactExtension,
+    installScope: profile.installScope,
     notes: profile.notes,
   };
 }
@@ -64,4 +79,50 @@ export function getServiceAdapter(serviceName) {
 export function formatServiceAdapterSummary(serviceName) {
   const adapter = getServiceAdapter(serviceName);
   return `${adapter.runtimeMode} | supervisor: ${adapter.recommendedSupervisor}`;
+}
+
+export function getServiceLabel(serviceName) {
+  if (serviceName === 'telegram_bot') {
+    return 'TaxSentry Telegram Bot';
+  }
+  return `TaxSentry ${serviceName}`;
+}
+
+export function getServiceModuleArgs(serviceName, adminChatId = '') {
+  if (serviceName === 'telegram_bot') {
+    const args = ['-m', 'taxsentry.bot.telegram_bot'];
+    if (adminChatId) {
+      args.push('--admin-chat-id', String(adminChatId));
+    }
+    return args;
+  }
+
+  return ['-m', 'taxsentry'];
+}
+
+export function getInstallHintLines(serviceName, artifactPath) {
+  const adapter = getServiceAdapter(serviceName);
+
+  if (adapter.artifactType === 'systemd') {
+    return [
+      `mkdir -p ~/.config/systemd/user`,
+      `cp "${artifactPath}" ~/.config/systemd/user/`,
+      `systemctl --user daemon-reload`,
+      `systemctl --user enable --now ${serviceName}.service`,
+    ];
+  }
+
+  if (adapter.artifactType === 'launchd') {
+    return [
+      `mkdir -p ~/Library/LaunchAgents`,
+      `cp "${artifactPath}" ~/Library/LaunchAgents/`,
+      `launchctl unload ~/Library/LaunchAgents/com.taxsentry.${serviceName}.plist 2>/dev/null || true`,
+      `launchctl load ~/Library/LaunchAgents/com.taxsentry.${serviceName}.plist`,
+    ];
+  }
+
+  return [
+    `schtasks /Create /TN "TaxSentry\\${serviceName}" /XML "${artifactPath}" /F`,
+    `schtasks /Run /TN "TaxSentry\\${serviceName}"`,
+  ];
 }

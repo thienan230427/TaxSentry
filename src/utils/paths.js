@@ -16,6 +16,7 @@ export const LOGS_DIR = join(TAXSENTRY_HOME, 'logs');
 export const RUN_DIR = join(TAXSENTRY_HOME, 'run');
 export const VENV_DIR = join(TAXSENTRY_HOME, '.venv');
 export const CORE_DIR = join(TAXSENTRY_HOME, 'taxsentry-core');
+export const SERVICES_DIR = join(TAXSENTRY_HOME, 'services');
 
 // Key files
 export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -51,7 +52,7 @@ export function getPipPath() {
  * Ensure all TaxSentry directories exist.
  */
 export function ensureDirectories() {
-  const dirs = [TAXSENTRY_HOME, CONFIG_DIR, LOGS_DIR, RUN_DIR, CORE_DIR];
+  const dirs = [TAXSENTRY_HOME, CONFIG_DIR, LOGS_DIR, RUN_DIR, CORE_DIR, SERVICES_DIR];
   for (const dir of dirs) {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });

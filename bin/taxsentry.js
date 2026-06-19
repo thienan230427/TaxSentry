@@ -18,6 +18,7 @@ import botCommand from '../src/commands/bot.js';
 import stopCommand from '../src/commands/stop.js';
 import statusCommand from '../src/commands/status.js';
 import upCommand from '../src/commands/up.js';
+import { installServiceCommand, showServiceStatus, uninstallServiceCommand } from '../src/commands/service.js';
 import {
   displayConfig,
   setConfigValue,
@@ -60,6 +61,11 @@ program
 🛑 DỪNG HỆ THỐNG:
   taxsentry stop         → Dừng bot nền (nếu chạy bằng "taxsentry bot")
   Ctrl+C                 → Thoát TUI + tự động dừng bot (nếu chạy bằng "taxsentry up")
+
+🧩 SERVICE ARTIFACTS:
+  taxsentry service status     → Xem định nghĩa service đa nền tảng hiện tại
+  taxsentry service install    → Tạo file systemd / launchd / Task Scheduler
+  taxsentry service uninstall  → Xóa file service đã sinh
 
 ⚙️ QUẢN LÝ CẤU HÌNH LINH HOẠT (không hardcode):
   taxsentry config                        → Xem toàn bộ cấu hình
@@ -253,6 +259,45 @@ program
     printBanner();
     await statusCommand();
   });
+
+/* ═══════════════════════════════════════════════
+   COMMAND: service
+   ═══════════════════════════════════════════════ */
+const serviceCommand = program
+  .command('service')
+  .description('Sinh/gỡ định nghĩa service đa nền tảng cho Telegram Bot');
+
+serviceCommand
+  .command('status')
+  .description('Xem trạng thái artifact service hiện tại')
+  .option('--service <name>', 'Tên service cần thao tác', 'telegram_bot')
+  .action((options) => {
+    printBanner();
+    showServiceStatus(options.service);
+  });
+
+serviceCommand
+  .command('install')
+  .description('Sinh file service cho systemd / launchd / Task Scheduler')
+  .option('--service <name>', 'Tên service cần thao tác', 'telegram_bot')
+  .action((options) => {
+    printBanner();
+    installServiceCommand(options.service);
+  });
+
+serviceCommand
+  .command('uninstall')
+  .description('Xóa file service đã sinh')
+  .option('--service <name>', 'Tên service cần thao tác', 'telegram_bot')
+  .action((options) => {
+    printBanner();
+    uninstallServiceCommand(options.service);
+  });
+
+serviceCommand.action(() => {
+  printBanner();
+  showServiceStatus('telegram_bot');
+});
 
 /* ═══════════════════════════════════════════════
    DEFAULT
