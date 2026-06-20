@@ -1,0 +1,76 @@
+name: Cross-platform validation
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: ${{ matrix.os }} / python-${{ matrix.python-version }} / node-${{ matrix.node-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        python-version: ['3.11']
+        node-version: ['20']
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            taxsentry-core/requirements.txt
+            taxsentry-core/pyproject.toml
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r taxsentry-core/requirements.txt
+
+      - name: Validate Node CLI syntax
+        run: |
+          node --check src/launcher.js
+          node --check src/installer.js
+          node --check src/commands/status.js
+          node --check src/commands/bot.js
+          node --check src/utils/service-manager.js
+
+      - name: Validate Python imports / syntax
+        working-directory: taxsentry-core
+        run: |
+          PYTHONPATH=src python -m py_compile \
+            src/taxsentry/__main__.py \
+            src/taxsentry/utils/runtime.py \
+            src/taxsentry/ui/tui.py \
+            src/taxsentry/bot/telegram_bot.py \
+            src/taxsentry/core/pdf_generator.py \
+            src/taxsentry/core/excel_parser.py
+
+      - name: Run parser regression tests
+        working-directory: taxsentry-core
+        run: |
+          PYTHONPATH=src python -m unittest tests.test_excel_parser_regressions -v
