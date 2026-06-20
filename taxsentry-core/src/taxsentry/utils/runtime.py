@@ -12,6 +12,25 @@ from typing import Iterable
 PROJECT_ROOT_MARKERS = ("pyproject.toml", "requirements.txt")
 
 
+def _safe_console_print(message: str) -> None:
+    """Print to console without crashing on limited encodings like cp1252."""
+    stream = getattr(sys, "stdout", None)
+    if stream is None:
+        return
+
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    text = f"{message}\n"
+    try:
+        stream.write(text)
+    except UnicodeEncodeError:
+        safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+        if hasattr(stream, "buffer"):
+            stream.buffer.write(safe_text.encode(encoding, errors="replace"))
+        else:
+            stream.write(safe_text)
+    stream.flush()
+
+
 def in_virtualenv() -> bool:
     return (sys.prefix != sys.base_prefix) or ("VIRTUAL_ENV" in os.environ)
 
@@ -46,7 +65,7 @@ def bootstrap_into_venv(argv: list[str] | None = None) -> None:
 
     venv_python = get_venv_python()
     if not venv_python:
-        print("⚠️ Cảnh báo: Không tìm thấy môi trường ảo .venv cục bộ. Hệ thống sẽ cố gắng chạy bằng Python hệ thống.")
+        _safe_console_print("⚠️ Cảnh báo: Không tìm thấy môi trường ảo .venv cục bộ. Hệ thống sẽ cố gắng chạy bằng Python hệ thống.")
         return
 
     current_executable = Path(sys.executable).resolve()
@@ -61,6 +80,6 @@ def bootstrap_into_venv(argv: list[str] | None = None) -> None:
     except SystemExit:
         raise
     except Exception as exc:
-        print(f"Không thể tự động chuyển hướng sang môi trường ảo: {exc}")
-        print("Vui lòng kích hoạt thủ công .venv và chạy lại.")
+        _safe_console_print(f"Không thể tự động chuyển hướng sang môi trường ảo: {exc}")
+        _safe_console_print("Vui lòng kích hoạt thủ công .venv và chạy lại.")
         raise SystemExit(1)
