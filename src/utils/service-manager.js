@@ -104,7 +104,7 @@ export function getAppliedServiceName(serviceName) {
 
 export function getServiceModuleArgs(serviceName, adminChatId = '') {
   if (serviceName === 'telegram_bot') {
-    const args = ['-m', 'taxsentry.bot.telegram_bot'];
+    const args = ['-m', 'taxsentry.bot.telegram_bot', '--with-automation-loop'];
     if (adminChatId) {
       args.push('--admin-chat-id', String(adminChatId));
     }

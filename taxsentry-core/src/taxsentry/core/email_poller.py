@@ -5,6 +5,7 @@ import sys
 import subprocess
 import json
 from email.header import decode_header
+from email.utils import parseaddr
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -26,12 +27,13 @@ class TaxSentryEmailPoller:
         self.user = os.getenv("EMAIL_USER")
         self.password = self._resolve_password()
         self.accountant_email = os.getenv("ACCOUNTANT_EMAIL", "")
+        self.allowed_report_senders = self._load_allowed_report_senders()
         self.mail = None
         self.log_callback = None
         # Track processed email IDs để tránh xử lý trùng
         self.processed_file = Path(__file__).resolve().parent.parent.parent.parent / ".processed_ids.json"
         self.processed_ids = self._load_processed_ids()
-        # Track email IDs đã download nhưng chưa xử lý xong (chờ automation xác nhận)
+
         self._pending_email_ids = {}
         self._file_contexts = {}
         self.document_suffixes = {".xlsx", ".pdf"}
@@ -73,11 +75,104 @@ class TaxSentryEmailPoller:
 
         return pwd
 
+    def _load_allowed_report_senders(self) -> set[str]:
+        senders: list[str] = []
+        if self.accountant_email:
+            senders.append(self.accountant_email)
+
+        extra_senders = os.getenv("ALLOWED_REPORT_SENDERS", "")
+        if extra_senders:
+            senders.extend(part.strip() for part in extra_senders.split(","))
+
+        normalized = {self._normalize_email(sender) for sender in senders if self._normalize_email(sender)}
+        return normalized
+
+    @staticmethod
+    def _normalize_email(value: str) -> str:
+        if not value:
+            return ""
+        _, address = parseaddr(str(value).strip())
+        return address.strip().lower()
+
+    @staticmethod
+    def _decode_mime_header(raw_value) -> str:
+        if not raw_value:
+            return ""
+        decoded_parts = []
+        for part, encoding in decode_header(raw_value):
+            if isinstance(part, bytes):
+                decoded_parts.append(part.decode(encoding or "utf-8", errors="replace"))
+            else:
+                decoded_parts.append(str(part))
+        return "".join(decoded_parts).strip()
+
+    def _is_allowed_sender(self, sender_value: str) -> bool:
+        normalized = self._normalize_email(sender_value)
+        return bool(normalized and normalized in self.allowed_report_senders)
+
+    def _allowed_senders_display(self) -> str:
+        if not self.allowed_report_senders:
+            return "[chưa cấu hình]"
+        return ", ".join(sorted(self.allowed_report_senders))
+
+    def _build_sender_search_criteria(self) -> tuple[str, ...]:
+        senders = sorted(self.allowed_report_senders)
+        if not senders:
+            return ("ALL",)
+        if len(senders) == 1:
+            return ("FROM", f'"{senders[0]}"')
+
+        criteria: list[str] = ["OR"] * (len(senders) - 1)
+        for sender in senders:
+            criteria.extend(["FROM", f'"{sender}"'])
+        return tuple(criteria)
+
+    def _remove_processed_id(self, email_id: str) -> None:
+        if email_id in self.processed_ids:
+            self.processed_ids.remove(email_id)
+            self._save_processed_ids()
+
+    def _remove_processed_ids(self, email_ids: list[str]) -> int:
+        removed = 0
+        for email_id in email_ids:
+            if email_id in self.processed_ids:
+                self.processed_ids.remove(email_id)
+                removed += 1
+        if removed:
+            self._save_processed_ids()
+        return removed
+
+    def _requeue_latest_allowed_email(self) -> str | None:
+        if not self.mail or not self.allowed_report_senders:
+            return None
+        try:
+            self.mail.select("inbox")
+            status, messages = self.mail.search(None, "ALL")
+            if status != "OK":
+                return None
+            for e_id in reversed(messages[0].split()):
+                email_id = e_id.decode()
+                if email_id not in self.processed_ids:
+                    continue
+                status, msg_data = self.mail.fetch(e_id, "(RFC822)")
+                if status != "OK":
+                    continue
+                msg = email.message_from_bytes(msg_data[0][1])
+                if self._is_allowed_sender(msg.get("From", "")):
+                    self._remove_processed_id(email_id)
+                    self.log(f"🔁 Re-queue email gần nhất hợp lệ để xử lý lại: ID {email_id}")
+                    return email_id
+        except Exception as exc:
+            self.log(f"⚠️ Không thể re-queue email gần nhất: {exc}")
+        return None
+
+    def _resolve_subject(self, msg) -> str:
+        return self._decode_mime_header(msg.get("Subject", ""))
+
     def _load_processed_ids(self) -> set:
         """Load danh sách ID email đã xử lý từ file JSON."""
         try:
             if self.processed_file.exists():
-                import json
                 data = json.loads(self.processed_file.read_text(encoding="utf-8"))
                 return set(data.get("ids", []))
         except Exception:
@@ -87,7 +182,6 @@ class TaxSentryEmailPoller:
     def _save_processed_ids(self):
         """Lưu danh sách ID email đã xử lý."""
         try:
-            import json
             self.processed_file.write_text(
                 json.dumps({"ids": list(self.processed_ids)[-500:]}, ensure_ascii=False),
                 encoding="utf-8"
@@ -96,7 +190,7 @@ class TaxSentryEmailPoller:
             pass
 
     def log(self, message):
-        """Helper để ghi log: chuyển hướng sang callback nếu có, nếu không in ra console."""
+
         if self.log_callback:
             self.log_callback(message)
         else:
@@ -138,22 +232,22 @@ class TaxSentryEmailPoller:
             # Chọn hộp thư đến (Inbox)
             self.mail.select("inbox")
 
-            # Tìm kiếm tất cả email từ Kế toán trưởng (cả đã đọc và chưa đọc)
-            # Dùng processed_ids để tránh xử lý trùng
-            search_query = f'(FROM "{self.accountant_email}")'
-            status, messages = self.mail.search(None, search_query)
+            # Quét hộp thư theo allowlist sender để tránh fetch toàn bộ inbox không liên quan
+            status, messages = self.mail.search(None, *self._build_sender_search_criteria())
 
             if status != "OK":
                 self.log("❌ Lỗi khi tìm kiếm email.")
                 return downloaded_files
 
             email_ids = messages[0].split()
-            # Lọc bỏ các email đã xử lý trước đó
-            new_ids = [e_id for e_id in email_ids if e_id.decode() not in self.processed_ids]
-            self.log(f"🔎 Tìm thấy {len(email_ids)} email từ Kế toán trưởng ({len(new_ids)} email mới chưa xử lý).")
+            candidate_ids = [e_id for e_id in email_ids if e_id.decode() not in self.processed_ids]
+            self.log(
+                f"🔎 Quét email theo allowlist sender: {self._allowed_senders_display()} | "
+                f"{len(email_ids)} email khớp query | {len(candidate_ids)} email chưa processed."
+            )
 
-            for e_id in new_ids:
-                # Lấy nội dung email
+            for e_id in candidate_ids:
+
                 status, msg_data = self.mail.fetch(e_id, "(RFC822)")
                 if status != "OK":
                     continue
@@ -161,12 +255,15 @@ class TaxSentryEmailPoller:
                 raw_email = msg_data[0][1]
                 msg = email.message_from_bytes(raw_email)
 
+                sender = msg.get("From", "")
+                if not self._is_allowed_sender(sender):
+                    self.log(f"⏭️ Bỏ qua email ID {e_id.decode()} từ sender không nằm trong allowlist: {sender}")
+                    continue
+
                 # Giải mã tiêu đề email
-                subject, encoding = decode_header(msg["Subject"])[0]
-                if isinstance(subject, bytes):
-                    subject = subject.decode(encoding or "utf-8")
+                subject = self._resolve_subject(msg)
                 
-                self.log(f"📬 Đang xử lý email tiêu đề: '{subject}'")
+                self.log(f"📬 Đang xử lý email tiêu đề: '{subject}' | sender: {sender}")
 
                 # Quét các phần đính kèm (attachments)
                 attachment_manifest = []

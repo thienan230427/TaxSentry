@@ -38,6 +38,9 @@ def get_venv_python(root_dir: Path | None = None) -> Path | None:
 
 
 def bootstrap_into_venv(argv: list[str] | None = None) -> None:
+    if os.getenv("TAXSENTRY_SKIP_BOOTSTRAP") == "1":
+        return
+
     if in_virtualenv():
         return
 
@@ -46,9 +49,15 @@ def bootstrap_into_venv(argv: list[str] | None = None) -> None:
         print("⚠️ Cảnh báo: Không tìm thấy môi trường ảo .venv cục bộ. Hệ thống sẽ cố gắng chạy bằng Python hệ thống.")
         return
 
+    current_executable = Path(sys.executable).resolve()
+    if current_executable == venv_python.resolve():
+        return
+
     args = [str(venv_python)] + (argv or sys.argv)
+    env = os.environ.copy()
+    env["TAXSENTRY_SKIP_BOOTSTRAP"] = "1"
     try:
-        raise SystemExit(subprocess.run(args).returncode)
+        raise SystemExit(subprocess.run(args, env=env).returncode)
     except SystemExit:
         raise
     except Exception as exc:

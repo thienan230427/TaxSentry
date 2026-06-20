@@ -55,6 +55,7 @@ const DEFAULT_SCHEMA = {
         { key: 'host', label: 'IMAP Host', type: 'string', default: 'imap.gmail.com' },
         { key: 'port', label: 'IMAP Port', type: 'number', default: 993 },
         { key: 'accountantEmail', label: 'Email Kế toán trưởng (người gửi báo cáo)', type: 'string', default: '', required: true },
+        { key: 'allowedReportSenders', label: 'Danh sách email được phép gửi báo cáo (CSV, tùy chọn)', type: 'string', default: '' },
       ],
     },
   ],
@@ -79,6 +80,7 @@ const DEFAULT_ENV_MAPPING = {
   'email.host': 'EMAIL_HOST',
   'email.port': 'EMAIL_PORT',
   'email.accountantEmail': 'ACCOUNTANT_EMAIL',
+  'email.allowedReportSenders': 'ALLOWED_REPORT_SENDERS',
 };
 
 /* ─── Helper: lấy field descriptor từ schema ─── */
@@ -86,6 +88,27 @@ function getFieldDescriptor(schema, groupId, fieldKey) {
   const group = schema.groups.find(g => g.id === groupId);
   if (!group) return null;
   return group.fields.find(f => f.key === fieldKey) || null;
+}
+
+function mergeSchemaWithDefaults(schema) {
+  const merged = JSON.parse(JSON.stringify(schema || { groups: [] }));
+  if (!Array.isArray(merged.groups)) merged.groups = [];
+
+  for (const defaultGroup of DEFAULT_SCHEMA.groups) {
+    const existingGroup = merged.groups.find(g => g.id === defaultGroup.id);
+    if (!existingGroup) {
+      merged.groups.push(JSON.parse(JSON.stringify(defaultGroup)));
+      continue;
+    }
+    if (!Array.isArray(existingGroup.fields)) existingGroup.fields = [];
+    for (const defaultField of defaultGroup.fields) {
+      if (!existingGroup.fields.find(f => f.key === defaultField.key)) {
+        existingGroup.fields.push(JSON.parse(JSON.stringify(defaultField)));
+      }
+    }
+  }
+
+  return merged;
 }
 
 /* ─── Helper: lấy value từ config ─── */
@@ -208,8 +231,8 @@ export function loadConfig() {
     }
 
     // Ensure new fields exist
-    if (!parsed.schema) parsed.schema = JSON.parse(JSON.stringify(DEFAULT_SCHEMA));
-    if (!parsed.envMapping) parsed.envMapping = { ...DEFAULT_ENV_MAPPING };
+    parsed.schema = mergeSchemaWithDefaults(parsed.schema || DEFAULT_SCHEMA);
+    parsed.envMapping = { ...DEFAULT_ENV_MAPPING, ...(parsed.envMapping || {}) };
     if (!parsed.values) parsed.values = {};
     if (!parsed.extraEnv) parsed.extraEnv = {};
 

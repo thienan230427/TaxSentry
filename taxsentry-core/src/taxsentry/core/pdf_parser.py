@@ -114,14 +114,17 @@ class TaxSentryPDFParser:
                 temperature=0.0
             )
             
-            ai_content = response.choices[0].message.content.strip()
+            ai_content = engine._extract_message_text(response)
+            if not ai_content:
+                raise ValueError("AI parser trả về nội dung rỗng")
             
             # Sử dụng Regex trích xuất chuỗi JSON nằm giữa các dấu ngoặc nhọn ngoài cùng
             json_match = re.search(r'(\{.*\})', ai_content, re.DOTALL)
+
             if json_match:
                 ai_content = json_match.group(1)
             else:
-                # Fallback dọn dẹp markdown block
+
                 if ai_content.startswith("```"):
                     lines = ai_content.split("\n")
                     if lines[0].startswith("```"):

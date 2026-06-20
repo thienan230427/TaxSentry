@@ -2,6 +2,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 import openai
 from dotenv import load_dotenv
 
@@ -39,8 +40,89 @@ class TaxSentryAnalysisEngine:
             self.log(f"❌ Khởi tạo kết nối LM Studio thất bại: {e}")
             return False
 
+    def _extract_message_text(self, response: Any) -> str:
+        """Lấy nội dung trả lời cuối cùng từ response theo cách an toàn."""
+        try:
+            message = response.choices[0].message
+        except Exception:
+            return ""
+
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            return content.strip()
+
+        if isinstance(content, list):
+            chunks = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content") or ""
+                    if text:
+                        chunks.append(str(text))
+                elif isinstance(item, str):
+                    chunks.append(item)
+            return "\n".join(part.strip() for part in chunks if str(part).strip()).strip()
+
+        return ""
+
+    def _create_completion_with_retry(self, messages: list[dict], temperature: float) -> str:
+        """Gọi LM Studio và retry một lần nếu content trả về bị rỗng."""
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=messages,
+            temperature=temperature,
+        )
+        text = self._extract_message_text(response)
+        if text:
+            return text
+
+        self.log("⚠️ AI Engine trả về content rỗng, đang retry với yêu cầu xuất câu trả lời cuối cùng rõ ràng...")
+        retry_messages = list(messages) + [{
+            "role": "user",
+            "content": "Vui lòng xuất PHẦN TRẢ LỜI CUỐI CÙNG đầy đủ trong message.content. Không để trống và không chỉ trả về suy luận nội bộ."
+        }]
+        retry_response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=retry_messages,
+            temperature=temperature,
+        )
+        return self._extract_message_text(retry_response)
+
+    @staticmethod
+    def _truncate_text(text: str, max_chars: int) -> str:
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + f"\n\n[TRUNCATED: omitted {len(text) - max_chars} trailing characters to fit local model context]"
+
+    @staticmethod
+    def _compact_financial_data(financial_data: dict, max_line_items_per_sheet: int = 8) -> dict:
+        data = financial_data.get("data", {}) if isinstance(financial_data, dict) else {}
+        sheets = []
+        for sheet in data.get("sheets", [])[:8]:
+            line_items = sheet.get("line_items", []) or []
+            sheets.append({
+                "name": sheet.get("name"),
+                "type": sheet.get("type"),
+                "dimensions": sheet.get("dimensions"),
+                "headers": (sheet.get("headers") or [])[:20],
+                "sample_line_items": line_items[:max_line_items_per_sheet],
+                "sample_count": min(len(line_items), max_line_items_per_sheet),
+                "total_line_items": len(line_items),
+            })
+
+        compact_payload = {
+            "metadata": financial_data.get("metadata", {}),
+            "assumptions": financial_data.get("assumptions", {}),
+            "data": {
+                "workbook_overview": data.get("workbook_overview", {}),
+                "canonical_metrics": data.get("canonical_metrics", {}),
+                "income_statement": data.get("income_statement", {}),
+                "sheets": sheets,
+            },
+        }
+        return compact_payload
+
     def run_audit(self) -> str:
-        """Đọc dữ liệu tài chính + luật thuế, gọi Gemma 4 để lập báo cáo kiểm toán."""
+
         if not self.client:
             if not self.connect():
                 return ""
@@ -51,6 +133,8 @@ class TaxSentryAnalysisEngine:
         
         with open(JSON_PATH, "r", encoding="utf-8") as f:
             financial_data = json.load(f)
+        compact_financial_data = self._compact_financial_data(financial_data)
+        compact_financial_json = json.dumps(compact_financial_data, indent=2, ensure_ascii=False)
 
         # 2. Đọc Kho Tri Thức Pháp Luật Thuế Việt Nam
         if not KNOWLEDGE_PATH.exists():
@@ -58,6 +142,7 @@ class TaxSentryAnalysisEngine:
         
         with open(KNOWLEDGE_PATH, "r", encoding="utf-8") as f:
             tax_knowledge = f.read()
+        tax_knowledge = self._truncate_text(tax_knowledge, 8000)
 
         # 3. Chuẩn bị prompt chuyên gia hệ thống (System Prompt) và Dữ liệu đầu vào (User Prompt)
         system_prompt = """
@@ -75,40 +160,40 @@ class TaxSentryAnalysisEngine:
         """
 
         user_prompt = f"""
-        Chào chuyên gia, dưới đây là dữ liệu hoạt động kinh doanh tháng này của chúng tôi và kho tri thức luật thuế liên quan. Hãy tiến hành kiểm toán và lập báo cáo chi tiết:
+        Chào chuyên gia, dưới đây là dữ liệu hoạt động kinh doanh tháng này của chúng tôi và kho tri thức luật thuế liên quan. Hãy tiến hành kiểm toán và lập báo cáo chi tiết.
+        Lưu ý: đây là payload đã được nén để phù hợp context của local model; nếu dữ liệu chưa đủ để kết luận thì phải nêu rõ phần thiếu.
 
-        === 📊 1. DỮ LIỆU BÁO CÁO TÀI CHÍNH MỚI NHẤT (JSON) ===
-        {json.dumps(financial_data, indent=2, ensure_ascii=False)}
+        === 📊 1. DỮ LIỆU BÁO CÁO TÀI CHÍNH MỚI NHẤT (JSON ĐÃ NÉN) ===
+        {compact_financial_json}
 
-        === 📖 2. KHO TRI THỨC PHÁP LUẬT THUẾ VIỆT NAM LIÊN QUAN ===
+        === 📖 2. KHO TRI THỨC PHÁP LUẬT THUẾ VIỆT NAM LIÊN QUAN (TRÍCH ĐOẠN) ===
         {tax_knowledge}
         """
 
+        self.log(f"🧾 Audit payload chars: financial={len(compact_financial_json)}, knowledge={len(tax_knowledge)}")
         self.log("🧠 Đang truyền dữ liệu và gửi yêu cầu phân tích tới Local Gemma 4 qua LM Studio...")
-        self.log("💡 Quá trình suy luận và đối chiếu tri thức (RAG) đang diễn ra cục bộ, vui lòng chờ trong giây lát.\n")
+
 
         try:
-            # Gọi API của LM Studio để bắt đầu suy luận
-            response = self.client.chat.completions.create(
-                model=self.model_name,  # Sử dụng mô hình cấu hình từ .env
+            audit_result = self._create_completion_with_retry(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.2  # Giữ nhiệt độ thấp để AI phân tích số liệu chuẩn xác, logic và nghiêm túc
+                temperature=0.2,
             )
-            
-            audit_result = response.choices[0].message.content
-            
+            if not audit_result:
+                return "❌ AI Engine trả về nội dung trống. Vui lòng thử lại hoặc kiểm tra model hiện tại trong LM Studio."
+
             # Lưu báo cáo kiểm toán ra tệp Markdown
             AUDIT_REPORT_PATH.write_text(audit_result, encoding="utf-8")
             return audit_result
 
         except Exception as e:
-            return f"❌ Có lỗi phát sinh khi gọi mô hình Gemma 4 trên LM Studio:\n{e}\n(Sếp nhớ đảm bảo đã Start Server trong LM Studio tại cổng 1234 nha Sếp ơi~!)"
+            return f"❌ Có lỗi phát sinh khi gọi mô hình Gemma 4 trên LM Studio:\n{e}\n(Sếp nhớ đảm bảo đã Start Server trong LM Studio tại cổng 1234 nha Sếp.)"
 
     def analyze_report(self, prompt: str) -> str:
-        """Gửi prompt tùy chỉnh tới LM Studio AI Server và nhận kết quả (Dùng cho Chat 2 chiều)."""
+
         if not self.client:
             if not self.connect():
                 return "❌ Lỗi kết nối AI Engine. Vui lòng kiểm tra LM Studio."
@@ -122,21 +207,22 @@ class TaxSentryAnalysisEngine:
             - ưu tiên nêu chứng cứ/số chính trước rồi mới diễn giải
             - nếu dữ liệu chưa đủ thì nói thẳng phần thiếu thay vì suy đoán
             """
-            response = self.client.chat.completions.create(
-                model=self.model_name,
+            response_text = self._create_completion_with_retry(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.45
+                temperature=0.45,
             )
-            return response.choices[0].message.content
+            if response_text:
+                return response_text
+            return "❌ AI Engine trả về nội dung trống. Sếp thử lại giúp em hoặc đổi model trong LM Studio."
         except Exception as e:
             return f"❌ Lỗi kết nối AI Server (LM Studio): {e}"
 
 
 def main():
-    print("=== CHẠY THỬ NGHIỆM BỘ NÃO AI ANALYSIS ENGINE ===")
+
     engine = TaxSentryAnalysisEngine()
     
     # Chạy kiểm toán thực tế

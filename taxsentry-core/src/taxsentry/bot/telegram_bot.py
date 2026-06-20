@@ -19,6 +19,7 @@ Sử dụng văn phong chuyên nghiệp, trang trọng chuẩn mực kiểm toá
 import asyncio
 import json
 from datetime import datetime
+from threading import Thread
 
 # Load .env from taxsentry-core root
 from dotenv import load_dotenv
@@ -60,6 +61,70 @@ ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID', '')
 def format_markdown(text: str) -> str:
     """Định dạng văn bản cho Telegram."""
     return text
+
+
+def _safe_number(value, default: float | None = 0.0):
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
+
+
+def _format_currency(value, fallback: str = 'n/a') -> str:
+    number = _safe_number(value, default=None)
+    if number is None:
+        return fallback
+    return f"{number:,.0f} VND"
+
+
+def _clean_text(value) -> str:
+    if value is None:
+        return ''
+    return str(value).strip()
+
+
+def _build_pdf_markdown(report_log: dict) -> str:
+    return f"""# Báo cáo kết quả hoạt động kinh doanh
+
+*   **Tên tệp tin:** {_clean_text(report_log.get('file_name')) or 'unknown'}
+*   **Ngày nhận báo cáo:** {_clean_text(report_log.get('received_at')) or 'n/a'}
+*   **Người gửi:** {_clean_text(report_log.get('sender')) or 'n/a'}
+
+---
+
+## 1. Số liệu tài chính cơ bản
+*   **Doanh thu:** {_format_currency(report_log.get('revenue'))}
+*   **Lợi nhuận ròng:** {_format_currency(report_log.get('net_income'))}
+*   **Đánh giá rủi ro sơ bộ:** {_clean_text(report_log.get('tax_risk_status')) or 'n/a'}
+
+---
+
+## 2. Ghi chú và khuyến nghị của AI
+*   Giám đốc có thể sử dụng câu lệnh `/analyze` để kích hoạt AI Engine phân tích rủi ro sâu hơn dựa trên các điều khoản thuế Việt Nam hiện hành.
+*   Báo cáo chi tiết đã được tự động tạo lập và lưu trữ cục bộ tại hệ thống.
+"""
+
+
+def _start_automation_loop(interval_seconds: int = 60) -> Thread:
+    def worker():
+        try:
+            from taxsentry.core.automation import TaxSentryAutomationWorkflow
+            workflow = TaxSentryAutomationWorkflow()
+            workflow.start_loop(interval_seconds)
+        except Exception as exc:
+            print(f"❌ Automation loop background bị lỗi: {exc}")
+
+    thread = Thread(target=worker, daemon=True, name='taxsentry-automation-loop')
+    thread.start()
+    return thread
+
+
+def _split_telegram_text(text: str, limit: int = 4096) -> list[str]:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return []
+    return [cleaned[i:i+limit] for i in range(0, len(cleaned), limit)]
 
 
 def _load_financial_json() -> dict:
@@ -140,14 +205,15 @@ async def send_active_report_to_director(pdf_path: str, summary_text: str, evide
             await _send_evidence_preview(bot, chat_id, evidence_context)
 
         # Gửi tin nhắn tóm tắt rủi ro sau khi đã show chứng cứ đầu vào
+        response_text = (
+            "📊 Em bắt đầu phần nhận xét nhanh đây Sếp:\n\n"
+            f"{_clean_text(summary_text) or 'Hiện em đã parse xong dữ liệu, nhưng phần tóm tắt ngắn đang trống nên em gửi Sếp PDF chi tiết ngay bên dưới.'}"
+        )
         await bot.send_message(
             chat_id=chat_id,
-            text=(
-                "📊 Em bắt đầu phần nhận xét nhanh đây Sếp:\n\n"
-                f"{summary_text or 'Hiện em đã parse xong dữ liệu, nhưng phần tóm tắt ngắn đang trống nên em gửi Sếp PDF chi tiết ngay bên dưới.'}"
-            )
+            text=response_text,
         )
-        
+
         # Gửi kèm tệp tin PDF báo cáo chi tiết của AI
         if pdf_path and os.path.exists(pdf_path):
             with open(pdf_path, 'rb') as f:
@@ -218,27 +284,23 @@ async def get_reports(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         response_text = "📁 **DANH SÁCH BÁO CÁO TÀI CHÍNH ĐÃ GHI NHẬN:**\n\n"
         for log in logs:
             received_at_str = log['received_at'].strftime('%d/%m/%Y %H:%M') if isinstance(log['received_at'], datetime) else str(log['received_at'])
-            
-            # Lấy thông tin tài chính an toàn
-            gross_profit = log.get('gross_profit', 0.0) or 0.0
-            total_opex = log.get('total_opex', 0.0) or 0.0
-            hospitality_no_invoice = log.get('hospitality_no_invoice', 0.0) or 0.0
-            
+
             response_text += (
-                f"🔹 **Tệp tin:** `{log['file_name']}`\n"
+                f"🔹 **Tệp tin:** `{_clean_text(log.get('file_name')) or 'unknown'}`\n"
                 f"  • Thời điểm nhận: {received_at_str}\n"
-                f"  • Người gửi: {log['sender']}\n"
-                f"  • Doanh thu: {log['revenue']:,.0f} VND\n"
-                f"  • Lợi nhuận gộp: {gross_profit:,.0f} VND\n"
-                f"  • Tổng OPEX: {total_opex:,.0f} VND\n"
-                f"  • Lợi nhuận ròng: {log['net_income']:,.0f} VND\n"
-                f"  • Tiếp khách không hóa đơn: {hospitality_no_invoice:,.0f} VND\n"
-                f"  • Trạng thái rủi ro thuế: *{log['tax_risk_status']}*\n"
-                f"  • Trạng thái xử lý: `{log['status']}`\n\n"
+                f"  • Người gửi: {_clean_text(log.get('sender')) or 'n/a'}\n"
+                f"  • Doanh thu: {_format_currency(log.get('revenue'))}\n"
+                f"  • Lợi nhuận gộp: {_format_currency(log.get('gross_profit'))}\n"
+                f"  • Tổng OPEX: {_format_currency(log.get('total_opex'))}\n"
+                f"  • Lợi nhuận ròng: {_format_currency(log.get('net_income'))}\n"
+                f"  • Tiếp khách không hóa đơn: {_format_currency(log.get('hospitality_no_invoice'))}\n"
+                f"  • Trạng thái rủi ro thuế: *{_clean_text(log.get('tax_risk_status')) or 'n/a'}*\n"
+                f"  • Trạng thái xử lý: `{_clean_text(log.get('status')) or 'n/a'}`\n\n"
             )
         await update.message.reply_text(response_text, parse_mode="Markdown")
+
     except Exception as e:
-        db.close()
+
         await update.message.reply_text(f"❌ Lỗi hệ thống khi tải báo cáo tài chính: {e}")
 
 # --- Handler: /analyze ---
@@ -261,21 +323,20 @@ async def analyze_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
         
     try:
-        report_markdown = engine.run_audit()
+        report_markdown = _clean_text(engine.run_audit())
         engine.close() if hasattr(engine, 'close') else None
-        
+
+        if not report_markdown:
+            await update.message.reply_text("❌ AI Engine đã phản hồi nhưng nội dung báo cáo đang rỗng. Em chưa dám gửi kết quả sai cho Sếp.")
+            return
+
         if report_markdown.startswith("❌"):
             await update.message.reply_text(report_markdown)
             return
-            
-        # Gửi báo cáo phân đoạn nếu vượt quá giới hạn ký tự
-        if len(report_markdown) > 4096:
-            parts = [report_markdown[i:i+4096] for i in range(0, len(report_markdown), 4096)]
-            for part in parts:
-                await update.message.reply_text(part)
-        else:
-            await update.message.reply_text(report_markdown)
-            
+
+        for part in _split_telegram_text(report_markdown):
+            await update.message.reply_text(part)
+
     except Exception as e:
         await update.message.reply_text(f"❌ Lỗi hệ thống trong quá trình AI phân tích báo cáo: {e}")
 
@@ -307,14 +368,15 @@ async def audit_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         for idx, log in enumerate(logs, 1):
             received_at_str = log['received_at'].strftime('%d/%m/%Y %H:%M') if isinstance(log['received_at'], datetime) else str(log['received_at'])
             response_text += (
-                f"*{idx}. {log['file_name']}*\n"
+                f"*{idx}. {_clean_text(log.get('file_name')) or 'unknown'}*\n"
                 f"  • Nhận lúc: {received_at_str}\n"
-                f"  • Doanh thu: {log['revenue']:,.0f} VND\n"
-                f"  • Trạng thái rủi ro thuế: *{log['tax_risk_status']}*\n\n"
+                f"  • Doanh thu: {_format_currency(log.get('revenue'))}\n"
+                f"  • Trạng thái rủi ro thuế: *{_clean_text(log.get('tax_risk_status')) or 'n/a'}*\n\n"
             )
         await update.message.reply_text(response_text, parse_mode="Markdown")
+
     except Exception as e:
-        db.close()
+
         await update.message.reply_text(f"❌ Lỗi hệ thống khi tải lịch sử kiểm toán: {e}")
 
 # --- Handler: /report_pdf ---
@@ -349,29 +411,11 @@ async def generate_report_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE
             from taxsentry.core.pdf_generator import TaxSentryPDFGenerator
             pdf_path = str(DOWNLOAD_DIR / "report_tele_temp.pdf")
             os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
-            
-            md_content = f"""# Báo cáo kết quả hoạt động kinh doanh
 
-*   **Tên tệp tin:** {report_log['file_name']}
-*   **Ngày nhận báo cáo:** {report_log['received_at']}
-*   **Người gửi:** {report_log['sender']}
-
----
-
-## 1. Số liệu tài chính cơ bản
-*   **Doanh thu:** {report_log['revenue']:,.0f} VND
-*   **Lợi nhuận ròng:** {report_log['net_income']:,.0f} VND
-*   **Đánh giá rủi ro sơ bộ:** {report_log['tax_risk_status']}
-
----
-
-## 2. Ghi chú và khuyến nghị của AI
-*   Giám đốc có thể sử dụng câu lệnh `/analyze` để kích hoạt AI Engine phân tích rủi ro sâu hơn dựa trên các điều khoản thuế Việt Nam hiện hành.
-*   Báo cáo chi tiết đã được tự động tạo lập và lưu trữ cục bộ tại hệ thống.
-"""
+            md_content = _build_pdf_markdown(report_log)
             generator = TaxSentryPDFGenerator()
             generator.generate(md_content, pdf_path)
-            
+
             with open(pdf_path, 'rb') as f:
                 await update.message.reply_document(
                     document=f,
@@ -430,8 +474,11 @@ async def handle_free_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     engine = TaxSentryAnalysisEngine()
     if engine.connect():
         try:
-            ai_response = engine.analyze_report(prompt)
+            ai_response = _clean_text(engine.analyze_report(prompt))
             engine.close() if hasattr(engine, 'close') else None
+            if not ai_response:
+                await update.message.reply_text("❌ AI Engine đã phản hồi nhưng nội dung đang rỗng. Em chưa dám trả lời bừa cho Sếp.")
+                return
             await update.message.reply_text(ai_response)
         except Exception as e:
             await update.message.reply_text(f"❌ Lỗi hệ thống: Gặp sự cố khi gọi AI Engine để xử lý câu hỏi: {e}")
@@ -445,8 +492,10 @@ def main():
     parser = argparse.ArgumentParser(description='TaxSentry Telegram Bot')
     parser.add_argument('--admin-chat-id', type=str, default=os.getenv('ADMIN_CHAT_ID'), 
                         help='Chat ID của Giám đốc')
+    parser.add_argument('--with-automation-loop', action='store_true',
+                        help='Chạy kèm automation loop quét email nền trong cùng process bot')
     args = parser.parse_args()
-    
+
     global ADMIN_CHAT_ID
     ADMIN_CHAT_ID = args.admin_chat_id if args.admin_chat_id else os.getenv('ADMIN_CHAT_ID', '')
     
@@ -461,22 +510,19 @@ def main():
         print("❌ Lỗi khởi động: Chưa cấu hình ADMIN_CHAT_ID trong file .env!")
         return
 
-    # Khởi tạo Application
     app = Application.builder().token(token).build()
-
-    # Đăng ký lệnh điều hướng (kèm alias tiếng Việt cho phù hợp Obsidian plan)
     app.add_handler(CommandHandler(['start'], start))
     app.add_handler(CommandHandler(['reports', 'tiendo'], get_reports))
     app.add_handler(CommandHandler(['analyze'], analyze_report))
     app.add_handler(CommandHandler(['audit_history'], audit_history))
     app.add_handler(CommandHandler(['report_pdf', 'baocao'], generate_report_pdf))
-    
-    # Đăng ký xử lý tin nhắn chat tự do
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_chat))
     
     print(f"✅ Telegram Bot online thành công! Admin Chat ID: {ADMIN_CHAT_ID}")
+    if args.with_automation_loop:
+        _start_automation_loop(interval_seconds=60)
+        print("🔁 Automation loop quét email nền đã được bật cùng Telegram Bot.")
     
-    # Chạy bot polling — drop_pending_updates=true để tránh Conflict
     try:
         app.run_polling(drop_pending_updates=True)
     except KeyboardInterrupt:
