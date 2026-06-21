@@ -1,95 +1,122 @@
 # TaxSentry
 
-TaxSentry là một AI audit agent chạy local, dành cho founder, giám đốc, đội tài chính - kế toán, và các doanh nghiệp muốn theo dõi rủi ro tài chính - thuế mà không phải mang dữ liệu nhạy cảm đẩy lên một SaaS bên ngoài.
+TaxSentry is a local-first AI audit agent for founders, directors, finance teams, and SMEs that need better visibility into financial and tax risk without sending sensitive data to a third-party SaaS by default.
 
-Nói cho dễ hình dung: TaxSentry nhận báo cáo, đọc file, phân tích dấu hiệu rủi ro, rồi gửi phần tóm tắt dễ hành động qua Telegram. Doanh nghiệp vẫn giữ quyền kiểm soát dữ liệu, runtime, và cách vận hành hằng ngày.
+In practical terms, TaxSentry ingests incoming reports, reads spreadsheets and PDFs, analyzes risk signals with an AI model you control, and sends clear, actionable summaries through Telegram. Your team keeps control of the data, the runtime, and the operating model.
 
-## TaxSentry giải quyết bài toán gì?
+## What problem does TaxSentry solve?
 
-Ở nhiều doanh nghiệp nhỏ và vừa, quy trình kiểm tra tài chính - thuế thường bị đứt đoạn:
-- file Excel hoặc PDF được gửi qua email
-- người quản lý chỉ xem khi có ai đó nhắc
-- việc rà rủi ro thường đến muộn
-- dữ liệu nằm rải rác, khó theo dõi liên tục
+In many small and mid-sized businesses, finance and tax review is still fragmented:
+- reports arrive by email as Excel or PDF files
+- managers only review them when someone remembers to follow up
+- tax risk is often detected too late
+- data lives in too many places to monitor continuously
 
-TaxSentry gom các bước đó lại thành một flow rõ ràng hơn:
-- nhận báo cáo từ email
-- đọc file Excel và PDF
-- chuẩn hóa dữ liệu để xử lý tiếp
-- phân tích bằng AI chạy local
-- gửi cảnh báo và tóm tắt qua Telegram
-- cho phép vận hành bằng CLI hoặc service runtime
+TaxSentry turns that into a cleaner operating flow:
+- receive reports from email
+- read Excel and PDF attachments
+- normalize the data for downstream processing
+- analyze risk with a local AI model
+- send alerts and summaries to Telegram
+- run through a CLI or as a background service
 
-## Vì sao TaxSentry đáng dùng?
+## Why teams choose TaxSentry
 
-Điểm hay của TaxSentry không chỉ là “có AI”, mà là cách nó được đóng gói để dùng thật:
-- dữ liệu nhạy cảm được giữ local thay vì mặc định đẩy lên cloud
-- có CLI rõ ràng, dễ kiểm soát và dễ tự động hóa
-- có thể chạy như bot nền thay vì mở tay từng lần
-- cấu hình linh hoạt, không khóa người dùng vào một schema cứng
-- phù hợp với người muốn tự chủ vận hành thay vì phụ thuộc hoàn toàn vào dashboard web
+TaxSentry is not just "AI added on top." It is built to be usable in real operations:
+- sensitive data stays local instead of being pushed to the cloud by default
+- the CLI is explicit, scriptable, and easy to automate
+- the bot can run as a background process instead of being started manually every time
+- configuration is flexible, so teams are not locked into a rigid hardcoded schema
+- it works well for operators who want control over runtime behavior instead of relying entirely on a web dashboard
 
-## Phù hợp với ai?
+## Who it is for
 
-TaxSentry hợp với:
-- giám đốc muốn nhận cảnh báo tài chính - thuế qua Telegram
-- founder hoặc COO muốn dựng một lớp giám sát gọn hơn
-- đội tài chính nội bộ muốn có thêm một công cụ rà soát và nhắc việc
-- doanh nghiệp ưu tiên local-first, privacy, và quyền kiểm soát dữ liệu
+TaxSentry is a strong fit for:
+- directors who want finance and tax alerts in Telegram
+- founders or COOs who want a lighter operational monitoring layer
+- internal finance teams that need an additional review and follow-up tool
+- businesses that care about privacy, local-first workflows, and control over infrastructure
 
-Nếu Sếp đang tìm một công cụ kiểu “đăng ký xong dùng như SaaS full-managed”, TaxSentry chưa đi theo hướng đó. Nó thiên về kiểm soát, tự chủ, và triển khai on-premise hơn.
+If you want a fully managed "sign up and everything runs for you" SaaS, TaxSentry is not positioned that way today. It is designed for organizations that prefer control, self-hosted operation, and on-premise deployment.
 
-## Những gì TaxSentry đã làm được
+## Current capabilities
 
-Ở bản hiện tại, TaxSentry đã có các phần quan trọng sau:
-- nhận đầu vào báo cáo tài chính qua email IMAP
-- đọc và xử lý file Excel hoặc PDF
-- phân tích bằng local LLM hoặc endpoint tương thích OpenAI, ví dụ LM Studio
-- dùng Telegram bot để gửi cảnh báo, tóm tắt và hỗ trợ tương tác hai chiều
-- có các lệnh runtime như `setup`, `status`, `up`, `bot`, `stop`
-- có service workflow để apply bot vào OS, gồm cả Task Scheduler trên Windows
-- có hệ config linh hoạt: thêm, đổi tên, xóa field mà không cần sửa source code cho từng thay đổi nhỏ
+The current release includes:
+- inbound report collection via IMAP email
+- Excel and PDF parsing
+- analysis with a local LLM or an OpenAI-compatible endpoint such as LM Studio
+- Telegram bot delivery for alerts, summaries, and interactive workflows
+- runtime commands such as `setup`, `status`, `up`, `bot`, and `stop`
+- service workflows, including Windows Task Scheduler integration
+- flexible configuration commands that let you add, rename, and remove fields without editing source code for every small change
 
-## Yêu cầu trước khi cài
+## Requirements
 
-TaxSentry hiện cần:
-- Node.js >= 24
-- Python >= 3.10
+TaxSentry currently requires:
+- Node.js 24+
+- Python 3.10+
 - MySQL
-- Telegram bot token từ @BotFather
-- local AI endpoint nếu muốn phân tích bằng LLM local, ví dụ LM Studio
+- a Telegram bot token from @BotFather
+- a local AI endpoint if you want local LLM analysis, such as LM Studio
 
-## Cài đặt trên Windows
+## Installation
 
-### 1. Cài các thành phần cần thiết
+You can use TaxSentry either from npm or from source.
 
-Node.js 24+
+### Option 1: install from npm
+
+```bash
+npm install -g taxsentry
+```
+
+Or run it immediately without a global install:
+
+```bash
+npx taxsentry setup
+```
+
+### Option 2: run from source
+
+```bash
+git clone https://github.com/thienan230427/TaxSentry.git
+cd TaxSentry
+npm install
+node bin/taxsentry.js setup
+```
+
+## Windows setup
+
+### 1. Install the required dependencies
+
+Install Node.js 24+:
+
 ```powershell
 winget install OpenJS.NodeJS
 ```
 
-Python 3.10+
+Install Python 3.10+:
+
 ```powershell
 winget install Python.Python.3.12
 ```
 
-MySQL
-- Cài bằng MySQL Installer hoặc gói phù hợp với môi trường hiện tại của Sếp.
-- Sau khi cài xong, kiểm tra chắc là MySQL đang chạy được.
+Install MySQL:
+- Use MySQL Installer or your preferred Windows package workflow.
+- After installation, confirm that the MySQL service is running.
 
-### 2. Cài TaxSentry từ npm
+### 2. Install TaxSentry
 
 ```powershell
 npm install -g taxsentry
 ```
 
-Hoặc nếu muốn chạy ngay mà chưa cài global:
+Or run it directly:
 
 ```powershell
 npx taxsentry setup
 ```
 
-### 3. Nếu muốn chạy từ source code
+### 3. Run from source if needed
 
 ```powershell
 git clone https://github.com/thienan230427/TaxSentry.git
@@ -98,41 +125,44 @@ npm install
 node bin/taxsentry.js setup
 ```
 
-## Cài đặt trên macOS
+## macOS setup
 
-### 1. Cài các thành phần cần thiết
+### 1. Install the required dependencies
 
-Nếu chưa có Homebrew, cài Homebrew trước từ trang chủ brew.sh.
+If Homebrew is not installed yet, install it first from brew.sh.
 
-Node.js 24+
+Install Node.js 24+:
+
 ```bash
 brew install node
 ```
 
-Python 3.10+
+Install Python 3.10+:
+
 ```bash
 brew install python
 ```
 
-MySQL
+Install and start MySQL:
+
 ```bash
 brew install mysql
 brew services start mysql
 ```
 
-### 2. Cài TaxSentry từ npm
+### 2. Install TaxSentry
 
 ```bash
 npm install -g taxsentry
 ```
 
-Hoặc chạy ngay:
+Or run it directly:
 
 ```bash
 npx taxsentry setup
 ```
 
-### 3. Nếu muốn chạy từ source code
+### 3. Run from source if needed
 
 ```bash
 git clone https://github.com/thienan230427/TaxSentry.git
@@ -141,20 +171,20 @@ npm install
 node bin/taxsentry.js setup
 ```
 
-## Cài đặt trên Linux
+## Linux setup
 
-TaxSentry hỗ trợ Linux, nhưng cách cài package nền sẽ tùy distro. Ví dụ dưới đây dùng Ubuntu/Debian.
+TaxSentry supports Linux, but the package installation path depends on the distribution. The example below uses Ubuntu or Debian.
 
-### 1. Cài các thành phần cần thiết
+### 1. Install the required dependencies
 
 ```bash
 sudo apt update
 sudo apt install -y nodejs npm python3 python3-venv python3-pip mysql-server git
 ```
 
-Nếu distro của Sếp dùng package Node quá cũ, nên cài Node 24+ bằng nvm hoặc NodeSource thay vì dùng bản repo mặc định.
+Some Linux repositories ship an outdated Node version. If that happens, install Node 24+ through `nvm` or NodeSource instead of relying on the distro default.
 
-Ví dụ cài bằng nvm:
+Example with `nvm`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
@@ -163,19 +193,19 @@ nvm install 24
 nvm use 24
 ```
 
-### 2. Cài TaxSentry từ npm
+### 2. Install TaxSentry
 
 ```bash
 npm install -g taxsentry
 ```
 
-Hoặc chạy ngay:
+Or run it directly:
 
 ```bash
 npx taxsentry setup
 ```
 
-### 3. Nếu muốn chạy từ source code
+### 3. Run from source if needed
 
 ```bash
 git clone https://github.com/thienan230427/TaxSentry.git
@@ -184,58 +214,58 @@ npm install
 node bin/taxsentry.js setup
 ```
 
-## Bắt đầu nhanh sau khi cài
+## Quick start
 
-### 1. Chạy setup
+### 1. Run the setup wizard
 
 ```bash
 taxsentry setup
 ```
 
-Lệnh này sẽ:
-- kiểm tra Python
-- tạo virtual environment trong `~/.taxsentry/.venv`
-- copy Python core vào runtime home của TaxSentry
-- cài dependencies Python
-- mở wizard cấu hình ban đầu
+This command will:
+- detect Python
+- create a virtual environment in `~/.taxsentry/.venv`
+- copy the Python core into the TaxSentry runtime home
+- install Python dependencies
+- launch the initial configuration wizard
 
-### 2. Kiểm tra trạng thái hệ thống
+### 2. Check system status
 
 ```bash
 taxsentry status
 ```
 
-Lệnh này hữu ích để xem nhanh:
-- Python đã được nhận chưa
-- config đã có chưa
-- bot Telegram đang ở trạng thái nào
-- service/runtime đang ra sao
+Use this to confirm:
+- whether Python was detected correctly
+- whether configuration exists
+- whether the Telegram bot is healthy
+- whether service and runtime state look correct
 
-### 3. Chạy hệ thống
+### 3. Start the system
 
-Nếu muốn chạy gateway đầy đủ:
+To run the full gateway flow:
 
 ```bash
 taxsentry up
 ```
 
-Flow này sẽ:
-- mở TUI dashboard ở foreground
-- chạy Telegram bot song song theo runtime đi kèm
+This starts:
+- the TUI dashboard in the foreground
+- the Telegram bot alongside it through the packaged runtime
 
-Nếu chỉ muốn mở dashboard:
+If you only want the dashboard:
 
 ```bash
 taxsentry start
 ```
 
-Nếu chỉ muốn bật bot nền:
+If you only want the background bot:
 
 ```bash
 taxsentry bot
 ```
 
-### 4. Dừng bot hoặc runtime nền
+### 4. Stop the background runtime
 
 ```bash
 taxsentry stop
@@ -243,29 +273,29 @@ taxsentry stop
 
 ## Service mode
 
-Nếu muốn bot hoạt động kiểu ổn định hơn ở tầng hệ điều hành, TaxSentry có service workflow riêng.
+If you want the bot to run more reliably at the operating-system level, TaxSentry includes a service workflow.
 
-Xem trạng thái service definition hiện tại:
+Check the current service definition:
 
 ```bash
 taxsentry service status
 ```
 
-Tạo artifact service:
+Create service artifacts:
 
 ```bash
 taxsentry service install
 ```
 
-Apply service vào OS:
+Apply the service to the OS:
 
 ```bash
 taxsentry service apply
 ```
 
-Trên Windows, bước này sẽ đăng ký bot vào Task Scheduler.
+On Windows, this registers the bot in Task Scheduler.
 
-Điều khiển service đã apply:
+Manage an applied service:
 
 ```bash
 taxsentry service start
@@ -274,18 +304,18 @@ taxsentry service restart
 taxsentry service logs
 ```
 
-Gỡ service hoặc artifact:
+Remove the service or local artifacts:
 
 ```bash
 taxsentry service remove
 taxsentry service uninstall
 ```
 
-## Cấu hình linh hoạt
+## Flexible configuration
 
-Một điểm rất đáng tiền của TaxSentry là phần config không bị đóng cứng.
+One of TaxSentry's most practical strengths is that its configuration system is not hardwired.
 
-Các lệnh chính:
+Key commands:
 
 ```bash
 taxsentry config
@@ -298,60 +328,60 @@ taxsentry config env-map <fieldPath> <ENV_VAR>
 taxsentry config generate-env
 ```
 
-Điều này giúp mỗi doanh nghiệp có thể tùy biến field cấu hình mà không phải lao vào chỉnh code cho từng thay đổi nhỏ.
+That gives each business room to adapt configuration fields without editing source code every time requirements change.
 
-## Một flow vận hành điển hình
+## A typical operating flow
 
-Nếu triển khai thực tế, flow thường sẽ là:
-1. chạy `taxsentry setup`
-2. kiểm tra lại bằng `taxsentry status`
-3. chạy `taxsentry up` hoặc `taxsentry bot`
-4. theo dõi runtime bằng `taxsentry service status` và `taxsentry service logs`
-5. nếu muốn giao bot cho OS quản lý, dùng `taxsentry service install` rồi `taxsentry service apply`
+A practical deployment usually looks like this:
+1. run `taxsentry setup`
+2. verify the environment with `taxsentry status`
+3. start the system with `taxsentry up` or `taxsentry bot`
+4. monitor runtime health with `taxsentry service status` and `taxsentry service logs`
+5. if you want the OS to supervise the bot, use `taxsentry service install` and then `taxsentry service apply`
 
 ## Troubleshooting
 
-### Setup báo thiếu Python
+### Setup cannot find Python
 
-Cài Python 3.10+ trước, rồi chạy lại:
+Install Python 3.10+ first, then run:
 
 ```bash
 taxsentry setup
 ```
 
-### npm báo chưa đăng nhập
+### npm is not authenticated
 
-Nếu gặp lỗi kiểu auth khi publish:
+If you hit an auth error while publishing:
 
 ```bash
 npm adduser
 ```
 
-### `service apply` trên Windows báo access is denied
+### `service apply` returns `access is denied` on Windows
 
-Mở terminal với quyền phù hợp rồi chạy lại:
+Open the terminal with the required permissions and run:
 
 ```bash
 taxsentry service apply
 ```
 
-### Bot Telegram có vẻ không khỏe
+### The Telegram bot looks unhealthy
 
-Kiểm tra status và logs:
+Check status and logs:
 
 ```bash
 taxsentry status
 taxsentry service logs
 ```
 
-Nếu cần, restart sạch:
+If needed, restart cleanly:
 
 ```bash
 taxsentry stop
 taxsentry bot
 ```
 
-### Muốn reset runtime cho sạch
+### You want to reset the runtime cleanly
 
 ```bash
 taxsentry stop
@@ -359,9 +389,9 @@ taxsentry status
 taxsentry bot
 ```
 
-## TaxSentry lưu dữ liệu ở đâu?
+## Where TaxSentry stores data
 
-Runtime data chủ yếu nằm trong:
+Runtime data primarily lives in:
 - `~/.taxsentry/`
 - `~/.taxsentry/.venv/`
 - `~/.taxsentry/taxsentry-core/`
@@ -369,31 +399,31 @@ Runtime data chủ yếu nằm trong:
 - `~/.taxsentry/services/`
 - `~/.taxsentry/run/`
 
-## Trạng thái sản phẩm hiện tại
+## Product status
 
-TaxSentry đã qua mức prototype cho vui. Ở thời điểm README này được viết lại, sản phẩm đã có:
-- npm package public: `taxsentry@0.1.1`
-- public `npx taxsentry --version` hoạt động đúng
-- runtime local đã được làm sạch và ổn định hơn trước
-- Windows Task Scheduler flow đã được verify thực tế
-- tarball npm đã được làm sạch, không còn nhét secrets hoặc runtime artifacts vào package publish
+TaxSentry is well past the "just a prototype" stage. At the time this README was rewritten, the project already had:
+- a public npm package: `taxsentry@0.1.1`
+- a working public `npx taxsentry --version` flow
+- a cleaner and more stable local runtime
+- a verified Windows Task Scheduler service flow
+- a cleaned npm tarball that no longer ships secrets or runtime artifacts
 
-Vẫn còn phần có thể polish tiếp cho launch rộng rãi hơn, như screenshot, GIF demo, tài liệu tiếng Anh, và launch assets. Nhưng lõi kỹ thuật và đường publish hiện đã khá vững.
+There is still room to polish the launch experience further, especially with screenshots, demo GIFs, English launch assets, and broader onboarding material. But the technical core and the packaging path are already in much better shape than an early-stage experiment.
 
-## Ghi chú về bảo mật
+## Security notes
 
-TaxSentry được xây theo tinh thần local-first, nhưng local-first không có nghĩa là tự động an toàn tuyệt đối.
+TaxSentry is built with a local-first mindset, but local-first does not automatically mean risk-free.
 
-Sếp vẫn nên coi các thứ sau là dữ liệu nhạy cảm:
-- file `.env`
-- database nội bộ
-- file báo cáo tải về
-- log runtime
-- các file đầu ra có chứa dữ liệu tài chính
+Treat the following as sensitive data:
+- `.env` files
+- internal databases
+- downloaded reports
+- runtime logs
+- output files that contain financial information
 
-## Dành cho maintainers
+## Maintainer checklist
 
-Trước khi publish bản mới, nên kiểm tra tối thiểu:
+Before publishing a new release, at minimum verify:
 
 ```bash
 npm pack --json
