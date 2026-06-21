@@ -5,6 +5,7 @@
  */
 import { startForeground, startAttached, stopService, isRunning } from '../launcher.js';
 import { loadConfig, getValue } from '../config.js';
+import { getServiceModuleArgs } from '../utils/service-manager.js';
 import { info, success, warn, error } from '../utils/logger.js';
 import chalk from 'chalk';
 import { sleep } from '../utils/helpers.js';
@@ -34,7 +35,7 @@ export default async function upCommand() {
       warn('Bot Telegram đã đang chạy. Bỏ qua bước khởi động bot.');
     } else {
       info('Đang khởi chạy Telegram Bot ở chế độ nền... 🤖');
-      const args = ['-m', 'taxsentry.bot.telegram_bot', '--admin-chat-id', adminChatId];
+      const args = getServiceModuleArgs('telegram_bot', adminChatId);
       botChild = startAttached('telegram_bot', args);
       if (botChild) {
         success(`Telegram Bot đã chạy nền (PID: ${botChild.pid})`);

@@ -5,6 +5,7 @@ sử dụng thư viện reportlab, hỗ trợ tiếng Việt không bị lỗi f
 """
 
 import re
+import sys
 from pathlib import Path
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfbase import pdfmetrics
@@ -23,6 +24,26 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 
 from taxsentry.config.paths import DOWNLOAD_DIR
+
+
+def _safe_console_print(message: str) -> None:
+    """In log ra console mà không làm crash trên Windows cp1252."""
+    stream = getattr(sys, 'stdout', None)
+    if stream is None:
+        return
+
+    encoding = getattr(stream, 'encoding', None) or 'utf-8'
+    text = f"{message}\n"
+    try:
+        stream.write(text)
+    except UnicodeEncodeError:
+        safe_text = text.encode(encoding, errors='replace').decode(encoding, errors='replace')
+        if hasattr(stream, 'buffer'):
+            stream.buffer.write(safe_text.encode(encoding, errors='replace'))
+        else:
+            stream.write(safe_text)
+    stream.flush()
+
 
 class TaxSentryPDFGenerator:
     """Bộ tạo PDF từ báo cáo Markdown chuyên nghiệp."""
@@ -119,12 +140,12 @@ class TaxSentryPDFGenerator:
                 self.font_regular = regular_name
                 self.font_bold = bold_name
                 self.font_italic = italic_name
-                print(f"✅ Đã đăng ký font PDF đa nền tảng: {regular_path}")
+                _safe_console_print(f"✅ Đã đăng ký font PDF đa nền tảng: {regular_path}")
                 return
             except Exception as e:
-                print(f"⚠️ Không thể đăng ký font {family_name}: {e}")
+                _safe_console_print(f"⚠️ Không thể đăng ký font {family_name}: {e}")
 
-        print("⚠️ Không tìm thấy font Unicode hệ thống phù hợp, dùng Helvetica fallback.")
+        _safe_console_print("⚠️ Không tìm thấy font Unicode hệ thống phù hợp, dùng Helvetica fallback.")
 
     def _setup_custom_styles(self):
         """Thiết lập các kiểu định dạng văn bản (Paragraph Styles) đẹp mắt, hiện đại."""
