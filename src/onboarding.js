@@ -6,7 +6,7 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import boxen from 'boxen';
-import { loadConfig, saveConfig, writeEnvFile, updateConfig, setValue, getValue } from './config.js';
+import { loadConfig, saveConfig, writeEnvFile, updateConfig, setValue, getValue, getEmptyConfig } from './config.js';
 import { info, success, error, warn, divider } from './utils/logger.js';
 
 /**
@@ -39,7 +39,7 @@ export function validateMySQL(config) {
 /**
  * Run the onboarding wizard using the dynamic schema.
  */
-export async function runOnboarding() {
+export async function runOnboarding(options = {}) {
   console.log(
     boxen(
       chalk.bold.cyan(
@@ -83,9 +83,9 @@ export async function runOnboarding() {
 
   console.log(chalk.green('\n✅ Bắt đầu thiết lập cấu hình...\n'));
 
-  let config = loadConfig();
+  let config = options.resetExisting ? getEmptyConfig() : loadConfig();
   // Start fresh values if not already configured
-  if (!config.isConfigured) {
+  if (options.resetExisting || !config.isConfigured) {
     config.values = {};
   }
 
@@ -132,8 +132,9 @@ export async function runOnboarding() {
       // Save answers
       for (const [fullKey, value] of Object.entries(answers)) {
         const [gid, fk] = fullKey.split('.');
-        // For password type, if empty and had previous value, keep it
-        if (value === '' && getValue(config, gid, fk)) {
+        // For password type, if empty and had previous value, keep it.
+        // Full reset mode must not silently pull secrets back from the previous .env.
+        if (value === '' && !options.resetExisting && getValue(config, gid, fk)) {
           // Keep existing
         } else {
           setValue(config, gid, fk, value);

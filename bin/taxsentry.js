@@ -8,6 +8,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { readFileSync } from 'fs';
 import { printBanner, info, warn, error } from '../src/utils/logger.js';
 import { isConfigured } from '../src/config.js';
 import { getPlatformName } from '../src/utils/paths.js';
@@ -40,11 +41,12 @@ process.on('SIGINT', () => {
 });
 
 const program = new Command();
+const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
 program
   .name('taxsentry')
   .description('On-premise AI Audit Agent — automated tax risk monitoring for CFOs & SMEs')
-  .version('0.2.0')
+  .version(packageJson.version)
   .addHelpText('afterAll', `
 📖 HƯỚNG DẪN SỬ DỤNG NHANH
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -93,7 +95,7 @@ program
   • Cấu hình linh hoạt: thêm/sửa field mà không cần edit code!
 
 📦 YÊU CẦU:
-  • Node.js >= 18
+  • Node.js >= 24
   • Python >= 3.10
   • MySQL (cho database)
   • Telegram Bot Token (từ @BotFather)

@@ -5,6 +5,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { parse as parseDotenv } from 'dotenv';
 import { CONFIG_FILE, ENV_FILE, CORE_DIR, ensureDirectories } from './utils/paths.js';
 
 /* ─── Default Schema ───
@@ -51,7 +52,7 @@ const DEFAULT_SCHEMA = {
       label: 'Email Kế toán',
       fields: [
         { key: 'address', label: 'Email Address', type: 'string', default: '' },
-        { key: 'appPassword', label: 'App Password', type: 'password', default: '', secret: true, skipEnv: true },
+        { key: 'appPassword', label: 'App Password', type: 'password', default: '', secret: true },
         { key: 'host', label: 'IMAP Host', type: 'string', default: 'imap.gmail.com' },
         { key: 'port', label: 'IMAP Port', type: 'number', default: 993 },
         { key: 'accountantEmail', label: 'Email Kế toán trưởng (người gửi báo cáo)', type: 'string', default: '', required: true },
@@ -111,18 +112,53 @@ function mergeSchemaWithDefaults(schema) {
   return merged;
 }
 
+function loadEnvSnapshot() {
+  if (!existsSync(ENV_FILE)) return {};
+  try {
+    return parseDotenv(readFileSync(ENV_FILE, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
 /* ─── Helper: lấy value từ config ─── */
 function getValue(config, groupId, fieldKey) {
   if (!config.values) config.values = {};
   if (!config.values[groupId]) config.values[groupId] = {};
   const val = config.values[groupId][fieldKey];
+  const desc = getFieldDescriptor(config.schema, groupId, fieldKey);
+
+  if ((val === undefined || val === null) && desc?.secret) {
+    const envVar = config.envMapping?.[`${groupId}.${fieldKey}`];
+    if (envVar) {
+      const envValue = loadEnvSnapshot()[envVar];
+      if (envValue !== undefined && envValue !== null && envValue !== '') {
+        return envValue;
+      }
+    }
+  }
 
   // Nếu value undefined/null, lấy default từ schema
   if (val === undefined || val === null) {
-    const desc = getFieldDescriptor(config.schema, groupId, fieldKey);
     return desc ? desc.default : '';
   }
   return val;
+}
+
+function createPersistedConfig(config) {
+  const persisted = JSON.parse(JSON.stringify(config));
+  const groups = persisted.schema?.groups || [];
+
+  for (const group of groups) {
+    const values = persisted.values?.[group.id];
+    if (!values || typeof values !== 'object') continue;
+
+    for (const field of group.fields || []) {
+      if (field.secret) delete values[field.key];
+    }
+  }
+
+  return persisted;
 }
 
 /* ─── Helper: set value vào config ─── */
@@ -254,7 +290,8 @@ export function loadConfig() {
  */
 export function saveConfig(config) {
   ensureDirectories();
-  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+  const persisted = createPersistedConfig(config);
+  writeFileSync(CONFIG_FILE, JSON.stringify(persisted, null, 2), 'utf-8');
 }
 
 /**
@@ -394,37 +431,23 @@ export function setEnvMapping(fieldPath, envVar) {
 
 /**
  * Generate .env file content from config (dynamic, based on envMapping).
- * Bỏ qua các field secret (appPassword, v.v.) — chỉ ghi placeholder.
+ * Secret fields được ghi vào .env để runtime Python đọc được, nhưng không persist trong config.json.
  */
 export function generateEnvContent(config) {
   const lines = [
     '# TaxSentry Environment Configuration',
     '# Generated automatically by TaxSentry CLI.',
     '#',
-    '# ⚠️ Secret fields (passwords, tokens) are NOT written here.',
-    '#    They are stored in config.json and/or Bitwarden.',
+    '# ⚠️ Secret fields (passwords, tokens) may appear below for local runtime use.',
+    '#    TaxSentry no longer persists those secret values in config.json.',
     '',
   ];
-
-  const flat = flattenValues(config);
 
   // Generate from envMapping
   for (const [fieldPath, envVar] of Object.entries(config.envMapping || {})) {
     const [groupId, fieldKey] = fieldPath.split('.');
-    let val = flat[fieldPath] !== undefined ? flat[fieldPath] : '';
-
-    // Check if this field should skip .env (sensitive, user stores in Bitwarden)
-    const group = config.schema.groups.find(g => g.id === groupId);
-    const field = group?.fields.find(f => f.key === fieldKey);
-    const shouldSkip = field?.skipEnv === true;
-
-    if (shouldSkip) {
-      // Don't write the actual value — write a placeholder + comment
-      lines.push(`# ${envVar}=[LƯU TRONG BITWARDEN]`);
-      continue;
-    }
-
-    lines.push(`${envVar}=${val}`);
+    const val = getValue(config, groupId, fieldKey);
+    lines.push(`${envVar}=${val ?? ''}`);
   }
 
   // Extra env vars

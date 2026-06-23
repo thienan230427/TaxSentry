@@ -14,9 +14,17 @@ import chalk from 'chalk';
 /**
  * Run the full setup workflow.
  */
-export async function runSetup() {
-  if (isConfigured()) {
-    const { overwrite } = await inquirer.prompt([
+export async function runSetup(deps = {}) {
+  const prompt = deps.prompt ?? inquirer.prompt.bind(inquirer);
+  const isConfiguredFn = deps.isConfigured ?? isConfigured;
+  const detectPythonFn = deps.detectPython ?? detectPython;
+  const printDetectionResultFn = deps.printDetectionResult ?? printDetectionResult;
+  const getInstallInstructionsFn = deps.getInstallInstructions ?? getInstallInstructions;
+  const runInstallationFn = deps.runInstallation ?? runInstallation;
+  const runOnboardingFn = deps.runOnboarding ?? runOnboarding;
+
+  if (isConfiguredFn()) {
+    const { overwrite } = await prompt([
       {
         type: 'confirm',
         name: 'overwrite',
@@ -33,20 +41,20 @@ export async function runSetup() {
   try {
     // 1. Ensure Python is available
     info('Đang kiểm tra Python...');
-    const pyResult = detectPython();
-    printDetectionResult(pyResult);
+    const pyResult = detectPythonFn();
+    printDetectionResultFn(pyResult);
 
     if (!pyResult.found) {
-      console.log(chalk.yellow('\n' + getInstallInstructions().join('\n')));
+      console.log(chalk.yellow('\n' + getInstallInstructionsFn().join('\n')));
       console.log(chalk.red('\n❌ Không thể tiếp tục nếu không có Python 3.10+.'));
       process.exit(1);
     }
 
     // 2. Install venv + dependencies
-    await runInstallation(pyResult.command, true);
+    await runInstallationFn(pyResult.command, true);
 
     // 3. Run onboarding wizard
-    await runOnboarding();
+    await runOnboardingFn({ resetExisting: true });
 
     success('\n🎉 Thiết lập hoàn tất! Bạn có thể chạy `taxsentry start` ngay bây giờ.');
   } catch (err) {
