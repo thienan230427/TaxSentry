@@ -78,7 +78,10 @@ function listServiceProcessPids(serviceName) {
   if (process.platform === 'win32') {
     const psScript = [
       '$ErrorActionPreference = "SilentlyContinue"',
-      `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -like '*${marker}*' } | Select-Object -ExpandProperty ProcessId`
+      `$rows = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -like '*${marker}*' } | Select-Object ProcessId, ParentProcessId`,
+      '$parentIds = @($rows | ForEach-Object { $_.ParentProcessId })',
+      '$leafRows = @($rows | Where-Object { $parentIds -notcontains $_.ProcessId })',
+      'if ($leafRows.Count -gt 0) { $leafRows | Select-Object -ExpandProperty ProcessId } else { $rows | Select-Object -ExpandProperty ProcessId }'
     ].join('; ');
     const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', psScript], { encoding: 'utf-8' });
     return parsePidList(result.stdout);
@@ -97,7 +100,7 @@ function getTrackedServicePids(serviceName) {
   const discovered = listServiceProcessPids(serviceName);
   const filePid = readPidFromFile(serviceName);
   const merged = new Set(discovered);
-  if (filePid && isProcessRunning(filePid)) {
+  if (merged.size === 0 && filePid && isProcessRunning(filePid)) {
     merged.add(filePid);
   }
   return Array.from(merged).sort((a, b) => a - b);
@@ -128,7 +131,7 @@ export function startForeground(args = ['-m', 'taxsentry']) {
     const result = spawnSync(pyPath, args, {
       cwd,
       stdio: 'inherit',
-      env: process.env,
+      env: buildPythonEnv(cwd),
     });
 
     return result.status ?? 0;

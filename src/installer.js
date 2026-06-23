@@ -4,7 +4,7 @@
  */
 
 import { execSync } from 'child_process';
-import { existsSync, rmSync, cpSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, rmSync, cpSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import ora from 'ora';
@@ -115,13 +115,6 @@ export async function copyCoreSource() {
   }
 
   try {
-    // Preserve existing .env before overwriting
-    let existingEnv = null;
-    const envFile = join(CORE_DIR, '.env');
-    if (existsSync(envFile)) {
-      existingEnv = readFileSync(envFile, 'utf-8');
-    }
-
     // Ensure target directory exists
     ensureDirectories();
 
@@ -130,13 +123,19 @@ export async function copyCoreSource() {
       rmSync(CORE_DIR, { recursive: true, force: true });
     }
 
-    // Copy recursively
-    cpSync(PROJECT_CORE_DIR, CORE_DIR, { recursive: true });
-
-    // Restore .env so config is not overwritten
-    if (existingEnv) {
-      writeFileSync(envFile, existingEnv, 'utf-8');
-    }
+    // Copy recursively, but never bring along local runtime artifacts or secret env files
+    cpSync(PROJECT_CORE_DIR, CORE_DIR, {
+      recursive: true,
+      filter: (src) => {
+        const normalized = src.replace(/\\/g, '/');
+        const base = normalized.split('/').pop() || '';
+        if (base === '.env' || base.startsWith('.env.')) return false;
+        if (base === '.processed_ids.json' || base === 'audit_report.md' || base === 'parsed_report.json') return false;
+        if (base.endsWith('.db') || base === '__pycache__') return false;
+        if (normalized.includes('/downloads/') || normalized.includes('/scratch/')) return false;
+        return true;
+      },
+    });
 
     spinner.succeed('Đã copy mã nguồn taxsentry-core thành công! 📁');
   } catch (err) {

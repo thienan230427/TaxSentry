@@ -1,16 +1,16 @@
 {
   "name": "taxsentry",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "On-premise AI Audit Agent — automated tax risk monitoring for CFOs & SMEs, with 2-way Telegram control. Your data never leaves your machine.",
   "bin": {
-    "taxsentry": "./bin/taxsentry.js",
-    "ts": "./bin/taxsentry.js"
+    "taxsentry": "bin/taxsentry.js",
+    "ts": "bin/taxsentry.js"
   },
   "scripts": {
     "start": "node bin/taxsentry.js start",
     "dev": "node bin/taxsentry.js start --dev",
-    "test": "vitest",
+    "test": "node tests/privacy_runtime_regressions.mjs",
     "lint": "eslint src bin"
   },
   "keywords": [
@@ -48,7 +48,13 @@
   "files": [
     "bin/",
     "src/",
-    "taxsentry-core/",
+    "taxsentry-core/.env.example",
+    "taxsentry-core/pyproject.toml",
+    "taxsentry-core/requirements.txt",
+    "taxsentry-core/scripts/create_mock_report.py",
+    "taxsentry-core/src/taxsentry/**/*.py",
+    "taxsentry-core/src/taxsentry/knowledge_base/*.md",
+    "taxsentry-core/tests/test_excel_parser_regressions.py",
     "LICENSE",
     "README.md"
   ],

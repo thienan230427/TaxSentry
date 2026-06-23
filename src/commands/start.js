@@ -4,7 +4,7 @@
  */
 
 import { startForeground } from '../launcher.js';
-import { loadConfig } from '../config.js';
+import { getDirectorName } from '../config.js';
 import { info, warn, success } from '../utils/logger.js';
 import chalk from 'chalk';
 
@@ -13,8 +13,8 @@ import chalk from 'chalk';
  */
 export default async function startCommand() {
   try {
-    const config = loadConfig();
-    info(`Khởi động TUI Dashboard cho: ${config.directorName}`);
+    const directorName = getDirectorName() || 'Giám đốc';
+    info(`Khởi động TUI Dashboard cho: ${directorName}`);
     
     console.log(chalk.dim('\n💡 Nhấn Ctrl+C để thoát Dashboard an toàn.\n'));
 

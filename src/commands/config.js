@@ -8,6 +8,11 @@ import { loadConfig, saveConfig, writeEnvFile, addField, renameField, removeFiel
 import { info, success, error, warn } from '../utils/logger.js';
 import chalk from 'chalk';
 
+function maskExtraEnvValue(key, value) {
+  if (/(token|pass|secret|key)/i.test(key)) return '••••••••';
+  return value;
+}
+
 /**
  * Display full config as a formatted table.
  */
@@ -52,7 +57,7 @@ export function displayConfig() {
   if (config.extraEnv && Object.keys(config.extraEnv).length > 0) {
     console.log(chalk.bold('📎 Extra Environment Variables:'));
     for (const [k, v] of Object.entries(config.extraEnv)) {
-      console.log(chalk.dim(`  ${k}=${v}`));
+      console.log(chalk.dim(`  ${k}=${maskExtraEnvValue(k, v)}`));
     }
     console.log();
   }
