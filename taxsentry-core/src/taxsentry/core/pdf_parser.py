@@ -17,8 +17,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent.absolute()))
-from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
-from taxsentry.database.db_manager import TaxSentryDBManager
+
+try:
+    from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
+except ModuleNotFoundError:
+    TaxSentryAnalysisEngine = None
+
+try:
+    from taxsentry.database.db_manager import TaxSentryDBManager
+except ModuleNotFoundError:
+    TaxSentryDBManager = None
+
 
 class TaxSentryPDFParser:
     """Bộ đọc và phân tích cấu trúc báo cáo tài chính PDF bằng AI."""
@@ -99,13 +108,17 @@ class TaxSentryPDFParser:
         Hãy phân tích văn bản này và trả về kết quả JSON theo đúng cấu trúc yêu cầu!
         """
 
+        if TaxSentryAnalysisEngine is None:
+            print("❌ Không thể parse PDF vì thiếu dependency hoặc engine AI không khả dụng.")
+            return False
+
         engine = TaxSentryAnalysisEngine()
         if not engine.connect():
             print("❌ Không thể kết nối tới LM Studio Server để parse PDF!")
             return False
 
         try:
-            # Gọi API
+
             response = engine.client.chat.completions.create(
                 model=engine.model_name,
                 messages=[
@@ -182,6 +195,10 @@ class TaxSentryPDFParser:
     def log_to_database(self) -> bool:
         """Ghi kết quả phân tích vào Database."""
         if not self.parsed_data:
+            return False
+
+        if TaxSentryDBManager is None:
+            print("❌ Không thể ghi database vì thiếu dependency hoặc DB manager không khả dụng.")
             return False
 
         db = TaxSentryDBManager()

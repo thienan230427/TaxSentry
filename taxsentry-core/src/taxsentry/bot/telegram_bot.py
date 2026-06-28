@@ -1,5 +1,6 @@
 import sys
 import os
+import types
 from pathlib import Path
 
 if __name__ == "__main__" and __package__ is None:
@@ -7,8 +8,9 @@ if __name__ == "__main__" and __package__ is None:
 
 from taxsentry.utils.runtime import bootstrap_into_venv
 
-# Tự động kích hoạt môi trường ảo nếu cần thiết
-bootstrap_into_venv(["-m", "taxsentry.bot.telegram_bot", *sys.argv[1:]])
+if __name__ == "__main__":
+    # Tự động kích hoạt môi trường ảo chỉ khi module được chạy như một entrypoint.
+    bootstrap_into_venv(["-m", "taxsentry.bot.telegram_bot", *sys.argv[1:]])
 
 """
 🛡️ TaxSentry — Telegram Bot Integration
@@ -38,20 +40,42 @@ os.environ['DB_NAME'] = os.getenv('DB_NAME', 'tax_sentry')
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(BASE_DIR / 'src'))
 sys.path.insert(0, str(Path(__file__).parent.absolute()))
-from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
-from taxsentry.database.db_manager import TaxSentryDBManager
+
+try:
+    from taxsentry.core.analysis_engine import TaxSentryAnalysisEngine
+except ModuleNotFoundError:
+    TaxSentryAnalysisEngine = None
+
+try:
+    from taxsentry.database.db_manager import TaxSentryDBManager
+except ModuleNotFoundError:
+    TaxSentryDBManager = None
+
+from taxsentry.runtime import MemoryManager
+from taxsentry.runtime.copilot_prompt import build_copilot_prompt
 from taxsentry.config.paths import DOWNLOAD_DIR, KNOWLEDGE_PATH, JSON_PATH, EVIDENCE_CONTEXT_PATH
 from taxsentry.core.evidence_preview import build_evidence_preview_text, load_evidence_context
 
+# Backward-compatible alias for older tests/consumers while the code uses the runtime facade.
+TaxSentryMemoryStore = MemoryManager
+
 # Telegram Bot API
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+try:
+    from telegram import Update
+    from telegram.ext import (
+        Application,
+        CommandHandler,
+        ContextTypes,
+        MessageHandler,
+        filters,
+    )
+    TELEGRAM_AVAILABLE = True
+except ModuleNotFoundError:
+    TELEGRAM_AVAILABLE = False
+    Update = object
+    Application = CommandHandler = MessageHandler = object
+    ContextTypes = types.SimpleNamespace(DEFAULT_TYPE=object)
+    filters = types.SimpleNamespace(TEXT=object(), COMMAND=object())
 
 # --- Cấu hình Bot ---
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
@@ -154,40 +178,27 @@ async def _send_evidence_preview(bot, chat_id: str, evidence_context: dict) -> N
 
 def _build_free_chat_prompt(user_query: str, director_name: str, financial_context, tax_rules_snippet: str, evidence_context: dict) -> str:
     financial_json = _load_financial_json()
-    return f"""# Vai trò: TaxSentry Copilot đồng hành cùng Sếp {director_name}
-Bạn là trợ lý tài chính-thuế của Sếp {director_name}. Hãy trả lời bằng tiếng Việt thật tự nhiên như một người trợ lý đang nói chuyện trực tiếp với Sếp.
-
-YÊU CẦU GIỌNG VĂN:
-- Xưng 'em', gọi người dùng là 'Sếp'.
-- Ưu tiên nói tự nhiên, rõ ràng, ngắn gọn, không giáo điều, không mở đầu kiểu công văn.
-- Không trình bày thành một khối báo cáo máy móc trừ khi Sếp thực sự yêu cầu báo cáo formal.
-- Nếu dữ liệu chưa đủ để kết luận, nói thẳng phần nào đã thấy, phần nào chưa đủ.
-- Khi đang dựa trên file/bảng lương gần nhất, hãy bám vào chứng cứ đầu vào đã được preview trước đó.
-
-## Chứng cứ đầu vào gần nhất đã parse:
-{json.dumps(evidence_context, ensure_ascii=False, indent=2)}
-
-## Dữ liệu báo cáo tài chính gần đây trong cơ sở dữ liệu:
-{json.dumps(financial_context, default=str, indent=2, ensure_ascii=False)}
-
-## JSON phân tích gần nhất:
-{json.dumps(financial_json, ensure_ascii=False, indent=2)}
-
-## Trích lục quy định pháp luật Thuế Việt Nam:
-{tax_rules_snippet}
-
-## Câu hỏi của Sếp:
-\"{user_query}\"
-
-Hãy trả lời như một người trợ lý hiểu việc, ưu tiên:
-1. Xác nhận nhanh mình đang nhìn vào dữ liệu nào.
-2. Trả lời đúng trọng tâm câu hỏi.
-3. Nếu cần phân tích, nêu các số chính trước rồi mới nhận xét.
-4. Tránh văn phong khuôn mẫu kiểu 'dưới đây là báo cáo gồm 3 phần'.
-"""
+    memory_manager = TaxSentryMemoryStore()
+    recall_compact = getattr(memory_manager, 'recall_compact', None)
+    if callable(recall_compact):
+        memory_context = recall_compact(user_query, limit=5)
+    else:
+        memory_context = memory_manager.recall(user_query, limit=5)
+    close = getattr(memory_manager, 'close', None)
+    if callable(close):
+        close()
+    return build_copilot_prompt(
+        user_query=user_query,
+        director_name=director_name,
+        financial_context=financial_context,
+        tax_rules_snippet=tax_rules_snippet,
+        evidence_context=evidence_context,
+        financial_json=financial_json,
+        memory_context=memory_context,
+    )
 
 # --- Helper: Gửi thông báo chủ động từ hệ thống quét chạy ngầm ---
-async def send_active_report_to_director(pdf_path: str, summary_text: str, evidence_context_path: str | None = None) -> bool:
+async def send_active_report_to_director(pdf_path: str, summary_text: str, evidence_context_path: str | None = None, trace_context: dict | None = None) -> bool:
 
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     chat_id = os.getenv('ADMIN_CHAT_ID')
@@ -195,9 +206,18 @@ async def send_active_report_to_director(pdf_path: str, summary_text: str, evide
     if not token or not chat_id:
         print("❌ Thiếu cấu hình TELEGRAM_BOT_TOKEN hoặc ADMIN_CHAT_ID để gửi thông báo chủ động!")
         return False
+
+    if not pdf_path or not os.path.exists(pdf_path):
+        print("❌ Không tìm thấy file PDF báo cáo để gửi qua Telegram!")
+        return False
         
     try:
         from telegram import Bot
+    except ModuleNotFoundError:
+        print("❌ Thiếu dependency python-telegram-bot để gửi Telegram. Hãy cài đặt package này trước khi chạy.")
+        return False
+
+    try:
         bot = Bot(token=token)
         evidence_context = load_evidence_context(Path(evidence_context_path) if evidence_context_path else EVIDENCE_CONTEXT_PATH)
 
@@ -209,21 +229,41 @@ async def send_active_report_to_director(pdf_path: str, summary_text: str, evide
             "📊 Em bắt đầu phần nhận xét nhanh đây Sếp:\n\n"
             f"{_clean_text(summary_text) or 'Hiện em đã parse xong dữ liệu, nhưng phần tóm tắt ngắn đang trống nên em gửi Sếp PDF chi tiết ngay bên dưới.'}"
         )
+        if trace_context:
+            trace_bits = []
+            if trace_context.get('session_id'):
+                trace_bits.append(f"session={trace_context['session_id']}")
+            if trace_context.get('event_id'):
+                trace_bits.append(f"event={trace_context['event_id']}")
+            if trace_context.get('trace_id'):
+                trace_bits.append(f"trace={trace_context['trace_id']}")
+            if trace_bits:
+                response_text += f"\n\nTrace: {' | '.join(trace_bits)}"
         await bot.send_message(
             chat_id=chat_id,
             text=response_text,
         )
 
         # Gửi kèm tệp tin PDF báo cáo chi tiết của AI
-        if pdf_path and os.path.exists(pdf_path):
-            with open(pdf_path, 'rb') as f:
-                await bot.send_document(
-                    chat_id=chat_id,
-                    document=f,
-                    filename=os.path.basename(pdf_path),
-                    caption="📄 Báo cáo đánh giá hiệu quả kinh doanh & kiểm toán rủi ro thuế chi tiết."
-                )
-        print("✅ Đã gửi preview chứng cứ, thông báo và PDF báo cáo thành công qua Telegram!")
+        caption = "📄 Báo cáo đánh giá hiệu quả kinh doanh & kiểm toán rủi ro thuế chi tiết."
+        if trace_context:
+            trace_bits = []
+            if trace_context.get('session_id'):
+                trace_bits.append(f"session={trace_context['session_id']}")
+            if trace_context.get('event_id'):
+                trace_bits.append(f"event={trace_context['event_id']}")
+            if trace_context.get('trace_id'):
+                trace_bits.append(f"trace={trace_context['trace_id']}")
+            if trace_bits:
+                caption += f"\nTrace: {' | '.join(trace_bits)}"
+        with open(pdf_path, 'rb') as f:
+            await bot.send_document(
+                chat_id=chat_id,
+                document=f,
+                filename=os.path.basename(pdf_path),
+                caption=caption
+            )
+
         return True
     except Exception as e:
         print(f"❌ Lỗi khi gửi thông báo qua Telegram: {e}")
@@ -508,6 +548,10 @@ def main():
         
     if not ADMIN_CHAT_ID:
         print("❌ Lỗi khởi động: Chưa cấu hình ADMIN_CHAT_ID trong file .env!")
+        return
+
+    if not TELEGRAM_AVAILABLE:
+        print("❌ Lỗi khởi động: Thiếu dependency python-telegram-bot. Hãy cài đặt gói này trước khi chạy Telegram Bot.")
         return
 
     app = Application.builder().token(token).build()

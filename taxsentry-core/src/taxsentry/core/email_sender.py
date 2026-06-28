@@ -28,14 +28,19 @@ class TaxSentryEmailSender:
 
     def is_configured(self) -> bool:
         """Kiểm tra cấu hình email trong .env."""
-        return bool(self.user and self.password and "your_app_password" not in self.password)
+        return bool(
+            self.user
+            and self.password
+            and self.director_email.strip()
+            and "your_app_password" not in self.password.lower()
+        )
 
-    def send_report(self, pdf_path: str, summary_text: str = "") -> bool:
+    def send_report(self, pdf_path: str, summary_text: str = "", trace_context: dict | None = None) -> bool:
         """Gửi email chứa file PDF báo cáo đính kèm tới Giám đốc."""
         if not self.is_configured():
             print("⚠️ Cấu hình email không đầy đủ hoặc đang để mặc định! Không thể gửi email thực tế.")
-            print("[Dry-run] Giả lập gửi email thành công.")
-            return True
+            print("[Dry-run] Bỏ qua gửi email vì chưa có cấu hình hợp lệ.")
+            return False
 
         pdf_file = Path(pdf_path)
         if not pdf_file.exists():
@@ -43,28 +48,50 @@ class TaxSentryEmailSender:
             return False
 
         try:
-            # Tạo thư điện tử đa phần (Multipart)
             msg = MIMEMultipart()
             msg["From"] = self.user
             msg["To"] = self.director_email
             msg["Subject"] = f"🛡️ [TAXSENTRY CO-PILOT] Báo cáo đánh giá hiệu quả kinh doanh & Rủi ro thuế mới nhất"
 
-            # Nội dung email dạng văn bản
-            body_content = f"""Kính gửi Giám đốc {self.director_name},
+            if trace_context:
+                if trace_context.get('session_id'):
+                    msg["X-TaxSentry-Session-ID"] = str(trace_context['session_id'])
+                if trace_context.get('event_id'):
+                    msg["X-TaxSentry-Event-ID"] = str(trace_context['event_id'])
+                if trace_context.get('trace_id'):
+                    msg["X-TaxSentry-Trace-ID"] = str(trace_context['trace_id'])
 
-Hệ thống TaxSentry vừa quét hòm thư email của Kế toán trưởng và phát hiện báo cáo kinh doanh mới.
-AI Agent đã phân tích chi tiết dữ liệu, đối chiếu quy định thuế và biên soạn báo cáo gửi Giám đốc {self.director_name}.
+            trace_lines = []
+            if trace_context:
+                if trace_context.get('session_id'):
+                    trace_lines.append(f"session={trace_context['session_id']}")
+                if trace_context.get('event_id'):
+                    trace_lines.append(f"event={trace_context['event_id']}")
+                if trace_context.get('trace_id'):
+                    trace_lines.append(f"trace={trace_context['trace_id']}")
 
-📋 TÓM TẮT ĐÁNH GIÁ CỦA AI:
-{summary_text if summary_text else "Vui lòng xem báo cáo chi tiết được đính kèm trong file PDF."}
+            body_parts = [
+                f"Kính gửi Giám đốc {self.director_name},",
+                "",
+                "Hệ thống TaxSentry vừa quét hòm thư email của Kế toán trưởng và phát hiện báo cáo kinh doanh mới.",
+                f"AI Agent đã phân tích chi tiết dữ liệu, đối chiếu quy định thuế và biên soạn báo cáo gửi Giám đốc {self.director_name}.",
+            ]
+            if trace_lines:
+                body_parts.extend([
+                    "",
+                    f"Trace: {' | '.join(trace_lines)}",
+                ])
+            body_parts.extend([
+                "",
+                "📋 TÓM TẮT ĐÁNH GIÁ CỦA AI:",
+                summary_text if summary_text else "Vui lòng xem báo cáo chi tiết được đính kèm trong file PDF.",
+                "",
+                "---",
+                "Trân trọng,",
+                "Hệ thống giám sát tài chính và kiểm toán thuế TaxSentry.",
+            ])
+            msg.attach(MIMEText("\n".join(body_parts), "plain", "utf-8"))
 
----
-Trân trọng,
-Hệ thống giám sát tài chính và kiểm toán thuế TaxSentry.
-"""
-            msg.attach(MIMEText(body_content, "plain", "utf-8"))
-
-            # Đính kèm file PDF
             with open(pdf_file, "rb") as f:
                 attachment = MIMEBase("application", "octet-stream")
                 attachment.set_payload(f.read())
@@ -75,8 +102,6 @@ Hệ thống giám sát tài chính và kiểm toán thuế TaxSentry.
                 )
                 msg.attach(attachment)
 
-            # Kết nối SMTP Server và gửi mail
-            # Sử dụng SSL
             if self.smtp_port == 465:
                 server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port)
             else:
@@ -86,7 +111,7 @@ Hệ thống giám sát tài chính và kiểm toán thuế TaxSentry.
             server.login(self.user, self.password)
             server.sendmail(self.user, self.director_email, msg.as_string())
             server.quit()
-            
+
             print(f"📧 Gửi email báo cáo thành công tới Giám đốc: {self.director_email}")
             return True
 

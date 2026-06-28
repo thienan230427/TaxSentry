@@ -4,9 +4,9 @@
  * a clean seam for future systemd / launchd / Task Scheduler adapters.
  */
 
-function getPlatformKey() {
-  if (process.platform === 'win32') return 'windows';
-  if (process.platform === 'darwin') return 'macos';
+function getPlatformKey(platform = process.platform) {
+  if (platform === 'win32') return 'windows';
+  if (platform === 'darwin') return 'macos';
   return 'linux';
 }
 
@@ -52,12 +52,16 @@ function getSupervisorProfile(platform) {
   };
 }
 
-export function getPlatformServiceProfile() {
-  const platform = getPlatformKey();
+export function getServiceProfileForPlatform(platform = process.platform) {
+  const normalizedPlatform = getPlatformKey(platform);
   return {
-    platform,
-    ...getSupervisorProfile(platform),
+    platform: normalizedPlatform,
+    ...getSupervisorProfile(normalizedPlatform),
   };
+}
+
+export function getPlatformServiceProfile() {
+  return getServiceProfileForPlatform(process.platform);
 }
 
 export function getServiceAdapter(serviceName) {
@@ -88,8 +92,8 @@ export function getServiceLabel(serviceName) {
   return `TaxSentry ${serviceName}`;
 }
 
-export function getAppliedServiceName(serviceName) {
-  const profile = getPlatformServiceProfile();
+export function getAppliedServiceNameForPlatform(platform = process.platform, serviceName) {
+  const profile = getServiceProfileForPlatform(platform);
 
   if (profile.artifactType === 'launchd') {
     return `com.taxsentry.${serviceName}`;
@@ -100,6 +104,10 @@ export function getAppliedServiceName(serviceName) {
   }
 
   return `TaxSentry-${serviceName}`;
+}
+
+export function getAppliedServiceName(serviceName) {
+  return getAppliedServiceNameForPlatform(process.platform, serviceName);
 }
 
 export function getServiceModuleArgs(serviceName, adminChatId = '') {

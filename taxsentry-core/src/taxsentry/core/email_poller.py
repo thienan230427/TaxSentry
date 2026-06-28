@@ -142,6 +142,24 @@ class TaxSentryEmailPoller:
             self._save_processed_ids()
         return removed
 
+    def mark_email_ids_as_processed(self, email_ids: list[str]) -> int:
+        """Đánh dấu một tập email ID cụ thể là đã xử lý thành công.
+
+        Chỉ những email ID đã được download trong chu kỳ hiện tại mới được commit
+        vào processed_ids. Các email còn thất bại sẽ tiếp tục được quét lại ở
+        chu kỳ sau.
+        """
+        marked: list[str] = []
+        for email_id in email_ids:
+            if email_id in self._pending_email_ids:
+                self.processed_ids.add(email_id)
+                marked.append(email_id)
+        if marked:
+            self._save_processed_ids()
+            for email_id in marked:
+                self._pending_email_ids.pop(email_id, None)
+        return len(marked)
+
     def _requeue_latest_allowed_email(self) -> str | None:
         if not self.mail or not self.allowed_report_senders:
             return None
@@ -183,7 +201,7 @@ class TaxSentryEmailPoller:
         """Lưu danh sách ID email đã xử lý."""
         try:
             self.processed_file.write_text(
-                json.dumps({"ids": list(self.processed_ids)[-500:]}, ensure_ascii=False),
+                json.dumps({"ids": sorted(self.processed_ids)}, ensure_ascii=False),
                 encoding="utf-8"
             )
         except Exception:

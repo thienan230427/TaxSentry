@@ -3,24 +3,28 @@
  * Foreground runner for the TUI Dashboard and Automation loop.
  */
 
+import chalk from 'chalk';
 import { startForeground } from '../launcher.js';
 import { getDirectorName } from '../config.js';
-import { info, warn, success } from '../utils/logger.js';
-import chalk from 'chalk';
+import { getServiceModuleArgs } from '../utils/service-manager.js';
+import { info, success } from '../utils/logger.js';
 
 /**
  * Run the TUI Dashboard and Automation in the foreground.
  */
-export default async function startCommand() {
+export default async function startCommand(deps = {}) {
+  const startForegroundFn = deps.startForegroundFn ?? startForeground;
+  const getDirectorNameFn = deps.getDirectorNameFn ?? getDirectorName;
+  const getServiceModuleArgsFn = deps.getServiceModuleArgsFn ?? getServiceModuleArgs;
+
   try {
-    const directorName = getDirectorName() || 'Giám đốc';
+    const directorName = getDirectorNameFn() || 'Giám đốc';
     info(`Khởi động TUI Dashboard cho: ${directorName}`);
-    
+
     console.log(chalk.dim('\n💡 Nhấn Ctrl+C để thoát Dashboard an toàn.\n'));
 
-    // Call python -m taxsentry
-    const args = ['-m', 'taxsentry'];
-    const exitCode = startForeground(args);
+    const args = getServiceModuleArgsFn('foreground');
+    const exitCode = startForegroundFn(args);
 
     if (exitCode === 0) {
       success('Dashboard đã đóng an toàn.');

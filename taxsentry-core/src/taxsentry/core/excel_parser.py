@@ -98,10 +98,22 @@ class TaxSentryParser:
                 return True
         return False
 
-    def export_json(self, output_path: str = None) -> str:
+    def export_json(
+        self,
+        output_path: str = None,
+        trace_context: dict | None = None,
+        artifact_store=None,
+    ) -> str:
         """Xuất kết quả phân tích sạch sẽ ra định dạng JSON."""
         self._ensure_analysis()
 
+        provenance = {
+            "session_id": (trace_context or {}).get("session_id"),
+            "event_id": (trace_context or {}).get("event_id"),
+            "trace_id": (trace_context or {}).get("trace_id"),
+            "source_file": self.file_path.name,
+            "source_path": str(self.file_path),
+        }
         result = {
             "metadata": {
                 "project": "TaxSentry",
@@ -110,6 +122,7 @@ class TaxSentryParser:
                 "sheet_count": len(self.wb.sheetnames) if self.wb else 0,
                 "sheet_names": self.wb.sheetnames if self.wb else [],
                 "document_types": self.document_types,
+                "provenance": provenance,
             },
             "assumptions": self.assumptions,
             "data": {
@@ -130,9 +143,22 @@ class TaxSentryParser:
         json_str = json.dumps(result, indent=4, ensure_ascii=False)
         if output_path:
             Path(output_path).write_text(json_str, encoding="utf-8")
+            if artifact_store is not None:
+                artifact_store.register_artifact(
+                    artifact_type="parsed_json",
+                    artifact_name=Path(output_path).name,
+                    artifact_path=output_path,
+                    session_id=provenance.get("session_id"),
+                    event_id=provenance.get("event_id"),
+                    trace_id=provenance.get("trace_id"),
+                    source_file=self.file_path.name,
+                    source_path=str(self.file_path),
+                    mime_type="application/json",
+                    metadata={"kind": "excel_export", "document_types": self.document_types, "provenance": provenance},
+                )
         return json_str
 
-    def log_to_database(self) -> bool:
+    def log_to_database(self, trace_context: dict | None = None) -> bool:
         """Ghi nhận báo cáo đã phân tích vào SQLite Database."""
         import os
         from datetime import datetime
@@ -195,6 +221,12 @@ class TaxSentryParser:
             hospitality_no_invoice=no_invoice,
             tax_risk_status=tax_risk_status,
             status="Processed",
+            session_id=(trace_context or {}).get("session_id"),
+            event_id=(trace_context or {}).get("event_id"),
+            trace_id=(trace_context or {}).get("trace_id"),
+            source_path=str(self.file_path),
+            source_file=self.file_path.name,
+            trace_generated_at=(trace_context or {}).get("generated_at"),
         )
         db.close()
         return success

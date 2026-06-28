@@ -18,6 +18,9 @@ import startCommand from '../src/commands/start.js';
 import botCommand from '../src/commands/bot.js';
 import stopCommand from '../src/commands/stop.js';
 import statusCommand from '../src/commands/status.js';
+import doctorCommand from '../src/commands/doctor.js';
+import reconfigureCommand from '../src/commands/reconfigure.js';
+import resetProfileCommand from '../src/commands/reset-profile.js';
 import upCommand from '../src/commands/up.js';
 import { installServiceCommand, applyServiceCommand, removeServiceCommand, restartServiceCommand, showServiceLogsCommand, showServiceStatus, startServiceCommand, stopServiceCommand, uninstallServiceCommand } from '../src/commands/service.js';
 import {
@@ -59,6 +62,8 @@ program
                            💡 Bot tự động tắt khi đóng terminal
   taxsentry start        → Chỉ chạy TUI Dashboard (foreground)
   taxsentry bot          → Chỉ chạy Telegram Bot (background, sống độc lập)
+  taxsentry reconfigure  → Chạy lại wizard cấu hình mà không reset toàn bộ secret
+  taxsentry reset-profile → Xóa profile hiện tại và thiết lập lại từ đầu
 
 🛑 DỪNG HỆ THỐNG:
   taxsentry stop         → Dừng bot nền (nếu chạy bằng "taxsentry bot")
@@ -87,6 +92,7 @@ program
 
 📋 KIỂM TRA:
   taxsentry status       → Xem trạng thái: Python, Config, Services
+  taxsentry doctor       → Chẩn đoán sâu runtime/config/service trên máy hiện tại
 
 📌 LƯU Ý:
   • Tất cả dữ liệu cấu hình được lưu tại ~/.taxsentry/
@@ -214,6 +220,30 @@ program
   });
 
 /* ═══════════════════════════════════════════════
+   COMMAND: reconfigure
+   ═══════════════════════════════════════════════ */
+program
+  .command('reconfigure')
+  .description('Chạy lại wizard cấu hình mà không reset toàn bộ secret')
+  .action(async () => {
+    printBanner();
+    info(`Đang chạy trên: ${getPlatformName()}\n`);
+    await reconfigureCommand();
+  });
+
+/* ═══════════════════════════════════════════════
+   COMMAND: reset-profile
+   ═══════════════════════════════════════════════ */
+program
+  .command('reset-profile')
+  .description('Xóa profile hiện tại và chạy onboarding từ đầu')
+  .action(async () => {
+    printBanner();
+    info(`Đang chạy trên: ${getPlatformName()}\n`);
+    await resetProfileCommand();
+  });
+
+/* ═══════════════════════════════════════════════
    COMMAND: start
    ═══════════════════════════════════════════════ */
 program
@@ -266,6 +296,14 @@ program
   .action(async () => {
     printBanner();
     await statusCommand();
+  });
+
+program
+  .command('doctor')
+  .description('Chẩn đoán sâu runtime/config/service trên máy hiện tại')
+  .action(async () => {
+    printBanner();
+    await doctorCommand();
   });
 
 /* ═══════════════════════════════════════════════

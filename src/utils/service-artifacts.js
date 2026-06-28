@@ -171,16 +171,44 @@ export function getServiceArtifactPreview(serviceName) {
   };
 }
 
+export function parseLaunchdListStatusOutput(detail, appliedName) {
+  const text = String(detail || '').trim();
+  if (!text) {
+    return {
+      registered: false,
+      active: false,
+      detail: 'launchd agent chưa được nạp.',
+      appliedName,
+    };
+  }
+
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const candidateLine = lines.find(line => line.includes(appliedName)) || lines[0];
+  const pidToken = candidateLine ? candidateLine.split(/\s+/)[0] : '';
+  const pid = parseInt(pidToken, 10);
+  const active = Number.isInteger(pid) && pid > 0;
+
+  return {
+    registered: true,
+    active,
+    detail: text,
+    appliedName,
+  };
+}
+
 export function getAppliedServiceStatus(serviceName) {
   const profile = getPlatformServiceProfile();
   const appliedName = getAppliedServiceName(serviceName);
 
   if (profile.artifactType === 'task-scheduler') {
-    const result = runCommand('schtasks', ['/Query', '/TN', appliedName]);
+    const result = runCommand('schtasks', ['/Query', '/TN', appliedName, '/V', '/FO', 'LIST']);
+    const detail = result.stdout || result.stderr || result.error || 'Task chưa được đăng ký.';
+    const statusLine = detail.match(/^(?:Status|Trạng thái)\s*:\s*(.+)$/im);
+    const active = Boolean(statusLine && /running|đang chạy/i.test(statusLine[1]));
     return {
       registered: result.status === 0,
-      active: result.status === 0,
-      detail: result.stdout || result.stderr || result.error || 'Task chưa được đăng ký.',
+      active,
+      detail,
       appliedName,
     };
   }
@@ -197,12 +225,17 @@ export function getAppliedServiceStatus(serviceName) {
   }
 
   const listed = runCommand('launchctl', ['list', appliedName]);
-  return {
-    registered: listed.status === 0,
-    active: listed.status === 0,
-    detail: listed.stdout || listed.stderr || listed.error || 'launchd agent chưa được nạp.',
-    appliedName,
-  };
+  const detail = listed.stdout || listed.stderr || listed.error || 'launchd agent chưa được nạp.';
+  if (listed.status !== 0) {
+    return {
+      registered: false,
+      active: false,
+      detail,
+      appliedName,
+    };
+  }
+
+  return parseLaunchdListStatusOutput(detail, appliedName);
 }
 
 export function applyServiceDefinition(serviceName, adminChatId = '') {
