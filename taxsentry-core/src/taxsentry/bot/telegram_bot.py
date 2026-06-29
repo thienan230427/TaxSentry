@@ -69,8 +69,10 @@ try:
         MessageHandler,
         filters,
     )
+    if not hasattr(ContextTypes, 'DEFAULT_TYPE'):
+        raise AttributeError('telegram.ext.ContextTypes.DEFAULT_TYPE is missing')
     TELEGRAM_AVAILABLE = True
-except ModuleNotFoundError:
+except (ModuleNotFoundError, AttributeError):
     TELEGRAM_AVAILABLE = False
     Update = object
     Application = CommandHandler = MessageHandler = object

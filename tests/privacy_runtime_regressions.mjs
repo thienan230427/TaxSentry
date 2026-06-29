@@ -135,6 +135,10 @@ async function testResetOnboardingDoesNotReuseOldSecrets() {
     ['email.port', '993'],
     ['email.accountantEmail', 'accountant@example.com'],
     ['email.allowedReportSenders', ''],
+    ['ai.authMode', 'lmstudio'],
+    ['ai.baseUrl', 'http://localhost:1234/v1'],
+    ['ai.apiKey', ''],
+    ['ai.modelName', 'google/gemma-4-e4b'],
   ]);
 
   global.fetch = async () => ({
@@ -212,6 +216,10 @@ async function testReconfigureCanClearOptionalNonSecretFields() {
     ['email.port', '993'],
     ['email.accountantEmail', 'accountant@example.com'],
     ['email.allowedReportSenders', ''],
+    ['ai.authMode', 'lmstudio'],
+    ['ai.baseUrl', 'http://localhost:1234/v1'],
+    ['ai.apiKey', ''],
+    ['ai.modelName', 'google/gemma-4-e4b'],
   ]);
 
   inquirer.prompt = async (questions) => {
@@ -821,6 +829,121 @@ async function testUpCommandOrchestratesAttachedBotAndForegroundTui() {
   ], 'up command should attach the bot, run foreground TUI, then clean up');
 }
 
+async function testAuthCodexCommandConfiguresOauthModeWithoutPersistingToken() {
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'src/commands/auth-codex.js')).href + `?t=${Date.now()}`;
+  const { runAuthCodex } = await import(moduleUrl);
+  const configModuleUrl = pathToFileURL(join(process.cwd(), 'src/config.js')).href + `?t=${Date.now()}`;
+  const { getEmptyConfig, getValue } = await import(configModuleUrl);
+
+  const config = getEmptyConfig();
+  let wroteEnv = false;
+
+  await runAuthCodex({
+    loadConfigFn: () => config,
+    saveConfigFn: () => {},
+    writeEnvFileFn: () => {
+      wroteEnv = true;
+    },
+    loadCodexAuthFn: () => ({
+      authPath: '/fake/.codex/auth.json',
+      authMode: 'chatgpt',
+      accessToken: 'tok_123',
+      refreshToken: 'ref_456',
+      accountId: 'acct_7890',
+      lastRefresh: '2026-06-29T10:00:00Z',
+    }),
+  });
+
+  assert.equal(getValue(config, 'ai', 'authMode'), 'codex_oauth');
+  assert.equal(getValue(config, 'ai', 'baseUrl'), 'https://api.openai.com/v1');
+  assert.equal(getValue(config, 'ai', 'apiKey'), '');
+  assert.ok(wroteEnv, 'auth codex must regenerate .env after changing auth mode');
+}
+
+async function testUpdateCommandAbortsOnDirtyGitTree() {
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'src/commands/update.js')).href + `?t=${Date.now()}`;
+  const { runUpdate } = await import(moduleUrl);
+
+  await assert.rejects(
+    () => runUpdate({
+      projectRoot: 'D:/fake/TaxSentry',
+      packageJson: { repository: { url: 'https://github.com/thienan230427/TaxSentry.git' } },
+      isGitCheckoutFn: () => true,
+      getGitStatusFn: () => ' M src/index.js',
+      detectPythonFn: () => ({ found: true, command: 'python' }),
+      printDetectionResultFn: () => {},
+      refreshInstalledRuntimeFn: async () => {},
+    }),
+    /Working tree hiện đang bẩn/
+  );
+}
+
+async function testUpdateCommandFastForwardsCleanGitCheckoutAndRefreshesRuntime() {
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'src/commands/update.js')).href + `?t=${Date.now()}`;
+  const { runUpdate } = await import(moduleUrl);
+
+  const calls = [];
+  await runUpdate({
+    projectRoot: 'D:/fake/TaxSentry',
+    packageJson: { repository: { url: 'https://github.com/thienan230427/TaxSentry.git' } },
+    isGitCheckoutFn: () => true,
+    getGitStatusFn: () => '',
+    getCurrentBranchFn: () => 'main',
+    getRemoteUrlFn: () => 'https://github.com/thienan230427/TaxSentry.git',
+    runGitFn: (args) => {
+      calls.push(['git', args]);
+      return '';
+    },
+    detectPythonFn: () => ({ found: true, command: 'python-upd' }),
+    printDetectionResultFn: (result) => {
+      calls.push(['printDetectionResult', result.command]);
+    },
+    refreshInstalledRuntimeFn: async (command) => {
+      calls.push(['refreshInstalledRuntime', command]);
+    },
+  });
+
+  assert.deepEqual(calls, [
+    ['git', ['fetch', 'origin', 'main']],
+    ['git', ['pull', '--ff-only', 'origin', 'main']],
+    ['printDetectionResult', 'python-upd'],
+    ['refreshInstalledRuntime', 'python-upd'],
+  ]);
+}
+
+async function testUpdateCommandUsesStagingCopyWhenGitMetadataMissing() {
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'src/commands/update.js')).href + `?t=${Date.now()}`;
+  const { runUpdate } = await import(moduleUrl);
+
+  const calls = [];
+  await runUpdate({
+    projectRoot: 'D:/fake/package-root',
+    packageJson: { repository: { url: 'https://github.com/thienan230427/TaxSentry.git' } },
+    isGitCheckoutFn: () => false,
+    prepareStageFn: (repoUrl, branch) => {
+      calls.push(['prepareStage', repoUrl, branch]);
+      return 'D:/fake/stage';
+    },
+    replaceManagedPathsFn: (stageRoot, currentProjectRoot) => {
+      calls.push(['replaceManagedPaths', stageRoot, currentProjectRoot]);
+    },
+    detectPythonFn: () => ({ found: true, command: 'python-stage' }),
+    printDetectionResultFn: (result) => {
+      calls.push(['printDetectionResult', result.command]);
+    },
+    refreshInstalledRuntimeFn: async (command) => {
+      calls.push(['refreshInstalledRuntime', command]);
+    },
+  });
+
+  assert.deepEqual(calls, [
+    ['prepareStage', 'https://github.com/thienan230427/TaxSentry.git', 'main'],
+    ['replaceManagedPaths', 'D:/fake/stage', 'D:/fake/package-root'],
+    ['printDetectionResult', 'python-stage'],
+    ['refreshInstalledRuntime', 'python-stage'],
+  ]);
+}
+
 async function main() {
   testStaticGuards();
   await testSecretRedactionAndEnvFallback();
@@ -832,6 +955,10 @@ async function main() {
   await testStartCommandUsesForegroundLauncher();
   await testBotCommandUsesBackgroundLauncher();
   await testUpCommandOrchestratesAttachedBotAndForegroundTui();
+  await testAuthCodexCommandConfiguresOauthModeWithoutPersistingToken();
+  await testUpdateCommandAbortsOnDirtyGitTree();
+  await testUpdateCommandFastForwardsCleanGitCheckoutAndRefreshesRuntime();
+  await testUpdateCommandUsesStagingCopyWhenGitMetadataMissing();
   await testEmailSenderRequiresRecipient();
   await testProcessedIdsPersistWithoutArbitraryCap();
   await testTelegramActiveReportReturnsFalseWhenPdfMissing();

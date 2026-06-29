@@ -17,12 +17,27 @@ class TaxSentryAnalysisEngine:
     """Bộ não phân tích AI đối chiếu luật thuế thực tế (TaxSentry AI Engine)."""
 
     def __init__(self):
-        # Đọc cấu hình từ biến môi trường .env
+        self.auth_mode = os.getenv("TAXSENTRY_AI_AUTH_MODE", "lmstudio") or "lmstudio"
         self.api_url = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
         self.api_key = os.getenv("LM_STUDIO_API_KEY", "")
         self.model_name = os.getenv("LM_MODEL_NAME", "google/gemma-4-e4b")
         self.client = None
         self.log_callback = None
+
+    def _load_codex_access_token(self) -> str:
+        auth_path = Path.home() / ".codex" / "auth.json"
+        if not auth_path.exists():
+            raise FileNotFoundError(f"Không tìm thấy Codex OAuth profile tại {auth_path}")
+
+        try:
+            payload = json.loads(auth_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RuntimeError(f"Không thể đọc Codex OAuth profile: {exc}") from exc
+
+        access_token = payload.get("tokens", {}).get("access_token") or payload.get("OPENAI_API_KEY", "")
+        if not access_token:
+            raise RuntimeError("Codex OAuth profile không có access token khả dụng.")
+        return str(access_token)
 
     def log(self, message):
         """Helper để ghi log: chuyển hướng sang callback nếu có, nếu không in ra console."""
@@ -32,16 +47,22 @@ class TaxSentryAnalysisEngine:
             print(message)
 
     def connect(self) -> bool:
-        """Khởi tạo kết nối tới máy chủ Local LM Studio."""
+        """Khởi tạo kết nối tới AI engine hiện được cấu hình."""
         try:
-            self.client = openai.OpenAI(base_url=self.api_url, api_key=self.api_key)
+            resolved_key = self.api_key
+            if self.auth_mode == "codex_oauth":
+                resolved_key = self._load_codex_access_token()
+                if not self.api_url or self.api_url == "http://localhost:1234/v1":
+                    self.api_url = "https://api.openai.com/v1"
+
+            self.client = openai.OpenAI(base_url=self.api_url, api_key=resolved_key)
             return True
         except Exception as e:
-            self.log(f"❌ Khởi tạo kết nối LM Studio thất bại: {e}")
+            self.log(f"❌ Khởi tạo kết nối AI engine thất bại [{self.auth_mode}]: {e}")
             return False
 
     def _extract_message_text(self, response: Any) -> str:
-        """Lấy nội dung trả lời cuối cùng từ response theo cách an toàn."""
+
         try:
             message = response.choices[0].message
         except Exception:
@@ -65,7 +86,7 @@ class TaxSentryAnalysisEngine:
         return ""
 
     def _create_completion_with_retry(self, messages: list[dict], temperature: float) -> str:
-        """Gọi LM Studio và retry một lần nếu content trả về bị rỗng."""
+        """Gọi AI engine và retry một lần nếu content trả về bị rỗng."""
         response = self.client.chat.completions.create(
             model=self.model_name,
             messages=messages,
@@ -171,7 +192,7 @@ class TaxSentryAnalysisEngine:
         """
 
         self.log(f"🧾 Audit payload chars: financial={len(compact_financial_json)}, knowledge={len(tax_knowledge)}")
-        self.log("🧠 Đang truyền dữ liệu và gửi yêu cầu phân tích tới Local Gemma 4 qua LM Studio...")
+        self.log(f"🧠 Đang truyền dữ liệu và gửi yêu cầu phân tích tới AI engine [{self.auth_mode}] với model {self.model_name}...")
 
 
         try:
@@ -183,20 +204,20 @@ class TaxSentryAnalysisEngine:
                 temperature=0.2,
             )
             if not audit_result:
-                return "❌ AI Engine trả về nội dung trống. Vui lòng thử lại hoặc kiểm tra model hiện tại trong LM Studio."
+                return "❌ AI Engine trả về nội dung trống. Vui lòng thử lại hoặc kiểm tra model / cấu hình AI hiện tại."
 
             # Lưu báo cáo kiểm toán ra tệp Markdown
             AUDIT_REPORT_PATH.write_text(audit_result, encoding="utf-8")
             return audit_result
 
         except Exception as e:
-            return f"❌ Có lỗi phát sinh khi gọi mô hình Gemma 4 trên LM Studio:\n{e}\n(Sếp nhớ đảm bảo đã Start Server trong LM Studio tại cổng 1234 nha Sếp.)"
+            return f"❌ Có lỗi phát sinh khi gọi AI engine [{self.auth_mode}] với model {self.model_name}:\n{e}"
 
     def analyze_report(self, prompt: str) -> str:
 
         if not self.client:
             if not self.connect():
-                return "❌ Lỗi kết nối AI Engine. Vui lòng kiểm tra LM Studio."
+                return "❌ Lỗi kết nối AI Engine. Vui lòng kiểm tra cấu hình endpoint / auth mode hiện tại."
         try:
             system_prompt = """
             Bạn là TaxSentry Copilot — một trợ lý tài chính/thuế nói tiếng Việt tự nhiên.
@@ -216,9 +237,9 @@ class TaxSentryAnalysisEngine:
             )
             if response_text:
                 return response_text
-            return "❌ AI Engine trả về nội dung trống. Sếp thử lại giúp em hoặc đổi model trong LM Studio."
+            return "❌ AI Engine trả về nội dung trống. Sếp thử lại giúp em hoặc đổi model / auth mode hiện tại."
         except Exception as e:
-            return f"❌ Lỗi kết nối AI Server (LM Studio): {e}"
+            return f"❌ Lỗi kết nối AI Server [{self.auth_mode}]: {e}"
 
 
 def main():
