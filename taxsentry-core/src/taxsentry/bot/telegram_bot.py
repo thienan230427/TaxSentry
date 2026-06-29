@@ -6,7 +6,7 @@ from pathlib import Path
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from taxsentry.utils.runtime import bootstrap_into_venv
+from taxsentry.utils.runtime import bootstrap_into_venv, _safe_console_print
 
 if __name__ == "__main__":
     # Tự động kích hoạt môi trường ảo chỉ khi module được chạy như một entrypoint.
@@ -139,7 +139,7 @@ def _start_automation_loop(interval_seconds: int = 60) -> Thread:
             workflow = TaxSentryAutomationWorkflow()
             workflow.start_loop(interval_seconds)
         except Exception as exc:
-            print(f"❌ Automation loop background bị lỗi: {exc}")
+            _safe_console_print(f"❌ Automation loop background bị lỗi: {exc}")
 
     thread = Thread(target=worker, daemon=True, name='taxsentry-automation-loop')
     thread.start()
@@ -206,17 +206,17 @@ async def send_active_report_to_director(pdf_path: str, summary_text: str, evide
     chat_id = os.getenv('ADMIN_CHAT_ID')
     
     if not token or not chat_id:
-        print("❌ Thiếu cấu hình TELEGRAM_BOT_TOKEN hoặc ADMIN_CHAT_ID để gửi thông báo chủ động!")
+        _safe_console_print("❌ Thiếu cấu hình TELEGRAM_BOT_TOKEN hoặc ADMIN_CHAT_ID để gửi thông báo chủ động!")
         return False
 
     if not pdf_path or not os.path.exists(pdf_path):
-        print("❌ Không tìm thấy file PDF báo cáo để gửi qua Telegram!")
+        _safe_console_print("❌ Không tìm thấy file PDF báo cáo để gửi qua Telegram!")
         return False
         
     try:
         from telegram import Bot
     except ModuleNotFoundError:
-        print("❌ Thiếu dependency python-telegram-bot để gửi Telegram. Hãy cài đặt package này trước khi chạy.")
+        _safe_console_print("❌ Thiếu dependency python-telegram-bot để gửi Telegram. Hãy cài đặt package này trước khi chạy.")
         return False
 
     try:
@@ -268,7 +268,7 @@ async def send_active_report_to_director(pdf_path: str, summary_text: str, evide
 
         return True
     except Exception as e:
-        print(f"❌ Lỗi khi gửi thông báo qua Telegram: {e}")
+        _safe_console_print(f"❌ Lỗi khi gửi thông báo qua Telegram: {e}")
         return False
 
 # --- Handler: /start ---
@@ -541,19 +541,19 @@ def main():
     global ADMIN_CHAT_ID
     ADMIN_CHAT_ID = args.admin_chat_id if args.admin_chat_id else os.getenv('ADMIN_CHAT_ID', '')
     
-    print("🛡️ TaxSentry Telegram Bot đang khởi chạy...")
+    _safe_console_print("🛡️ TaxSentry Telegram Bot đang khởi chạy...")
     
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     if not token or token == 'YOUR_BOT_TOKEN_HERE':
-        print("❌ Lỗi khởi động: Chưa cấu hình TELEGRAM_BOT_TOKEN trong file .env!")
+        _safe_console_print("❌ Lỗi khởi động: Chưa cấu hình TELEGRAM_BOT_TOKEN trong file .env!")
         return
         
     if not ADMIN_CHAT_ID:
-        print("❌ Lỗi khởi động: Chưa cấu hình ADMIN_CHAT_ID trong file .env!")
+        _safe_console_print("❌ Lỗi khởi động: Chưa cấu hình ADMIN_CHAT_ID trong file .env!")
         return
 
     if not TELEGRAM_AVAILABLE:
-        print("❌ Lỗi khởi động: Thiếu dependency python-telegram-bot. Hãy cài đặt gói này trước khi chạy Telegram Bot.")
+        _safe_console_print("❌ Lỗi khởi động: Thiếu dependency python-telegram-bot. Hãy cài đặt gói này trước khi chạy Telegram Bot.")
         return
 
     app = Application.builder().token(token).build()
@@ -564,15 +564,15 @@ def main():
     app.add_handler(CommandHandler(['report_pdf', 'baocao'], generate_report_pdf))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_chat))
     
-    print(f"✅ Telegram Bot online thành công! Admin Chat ID: {ADMIN_CHAT_ID}")
+    _safe_console_print(f"✅ Telegram Bot online thành công! Admin Chat ID: {ADMIN_CHAT_ID}")
     if args.with_automation_loop:
         _start_automation_loop(interval_seconds=60)
-        print("🔁 Automation loop quét email nền đã được bật cùng Telegram Bot.")
+        _safe_console_print("🔁 Automation loop quét email nền đã được bật cùng Telegram Bot.")
     
     try:
         app.run_polling(drop_pending_updates=True)
     except KeyboardInterrupt:
-        print("\n👋 Bot đang dừng an toàn...")
+        _safe_console_print("\n👋 Bot đang dừng an toàn...")
 
 if __name__ == '__main__':
     main()
