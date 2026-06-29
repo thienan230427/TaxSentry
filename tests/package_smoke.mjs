@@ -64,6 +64,9 @@ try {
   assert.ok(env.includes('TAXSENTRY_PROVIDER_MODEL='), '.env.example should include provider model');
   assert.ok(env.includes('TAXSENTRY_PROVIDER_API_KEY='), '.env.example should include provider API key placeholder');
   assert.ok(env.includes('TAXSENTRY_MEMORY_DB='), '.env.example should include memory DB path');
+
+  await import('../src/commands/setup.js');
+  await import('../src/commands/start.js');
 } finally {
   if (existsSync(tarballPath)) rmSync(tarballPath, { force: true });
 }

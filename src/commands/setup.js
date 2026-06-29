@@ -1,10 +1,10 @@
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 
-import { detectPython, getInstallInstructions, printDetectionResult } from './utils/python-detector.js';
-import { runInstallation } from './installer.js';
-import { runOnboarding } from './onboarding.js';
-import { isConfigured } from './utils/paths.js';
+import { detectPython, getInstallInstructions, printDetectionResult } from '../utils/python-detector.js';
+import { runInstallation } from '../installer.js';
+import { runOnboarding } from '../onboarding.js';
+import { isConfigured } from '../utils/paths.js';
 
 export async function runSetup({ resetExisting = false, prompt = inquirer.prompt.bind(inquirer) } = {}) {
   if (isConfigured() && !resetExisting) {
