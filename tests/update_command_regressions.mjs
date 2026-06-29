@@ -40,6 +40,7 @@ writeEnvFile(seedConfig);
 const calls = {
   selfUpdate: 0,
   refresh: 0,
+  selfUpdateOptions: null,
 };
 
 await updateModule.default({
@@ -57,6 +58,20 @@ await updateModule.default({
 
 assert.equal(calls.selfUpdate, 1, 'update should trigger a self-update when requested');
 assert.equal(calls.refresh, 1, 'update should refresh runtime config after self-update');
+
+const runnerInvocations = [];
+await updateModule.runSelfUpdate({
+  packageSpec: 'taxsentry@latest',
+  runner: (...args) => {
+    runnerInvocations.push(args);
+  },
+});
+
+assert.equal(runnerInvocations.length, 1, 'runSelfUpdate should invoke the runner exactly once');
+assert.equal(runnerInvocations[0][0], 'npm');
+assert.deepEqual(runnerInvocations[0][1], ['install', '-g', 'taxsentry@latest']);
+assert.equal(runnerInvocations[0][2].stdio, 'inherit');
+assert.equal(runnerInvocations[0][2].shell, process.platform === 'win32');
 
 const envText = readFileSync(join(SHARED_HOME, '.taxsentry', 'taxsentry-core', '.env'), 'utf8');
 assert.ok(envText.includes('TAXSENTRY_PROVIDER_KIND="lmstudio"'), 'update should preserve provider env values');

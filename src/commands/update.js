@@ -11,7 +11,10 @@ export function refreshRuntimeConfig({ load = loadConfig, save = saveConfig, wri
 }
 
 export function runSelfUpdate({ packageSpec = 'taxsentry@latest', runner = execFileSync } = {}) {
-  runner('npm', ['install', '-g', packageSpec], { stdio: 'inherit' });
+  runner('npm', ['install', '-g', packageSpec], {
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+  });
 }
 
 export default async function updateCommand(options = {}) {
