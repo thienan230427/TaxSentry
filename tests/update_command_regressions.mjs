@@ -68,10 +68,13 @@ await updateModule.runSelfUpdate({
 });
 
 assert.equal(runnerInvocations.length, 1, 'runSelfUpdate should invoke the runner exactly once');
-assert.equal(runnerInvocations[0][0], 'npm');
-assert.deepEqual(runnerInvocations[0][1], ['install', '-g', 'taxsentry@latest']);
+assert.equal(runnerInvocations[0][0], process.platform === 'win32' ? 'cmd.exe' : 'npm');
+assert.deepEqual(
+  runnerInvocations[0][1],
+  process.platform === 'win32' ? ['/d', '/s', '/c', 'npm', 'install', '-g', 'taxsentry@latest'] : ['install', '-g', 'taxsentry@latest'],
+);
 assert.equal(runnerInvocations[0][2].stdio, 'inherit');
-assert.equal(runnerInvocations[0][2].shell, process.platform === 'win32');
+assert.equal(runnerInvocations[0][2].shell, undefined);
 
 const envText = readFileSync(join(SHARED_HOME, '.taxsentry', 'taxsentry-core', '.env'), 'utf8');
 assert.ok(envText.includes('TAXSENTRY_PROVIDER_KIND="lmstudio"'), 'update should preserve provider env values');
