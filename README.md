@@ -48,6 +48,8 @@ taxsentry setup --reset
 taxsentry start     # launch the interactive TUI
  taxsentry status   # print current config + provider health
  taxsentry doctor   # run a runtime health check
+ taxsentry update   # refresh stored runtime config
+ taxsentry update --self   # self-update the installed package from npm, then refresh config
  taxsentry memory list
  taxsentry memory add "remember this preference"
  taxsentry auth codex

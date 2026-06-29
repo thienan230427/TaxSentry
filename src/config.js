@@ -11,7 +11,7 @@ import {
 } from "./utils/paths.js";
 
 const DEFAULT_CONFIG = {
-  version: "1.0.0",
+  version: "1.0.1",
   configured: false,
   agent: {
     name: "TaxSentry",

@@ -18,7 +18,7 @@ const program = new Command();
 program
   .name('taxsentry')
   .description('TaxSentry — a provider-first local AI agent with setup wizard and memory')
-  .version('1.0.0');
+  .version('1.0.1');
 
 program
   .command('setup')
@@ -57,8 +57,16 @@ program
 
 program
   .command('update')
-  .description('Refresh the stored configuration files')
-  .action(updateCommand);
+  .description('Refresh runtime config and optionally self-update the installed package')
+  .option('--self', 'Install the latest TaxSentry package from npm before refreshing config')
+  .option('--config-only', 'Refresh config without self-updating the package')
+  .option('--package-spec <spec>', 'Package spec to install when self-updating', 'taxsentry@latest')
+  .action(async (opts) => {
+    await updateCommand({
+      self: Boolean(opts.self && !opts.configOnly),
+      packageSpec: opts.packageSpec,
+    });
+  });
 
 program
   .command('bot')
