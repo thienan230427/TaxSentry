@@ -132,6 +132,6 @@ console.log();
 console.log('═══════════════════════════════════════════════');
 console.log('✅ Hoàn tất reconfigure!');
 console.log();
-console.log('   🚀 Bước tiếp: chạy "taxsentry up" để khởi động TUI + Bot');
+console.log('   🚀 Bước tiếp: chạy "taxsentry start" để mở TUI tương tác');
 console.log('   📝 Hoặc "taxsentry config" để xem/thay đổi cấu hình');
 console.log('═══════════════════════════════════════════════');

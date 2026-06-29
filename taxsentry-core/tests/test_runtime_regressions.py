@@ -283,3 +283,12 @@ def test_telegram_active_report_includes_trace_metadata(tmp_path, monkeypatch):
     assert bot.documents, 'Document should be sent'
     assert any('Trace: session=sess-7 | event=event-7 | trace=trace-7' in text for _, text in bot.messages)
     assert any('Trace: session=sess-7 | event=event-7 | trace=trace-7' in caption for _, _, caption in bot.documents)
+
+
+def test_config_package_reexports_implementation():
+    from taxsentry.config import describe_config, get_value, load_config
+
+    config = load_config()
+    assert callable(describe_config)
+    assert callable(get_value)
+    assert isinstance(describe_config(config), str)

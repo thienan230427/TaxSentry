@@ -17,8 +17,26 @@ import { loadConfig, describeConfig } from '../src/config.js';
 const program = new Command();
 program
   .name('taxsentry')
-  .description('TaxSentry — a provider-first local AI agent with setup wizard and memory')
-  .version('1.0.1');
+  .description('TaxSentry — a provider-first local AI agent. Use `taxsentry start` for the interactive TUI and `taxsentry up` for background mode.')
+  .version('1.0.2')
+  .addHelpText(
+    'after',
+    `
+Primary commands:
+  taxsentry setup   Run the provider-first setup wizard
+  taxsentry start   Open the interactive TUI in the foreground
+  taxsentry up      Start the TUI in the background (legacy/background mode)
+  taxsentry stop    Stop the background agent
+  taxsentry status  Show current configuration and provider health
+  taxsentry doctor  Check runtime health
+
+Examples:
+  taxsentry setup --reset
+  taxsentry start
+  taxsentry up
+  taxsentry status
+`,
+  );
 
 program
   .command('setup')
@@ -30,7 +48,7 @@ program
 
 program
   .command('start')
-  .description('Launch the interactive agent TUI')
+  .description('Launch the interactive agent TUI in the foreground')
   .action(startCommand);
 
 program
@@ -75,7 +93,7 @@ program
 
 program
   .command('up')
-  .description('Launch the interactive agent in the background')
+  .description('Start the background agent (legacy; use start for the foreground TUI)')
   .action(upCommand);
 
 program
