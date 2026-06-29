@@ -29,6 +29,14 @@ from rich.prompt import Confirm, Prompt
 console = Console()
 
 from taxsentry.config.paths import DB_PATH, EXCEL_PATH, JSON_PATH, ENV_PATH
+from taxsentry.ui.dashboard_model import build_dashboard_layout, collect_dashboard_snapshot
+from taxsentry.ui.data_loader import EMAILS_QUEUE, load_parsed_data
+from taxsentry.ui.startup_context import build_startup_context
+
+try:
+    import msvcrt as _MSVCRT
+except ImportError:  # pragma: no cover - non-Windows compatibility for tests/docs
+    _MSVCRT = None
 
 # --- Dynamic config readers (đọc từ env, không hardcode) ---
 def get_model_display_name() -> str:
@@ -73,63 +81,8 @@ LOG_MESSAGES = [
     f"Đang liên kết cơ sở dữ liệu SQLite cục bộ (Zero-Setup).",
 ]
 
-EMAILS_QUEUE = []
-
-
-def load_parsed_data():
-    """Tải dữ liệu báo cáo từ MySQL Database thực tế."""
-    global EMAILS_QUEUE
-    EMAILS_QUEUE.clear()
-
-    try:
-        from taxsentry.database.db_manager import TaxSentryDBManager
-        db = TaxSentryDBManager()
-        if db.connect():
-            logs = db.get_recent_logs(limit=5)
-            if logs:
-                for log in logs:
-                    if isinstance(log["received_at"], datetime):
-                        time_str = log["received_at"].strftime("%H:%M:%S")
-                    else:
-                        time_str = str(log["received_at"])
-                    
-                    status_text = "[green]Đã xử lý[/green]" if log["status"] == "Processed" else f"[yellow]{log['status']}[/yellow]"
-                    EMAILS_QUEUE.append({
-                        "time": time_str,
-                        "sender": log["sender"],
-                        "subject": f"Báo cáo tài chính ({log['tax_risk_status']})",
-                        "status": status_text,
-                        "file": log["file_name"],
-                    })
-            else:
-                EMAILS_QUEUE.append({
-                    "time": "-",
-                    "sender": "-",
-                    "subject": "Không tìm thấy dữ liệu trong Database",
-                    "status": "[red]Trống[/red]",
-                    "file": "-",
-                })
-            db.close()
-        else:
-            EMAILS_QUEUE.append({
-                "time": "-",
-                "sender": "-",
-                "subject": "Lỗi kết nối cơ sở dữ liệu",
-                "status": "[red]Lỗi[/red]",
-                "file": "-",
-            })
-    except Exception as e:
-        EMAILS_QUEUE.append({
-            "time": "-",
-            "sender": "-",
-            "subject": f"Lỗi hệ thống: {e}",
-            "status": "[red]Lỗi[/red]",
-            "file": "-",
-        })
-
-
 def make_layout() -> Layout:
-    """Tạo bố cục layout cho Terminal User Interface (TUI)."""
+
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
@@ -365,6 +318,35 @@ def background_worker():
         LOG_MESSAGES.append(f"❌ Lỗi khởi tạo luồng tự động hóa: {e}")
 
 
+def _sync_telegram_gateway_status() -> None:
+    global TELEGRAM_PROCESS
+    if TELEGRAM_PROCESS:
+        if TELEGRAM_PROCESS.poll() is None:
+            SYSTEM_STATUS["Telegram Bot"] = "[green]Online (Listening...)[/green]"
+        else:
+            SYSTEM_STATUS["Telegram Bot"] = "[red]Offline (Stopped)[/red]"
+    else:
+        SYSTEM_STATUS["Telegram Bot"] = "[yellow]Offline (Not Started)[/yellow]"
+
+
+def _handle_dashboard_hotkeys(live: Live) -> bool:
+    if _MSVCRT is None:
+        return False
+    if not _MSVCRT.kbhit():
+        return False
+
+    key = _MSVCRT.getch()
+    if key.lower() == b'c':
+        live.stop()
+        run_chat_mode()
+        console.clear()
+        live.start()
+        return False
+    if key.lower() == b'q' or key == b'\x1b':
+        return True
+    return False
+
+
 def write_env_file(config: dict):
     """Ghi đè/cập nhật tệp tin cấu hình .env một cách an toàn."""
     try:
@@ -373,18 +355,20 @@ def write_env_file(config: dict):
             content = ENV_PATH.read_text(encoding="utf-8")
         
         for key, value in config.items():
-            os.environ[key] = str(value)
-
-            # Bo qua ghi neu gia tri rong va key da ton tai trong .env (giu nguyen gia tri cu)
-            if not value and f"{key}=" in content:
-                continue
+            value_text = str(value)
+            os.environ[key] = value_text
 
             if f"{key}=" in content:
-                content = re.sub(rf"{key}=.*", f"{key}={value}", content)
+                content = re.sub(
+                    rf"^{re.escape(key)}=.*$",
+                    f"{key}={value_text}",
+                    content,
+                    flags=re.MULTILINE,
+                )
             else:
                 if content and not content.endswith("\n"):
                     content += "\n"
-                content += f"{key}={value}\n"
+                content += f"{key}={value_text}\n"
                 
         ENV_PATH.write_text(content, encoding="utf-8")
         return True

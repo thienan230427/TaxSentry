@@ -45,8 +45,9 @@ The current release includes:
 - inbound report collection via IMAP email
 - Excel and PDF parsing
 - analysis with a local LLM or an OpenAI-compatible endpoint such as LM Studio
+- optional Codex OAuth auth mode via `~/.codex/auth.json` for users who do not want to paste an API key manually
 - Telegram bot delivery for alerts, summaries, and interactive workflows
-- runtime commands such as `setup`, `status`, `up`, `bot`, and `stop`
+- runtime commands such as `setup`, `auth codex`, `update`, `status`, `up`, `bot`, and `stop`
 - service workflows, including Windows Task Scheduler integration
 - flexible configuration commands that let you add, rename, and remove fields without editing source code for every small change
 
@@ -57,7 +58,7 @@ TaxSentry currently requires:
 - Python 3.10+
 - MySQL
 - a Telegram bot token from @BotFather
-- a local AI endpoint if you want local LLM analysis, such as LM Studio
+- a local AI endpoint if you want local LLM analysis, such as LM Studio, or an existing Codex OAuth profile at `~/.codex/auth.json`
 
 ## Installation
 
@@ -241,7 +242,19 @@ Use this to confirm:
 - whether the Telegram bot is healthy
 - whether service and runtime state look correct
 
-### 3. Start the system
+### 3. Optional: switch AI auth to Codex OAuth
+
+```bash
+taxsentry auth codex
+```
+
+This command:
+- reads `~/.codex/auth.json`
+- validates that an access token exists
+- switches TaxSentry to `ai.authMode=codex_oauth`
+- keeps the OAuth token out of `config.json` and reads it live at runtime
+
+### 4. Start the system
 
 To run the full gateway flow:
 
@@ -265,7 +278,19 @@ If you only want the background bot:
 taxsentry bot
 ```
 
-### 4. Stop the background runtime
+### 5. Update TaxSentry safely from Git
+
+```bash
+taxsentry update
+```
+
+Update behavior:
+- if the current package is a clean Git checkout, TaxSentry uses `git fetch` + `git pull --ff-only`
+- if the current package has no `.git`, TaxSentry stages the latest source and replaces managed package paths safely
+- after source refresh, TaxSentry syncs `~/.taxsentry/taxsentry-core` and refreshes Python dependencies
+- if the working tree is dirty, the command aborts safely instead of creating merge conflicts
+
+### 6. Stop the background runtime
 
 ```bash
 taxsentry stop

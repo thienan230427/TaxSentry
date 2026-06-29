@@ -174,3 +174,23 @@ export async function runInstallation(pythonCmd, forceReinstall = false) {
   success('Cài đặt môi trường Python hoàn tất! 🎉\n');
   return true;
 }
+
+/**
+ * Refresh runtime source + Python dependencies after a source update.
+ * Reuse existing venv when possible, but always re-copy core source.
+ */
+export async function refreshInstalledRuntime(pythonCmd) {
+  console.log();
+  info('Đang đồng bộ runtime TaxSentry sau khi cập nhật source...');
+
+  if (!isVenvInstalled()) {
+    warn('Chưa tìm thấy venv hiện có. Đang tạo môi trường mới trước khi sync runtime...');
+    await createVenv(pythonCmd);
+  }
+
+  await copyCoreSource();
+  await installDependencies(pythonCmd);
+
+  success('Đồng bộ runtime hoàn tất! 🎉\n');
+  return true;
+}

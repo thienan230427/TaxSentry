@@ -18,7 +18,12 @@ import startCommand from '../src/commands/start.js';
 import botCommand from '../src/commands/bot.js';
 import stopCommand from '../src/commands/stop.js';
 import statusCommand from '../src/commands/status.js';
+import doctorCommand from '../src/commands/doctor.js';
+import reconfigureCommand from '../src/commands/reconfigure.js';
+import resetProfileCommand from '../src/commands/reset-profile.js';
 import upCommand from '../src/commands/up.js';
+import authCodexCommand from '../src/commands/auth-codex.js';
+import updateCommand from '../src/commands/update.js';
 import { installServiceCommand, applyServiceCommand, removeServiceCommand, restartServiceCommand, showServiceLogsCommand, showServiceStatus, startServiceCommand, stopServiceCommand, uninstallServiceCommand } from '../src/commands/service.js';
 import {
   displayConfig,
@@ -30,7 +35,7 @@ import {
   setEnvMappingCommand,
   generateEnvCommand,
 } from '../src/commands/config.js';
-import { detectPython, printDetectionResult, getInstallInstructions } from '../src/utils/python-detector.js';
+
 import { runSetup } from '../src/commands/setup.js';
 
 // SIGINT handler
@@ -53,12 +58,15 @@ program
 
 🎯 LẦN ĐẦU TIÊN (cài đặt + cấu hình):
   taxsentry setup        → Kiểm tra Python → tạo venv → cài deps → wizard config
+  taxsentry auth codex   → Chuyển AI engine sang chế độ Codex OAuth
 
 🚀 CHẠY HỆ THỐNG:
   taxsentry up           → Gateway: TUI Dashboard + Telegram Bot (song song)
                            💡 Bot tự động tắt khi đóng terminal
   taxsentry start        → Chỉ chạy TUI Dashboard (foreground)
   taxsentry bot          → Chỉ chạy Telegram Bot (background, sống độc lập)
+  taxsentry reconfigure  → Chạy lại wizard cấu hình mà không reset toàn bộ secret
+  taxsentry reset-profile → Xóa profile hiện tại và thiết lập lại từ đầu
 
 🛑 DỪNG HỆ THỐNG:
   taxsentry stop         → Dừng bot nền (nếu chạy bằng "taxsentry bot")
@@ -87,6 +95,8 @@ program
 
 📋 KIỂM TRA:
   taxsentry status       → Xem trạng thái: Python, Config, Services
+  taxsentry doctor       → Chẩn đoán sâu runtime/config/service trên máy hiện tại
+  taxsentry update       → Kéo source mới nhất và đồng bộ runtime an toàn
 
 📌 LƯU Ý:
   • Tất cả dữ liệu cấu hình được lưu tại ~/.taxsentry/
@@ -214,6 +224,30 @@ program
   });
 
 /* ═══════════════════════════════════════════════
+   COMMAND: reconfigure
+   ═══════════════════════════════════════════════ */
+program
+  .command('reconfigure')
+  .description('Chạy lại wizard cấu hình mà không reset toàn bộ secret')
+  .action(async () => {
+    printBanner();
+    info(`Đang chạy trên: ${getPlatformName()}\n`);
+    await reconfigureCommand();
+  });
+
+/* ═══════════════════════════════════════════════
+   COMMAND: reset-profile
+   ═══════════════════════════════════════════════ */
+program
+  .command('reset-profile')
+  .description('Xóa profile hiện tại và chạy onboarding từ đầu')
+  .action(async () => {
+    printBanner();
+    info(`Đang chạy trên: ${getPlatformName()}\n`);
+    await resetProfileCommand();
+  });
+
+/* ═══════════════════════════════════════════════
    COMMAND: start
    ═══════════════════════════════════════════════ */
 program
@@ -266,6 +300,36 @@ program
   .action(async () => {
     printBanner();
     await statusCommand();
+  });
+
+program
+  .command('doctor')
+  .description('Chẩn đoán sâu runtime/config/service trên máy hiện tại')
+  .action(async () => {
+    printBanner();
+    await doctorCommand();
+  });
+
+const authCommand = program
+  .command('auth')
+  .description('Các luồng xác thực bổ sung cho AI engine');
+
+authCommand
+  .command('codex')
+  .description('Dùng Codex OAuth từ ~/.codex/auth.json thay cho API key thủ công')
+  .action(async () => {
+    printBanner();
+    info(`Đang cấu hình Codex OAuth trên: ${getPlatformName()}\n`);
+    await authCodexCommand();
+  });
+
+program
+  .command('update')
+  .description('Kéo source mới nhất từ Git và đồng bộ runtime TaxSentry an toàn')
+  .action(async () => {
+    printBanner();
+    info(`Đang chạy self-update trên: ${getPlatformName()}\n`);
+    await updateCommand();
   });
 
 /* ═══════════════════════════════════════════════

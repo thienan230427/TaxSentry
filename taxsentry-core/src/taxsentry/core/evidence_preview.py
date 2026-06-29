@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -65,7 +66,24 @@ def _preview_records(report: dict, limit: int = 4) -> list[str]:
     return lines
 
 
-def build_evidence_context(parser, file_context: dict | None = None) -> dict:
+def build_trace_context(
+    session_id: str | None = None,
+    event_id: str | None = None,
+    trace_id: str | None = None,
+    source_file: str | None = None,
+    source_path: str | None = None,
+) -> dict:
+    return {
+        'session_id': session_id or uuid.uuid4().hex[:12],
+        'event_id': event_id or uuid.uuid4().hex[:10],
+        'trace_id': trace_id or uuid.uuid4().hex[:16],
+        'source_file': source_file or '',
+        'source_path': source_path or '',
+        'generated_at': datetime.now().isoformat(timespec='seconds'),
+    }
+
+
+def build_evidence_context(parser, file_context: dict | None = None, trace_context: dict | None = None) -> dict:
     parser._ensure_analysis()
 
     attachments = []
@@ -76,6 +94,14 @@ def build_evidence_context(parser, file_context: dict | None = None) -> dict:
         item for item in attachments
         if str(item.get('suffix', '')).lower() in IMAGE_SUFFIXES or item.get('kind') == 'image'
     ]
+
+    trace = build_trace_context(
+        session_id=(trace_context or {}).get('session_id'),
+        event_id=(trace_context or {}).get('event_id'),
+        trace_id=(trace_context or {}).get('trace_id'),
+        source_file=parser.file_path.name,
+        source_path=str(parser.file_path),
+    )
 
     sheet_previews = []
     for report in parser.sheet_reports:
@@ -103,6 +129,10 @@ def build_evidence_context(parser, file_context: dict | None = None) -> dict:
         'generated_at': datetime.now().isoformat(timespec='seconds'),
         'source_file': parser.file_path.name,
         'source_path': str(parser.file_path),
+        'session_id': trace['session_id'],
+        'event_id': trace['event_id'],
+        'trace_id': trace['trace_id'],
+        'trace_context': trace,
         'email_subject': (file_context or {}).get('email_subject', ''),
         'document_types': list(parser.document_types),
         'sheet_names': list(parser.wb.sheetnames if parser.wb else []),
@@ -113,10 +143,30 @@ def build_evidence_context(parser, file_context: dict | None = None) -> dict:
     }
 
 
-def save_evidence_context(evidence_context: dict, path: Path | None = None) -> Path:
+def save_evidence_context(
+    evidence_context: dict,
+    path: Path | None = None,
+    *,
+    artifact_store=None,
+) -> Path:
     target = Path(path or EVIDENCE_CONTEXT_PATH)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(evidence_context, indent=2, ensure_ascii=False), encoding='utf-8')
+    payload = json.dumps(evidence_context, indent=2, ensure_ascii=False)
+    target.write_text(payload, encoding='utf-8')
+    if artifact_store is not None:
+        trace_context = evidence_context.get('trace_context') or {}
+        artifact_store.register_artifact(
+            artifact_type='evidence_context',
+            artifact_name=target.name,
+            artifact_path=target,
+            session_id=evidence_context.get('session_id') or trace_context.get('session_id'),
+            event_id=evidence_context.get('event_id') or trace_context.get('event_id'),
+            trace_id=evidence_context.get('trace_id') or trace_context.get('trace_id'),
+            source_file=evidence_context.get('source_file'),
+            source_path=evidence_context.get('source_path'),
+            mime_type='application/json',
+            metadata={'kind': 'evidence_context', 'trace_context': trace_context},
+        )
     return target
 
 
@@ -146,6 +196,20 @@ def build_evidence_preview_text(evidence_context: dict, director_name: str = 'S�
 
     if evidence_context.get('email_subject'):
         lines.append(f"- Tiêu đề email: {evidence_context['email_subject']}")
+
+    trace_session = evidence_context.get('session_id')
+    trace_event = evidence_context.get('event_id')
+    trace_id = evidence_context.get('trace_id')
+    if trace_session or trace_event or trace_id:
+        trace_bits = []
+        if trace_session:
+            trace_bits.append(f"session={trace_session}")
+        if trace_event:
+            trace_bits.append(f"event={trace_event}")
+        if trace_id:
+            trace_bits.append(f"trace={trace_id}")
+        lines.append(f"- Trace: {' | '.join(trace_bits)}")
+
     if attachments:
         lines.append(f"- Tổng attachment liên quan: {len(attachments)}")
         for item in attachments[:8]:
@@ -184,3 +248,63 @@ def build_evidence_preview_text(evidence_context: dict, director_name: str = 'S�
 
     lines.append("Nếu Sếp thấy phần chứng cứ đầu vào ổn rồi thì em mới bắt đầu phần nhận xét và phân tích sâu tiếp nha.")
     return '\n'.join(lines)
+
+
+def build_trace_replay_text(
+    evidence_context: dict,
+    log_lines: list[str] | None = None,
+    session_events: list[dict] | None = None,
+    artifacts: list[dict] | None = None,
+) -> str:
+    if not evidence_context:
+        return ''
+
+    replay_lines = [
+        f"Trace replay for {evidence_context.get('source_file', 'unknown')}",
+    ]
+    if evidence_context.get('session_id'):
+        replay_lines.append(f"- session_id: {evidence_context['session_id']}")
+    if evidence_context.get('event_id'):
+        replay_lines.append(f"- event_id: {evidence_context['event_id']}")
+    if evidence_context.get('trace_id'):
+        replay_lines.append(f"- trace_id: {evidence_context['trace_id']}")
+    if evidence_context.get('source_path'):
+        replay_lines.append(f"- source_path: {evidence_context['source_path']}")
+    if evidence_context.get('email_subject'):
+        replay_lines.append(f"- email_subject: {evidence_context['email_subject']}")
+
+    attachments = evidence_context.get('attachments', []) or []
+    if attachments:
+        replay_lines.append("- attachments:")
+        for item in attachments[:8]:
+            replay_lines.append(f"  • {item.get('file_name')} ({item.get('kind', 'file')})")
+
+    if artifacts:
+        replay_lines.append("- artifacts:")
+        for artifact in artifacts[:8]:
+            provenance_bits = []
+            if artifact.get('artifact_type'):
+                provenance_bits.append(artifact['artifact_type'])
+            if artifact.get('artifact_name'):
+                provenance_bits.append(artifact['artifact_name'])
+            if artifact.get('session_id'):
+                provenance_bits.append(f"session={artifact['session_id']}")
+            if artifact.get('event_id'):
+                provenance_bits.append(f"event={artifact['event_id']}")
+            if artifact.get('trace_id'):
+                provenance_bits.append(f"trace={artifact['trace_id']}")
+            replay_lines.append(f"  • {' | '.join(provenance_bits)} -> {artifact.get('artifact_path', '')}")
+
+    if session_events:
+        replay_lines.append("- session events:")
+        for event in session_events[:10]:
+            replay_lines.append(
+                f"  • {event.get('created_at', '')} | {event.get('event_type', '')} | {event.get('actor', '')} | {event.get('result', '')}"
+            )
+
+    if log_lines:
+        replay_lines.append("- recent logs:")
+        for line in log_lines[-10:]:
+            replay_lines.append(f"  • {line}")
+
+    return '\n'.join(replay_lines)

@@ -418,10 +418,9 @@ class TaxSentryPDFGenerator:
         t.setStyle(TableStyle(t_style))
         return t
 
-    def generate(self, markdown_content: str, output_pdf_path: str):
+    def generate(self, markdown_content: str, output_pdf_path: str, trace_context: dict | None = None, artifact_store=None):
         """Tạo file PDF từ nội dung báo cáo Markdown và lưu ra đường dẫn đích."""
         output_path = Path(output_pdf_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Thiết lập template tài liệu
         doc = SimpleDocTemplate(
@@ -438,11 +437,22 @@ class TaxSentryPDFGenerator:
         # Tạo trang bìa hoặc đầu trang đẹp mắt
         story.append(Paragraph("TAXSENTRY AI CO-PILOT REPORT", self.caption_style))
         story.append(Spacer(1, 10))
+        if trace_context:
+            trace_bits = []
+            if trace_context.get('session_id'):
+                trace_bits.append(f"session={trace_context['session_id']}")
+            if trace_context.get('event_id'):
+                trace_bits.append(f"event={trace_context['event_id']}")
+            if trace_context.get('trace_id'):
+                trace_bits.append(f"trace={trace_context['trace_id']}")
+            if trace_bits:
+                story.append(Paragraph("Trace: " + " | ".join(trace_bits), self.caption_style))
+                story.append(Spacer(1, 8))
 
         # Phân tích markdown thành flowables
         flowables = self._parse_markdown_to_flowables(markdown_content)
         story.extend(flowables)
-        
+
         # Chữ ký chân trang
         story.append(Spacer(1, 25))
         story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#CCCCCC'), spaceAfter=10))
@@ -451,6 +461,19 @@ class TaxSentryPDFGenerator:
         # Build PDF
         try:
             doc.build(story)
+            if artifact_store is not None:
+                artifact_store.register_artifact(
+                    artifact_type="pdf_report",
+                    artifact_name=output_path.name,
+                    artifact_path=output_path,
+                    session_id=(trace_context or {}).get("session_id"),
+                    event_id=(trace_context or {}).get("event_id"),
+                    trace_id=(trace_context or {}).get("trace_id"),
+                    source_file=output_path.name,
+                    source_path=str(output_path),
+                    mime_type="application/pdf",
+                    metadata={"kind": "pdf_report", "trace_context": trace_context or {}},
+                )
             print(f"🎉 Đã xuất bản báo cáo PDF thành công tại: {output_path}")
             return True
         except Exception as e:

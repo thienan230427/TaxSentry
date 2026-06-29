@@ -132,10 +132,14 @@ export async function runOnboarding(options = {}) {
       // Save answers
       for (const [fullKey, value] of Object.entries(answers)) {
         const [gid, fk] = fullKey.split('.');
-        // For password type, if empty and had previous value, keep it.
-        // Full reset mode must not silently pull secrets back from the previous .env.
-        if (value === '' && !options.resetExisting && getValue(config, gid, fk)) {
-          // Keep existing
+        const fieldDef = config.schema.groups
+          .find((group) => group.id === gid)
+          ?.fields.find((candidate) => candidate.key === fk);
+        const shouldPreserveExistingSecret =
+          fieldDef?.type === 'password' && value === '' && !options.resetExisting && getValue(config, gid, fk);
+
+        if (shouldPreserveExistingSecret) {
+          // Keep existing secret when user leaves password blank in reconfigure mode.
         } else {
           setValue(config, gid, fk, value);
         }

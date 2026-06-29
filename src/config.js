@@ -59,6 +59,16 @@ const DEFAULT_SCHEMA = {
         { key: 'allowedReportSenders', label: 'Danh sách email được phép gửi báo cáo (CSV, tùy chọn)', type: 'string', default: '' },
       ],
     },
+    {
+      id: 'ai',
+      label: 'AI Engine',
+      fields: [
+        { key: 'authMode', label: 'Chế độ xác thực AI (lmstudio hoặc codex_oauth)', type: 'string', default: 'lmstudio', required: true },
+        { key: 'baseUrl', label: 'AI Base URL', type: 'string', default: 'http://localhost:1234/v1', required: true },
+        { key: 'apiKey', label: 'AI API Key (để trống nếu dùng Codex OAuth)', type: 'password', default: '', secret: true },
+        { key: 'modelName', label: 'Tên model AI', type: 'string', default: 'google/gemma-4-e4b', required: true },
+      ],
+    },
   ],
 };
 
@@ -82,6 +92,10 @@ const DEFAULT_ENV_MAPPING = {
   'email.port': 'EMAIL_PORT',
   'email.accountantEmail': 'ACCOUNTANT_EMAIL',
   'email.allowedReportSenders': 'ALLOWED_REPORT_SENDERS',
+  'ai.authMode': 'TAXSENTRY_AI_AUTH_MODE',
+  'ai.baseUrl': 'LM_STUDIO_URL',
+  'ai.apiKey': 'LM_STUDIO_API_KEY',
+  'ai.modelName': 'LM_MODEL_NAME',
 };
 
 /* ─── Helper: lấy field descriptor từ schema ─── */

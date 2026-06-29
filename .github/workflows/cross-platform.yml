@@ -51,6 +51,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r taxsentry-core/requirements.txt
 
+      - name: Run Node verification gates
+        run: |
+          npm run test
+          npm run lint
+
       - name: Validate Node CLI syntax
         run: |
           node --check src/launcher.js

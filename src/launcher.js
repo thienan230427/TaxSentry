@@ -4,7 +4,7 @@
  */
 
 import { spawn, spawnSync } from 'child_process';
-import { writeFileSync, readFileSync, existsSync, rmSync, openSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, rmSync, openSync, closeSync } from 'fs';
 import { join, delimiter } from 'path';
 import { getPythonPath, RUN_DIR, CORE_DIR, LOGS_DIR, ensureDirectories } from './utils/paths.js';
 import { getServiceAdapter } from './utils/service-manager.js';
@@ -164,21 +164,25 @@ export function startAttached(serviceName, args) {
   debug(`Args: ${args.join(' ')}`, true);
 
   const logStream = openSync(logFile, 'a');
-  const child = spawn(pyPath, args, {
-    cwd,
-    stdio: ['ignore', logStream, logStream],
-    detached: false,
-    env: buildPythonEnv(cwd),
-  });
+  try {
+    const child = spawn(pyPath, args, {
+      cwd,
+      stdio: ['ignore', logStream, logStream],
+      detached: false,
+      env: buildPythonEnv(cwd),
+    });
 
-  if (child.pid) {
-    writeFileSync(pidFile, child.pid.toString(), 'utf-8');
-    success(`${serviceName} được khởi chạy ở chế độ nền (PID: ${child.pid})`);
-    return child;
+    if (child.pid) {
+      writeFileSync(pidFile, child.pid.toString(), 'utf-8');
+      success(`${serviceName} được khởi chạy ở chế độ nền (PID: ${child.pid})`);
+      return child;
+    }
+
+    error('Không thể lấy PID của tiến trình nền.');
+    return null;
+  } finally {
+    try { closeSync(logStream); } catch {}
   }
-
-  error('Không thể lấy PID của tiến trình nền.');
-  return null;
 }
 
 export function startBackground(serviceName, args) {
@@ -206,25 +210,29 @@ export function startBackground(serviceName, args) {
   debug(`Args: ${args.join(' ')}`, true);
 
   const logStream = openSync(logFile, 'a');
-  const child = spawn(pyPath, args, {
-    cwd,
-    stdio: ['ignore', logStream, logStream],
-    detached: adapter.detached,
-    env: buildPythonEnv(cwd),
-  });
+  try {
+    const child = spawn(pyPath, args, {
+      cwd,
+      stdio: ['ignore', logStream, logStream],
+      detached: adapter.detached,
+      env: buildPythonEnv(cwd),
+    });
 
-  if (adapter.detached && typeof child.unref === 'function') {
-    child.unref();
+    if (adapter.detached && typeof child.unref === 'function') {
+      child.unref();
+    }
+
+    if (child.pid) {
+      writeFileSync(pidFile, child.pid.toString(), 'utf-8');
+      success(`${serviceName} được khởi chạy ở chế độ nền (PID: ${child.pid})`);
+      return child.pid;
+    }
+
+    error('Không thể lấy PID của tiến trình nền.');
+    return null;
+  } finally {
+    try { closeSync(logStream); } catch {}
   }
-
-  if (child.pid) {
-    writeFileSync(pidFile, child.pid.toString(), 'utf-8');
-    success(`${serviceName} được khởi chạy ở chế độ nền (PID: ${child.pid})`);
-    return child.pid;
-  }
-
-  error('Không thể lấy PID của tiến trình nền.');
-  return null;
 }
 
 export function getPid(serviceName) {
