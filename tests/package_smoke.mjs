@@ -16,6 +16,10 @@ function packTarball() {
   const output = execFileSync(command, args, {
     cwd: REPO_ROOT,
     encoding: 'utf8',
+    env: {
+      ...process.env,
+      npm_config_dry_run: 'false',
+    },
   }).trim();
 
   const packed = JSON.parse(output);
