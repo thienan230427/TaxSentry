@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import chalk from 'chalk';
 
 import { loadConfig, saveConfig, writeEnvFile } from '../config.js';
@@ -10,15 +12,45 @@ export function refreshRuntimeConfig({ load = loadConfig, save = saveConfig, wri
   return config;
 }
 
-export function runSelfUpdate({ packageSpec = 'taxsentry@latest', runner = execFileSync } = {}) {
-  if (process.platform === 'win32') {
-    runner('cmd.exe', ['/d', '/s', '/c', 'npm', 'install', '-g', packageSpec], {
+export function resolveNpmCliPath() {
+  const candidates = [];
+
+  if (process.env.npm_execpath) {
+    candidates.push(process.env.npm_execpath);
+  }
+
+  const nodeDir = dirname(process.execPath);
+  candidates.push(join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'));
+  candidates.push(join(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'));
+  candidates.push(join(nodeDir, '..', 'share', 'npm', 'bin', 'npm-cli.js'));
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+export function runSelfUpdate({ packageSpec = 'taxsentry@latest', npmCliPath = resolveNpmCliPath(), runner = execFileSync } = {}) {
+  const args = ['install', '-g', packageSpec];
+
+  if (npmCliPath) {
+    runner(process.execPath, [npmCliPath, ...args], {
       stdio: 'inherit',
     });
     return;
   }
 
-  runner('npm', ['install', '-g', packageSpec], {
+  if (process.platform === 'win32') {
+    runner('cmd.exe', ['/d', '/s', '/c', 'npm', ...args], {
+      stdio: 'inherit',
+    });
+    return;
+  }
+
+  runner('npm', args, {
     stdio: 'inherit',
   });
 }
