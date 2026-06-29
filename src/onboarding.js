@@ -1,192 +1,237 @@
-/**
- * 🛡️ TaxSentry CLI - Onboarding Wizard (Flexible Config v2)
- * Interactive setup với dynamic schema — dùng schema từ config để hỏi user.
- */
-
-import inquirer from 'inquirer';
 import chalk from 'chalk';
 import boxen from 'boxen';
-import { loadConfig, saveConfig, writeEnvFile, updateConfig, setValue, getValue, getEmptyConfig } from './config.js';
-import { info, success, error, warn, divider } from './utils/logger.js';
+import inquirer from 'inquirer';
 
-/**
- * Verify if a Telegram Bot Token is valid by calling Telegram API.
- */
-export async function verifyTelegramToken(token) {
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-    const data = await response.json();
-    if (data.ok) {
-      return { valid: true, botName: data.result.username, botId: data.result.id };
-    }
-    return { valid: false, error: data.description || 'Token không hợp lệ' };
-  } catch (err) {
-    return { valid: false, error: 'Không thể kết nối đến Telegram API. Kiểm tra mạng.' };
+import { loadCodexAuth, redactCodexAuthSummary } from './utils/codex-auth.js';
+import { describeConfig, getEmptyConfig, loadConfig, saveConfig, setValue, writeEnvFile } from './config.js';
+
+function banner() {
+  const text = [
+    chalk.bold.cyan('TaxSentry Setup Wizard'),
+    chalk.dim('Provider-first setup with local memory and friendly defaults.'),
+    '',
+    chalk.white('Choose one of the supported providers:'),
+  ].join('\n');
+  return boxen(text, { padding: 1, borderStyle: 'round', borderColor: 'cyan' });
+}
+
+function printProviderCards() {
+  const cards = [
+    [chalk.bold('LM Studio'), chalk.green('Local OpenAI-compatible server'), chalk.dim('http://localhost:1234/v1 · zero cloud dependency')],
+    [chalk.bold('OpenAI Codex OAuth'), chalk.yellow('Use existing Codex login'), chalk.dim('Great if the user already authenticated via Codex CLI')],
+    [chalk.bold('Custom endpoint'), chalk.magenta('Any OpenAI-compatible provider'), chalk.dim('Bring your own URL, model, and API key')],
+  ];
+  console.log('');
+  for (const [title, subtitle, footer] of cards) {
+    console.log(boxen([title, subtitle, footer].join('\n'), { padding: 1, borderStyle: 'round', borderColor: 'gray' }));
   }
 }
 
-/**
- * Validate MySQL connection (basic format check).
- */
-export function validateMySQL(config) {
-  const port = getValue(config, 'mysql', 'port');
-  if (isNaN(port) || port < 1 || port > 65535) {
-    return 'Port phải là số từ 1 đến 65535.';
-  }
-  return true;
+function promptText(questions, prompt) {
+  return prompt(questions);
 }
 
-/**
- * Run the onboarding wizard using the dynamic schema.
- */
-export async function runOnboarding(options = {}) {
-  console.log(
-    boxen(
-      chalk.bold.cyan(
-        '🛡️ Bộ cài đặt cấu hình hệ thống TaxSentry (AI Co-pilot)\n\n' +
-        'Chào mừng bạn đến với trình thiết lập cấu hình Onboarding.\n' +
-        'Hệ thống sẽ lưu trữ bảo mật các tham số và tự động ghi nhận.\n' +
-        'Bạn có thể thêm/sửa field sau bằng lệnh: taxsentry config'
-      ),
+function nextConfig(base) {
+  const config = JSON.parse(JSON.stringify(base));
+  if (!config.provider) config.provider = {};
+  if (!config.agent) config.agent = {};
+  if (!config.memory) config.memory = {};
+  if (!config.integrations) config.integrations = { telegram: {} };
+  if (!config.integrations.telegram) config.integrations.telegram = {};
+  return config;
+}
+
+function chooseProviderSummary(provider) {
+  if (provider.authMode === 'codex_oauth') return 'OpenAI Codex OAuth';
+  if (provider.kind === 'lmstudio') return 'LM Studio';
+  return 'Custom OpenAI-compatible';
+}
+
+export async function runOnboarding({ resetExisting = false, prompt = inquirer.prompt.bind(inquirer) } = {}) {
+  const base = resetExisting ? getEmptyConfig() : loadConfig();
+  const config = nextConfig(base);
+
+  console.log(banner());
+  printProviderCards();
+
+  const intro = await promptText([
+    {
+      type: 'input',
+      name: 'name',
+      message: 'Agent name',
+      default: config.agent.name || 'TaxSentry',
+    },
+    {
+      type: 'input',
+      name: 'persona',
+      message: 'Agent persona',
+      default: config.agent.persona || 'warm, precise, and practical',
+    },
+    {
+      type: 'list',
+      name: 'language',
+      message: 'Default language',
+      choices: [
+        { name: 'Vietnamese (vi)', value: 'vi' },
+        { name: 'English (en)', value: 'en' },
+      ],
+      default: config.agent.language || 'vi',
+    },
+  ], prompt);
+
+  setValue(config, 'agent', 'name', intro.name || 'TaxSentry');
+  setValue(config, 'agent', 'persona', intro.persona || 'warm, precise, and practical');
+  setValue(config, 'agent', 'language', intro.language || 'vi');
+  setValue(config, 'agent', 'memoryEnabled', true);
+
+  const providerChoice = await promptText([
+    {
+      type: 'list',
+      name: 'provider',
+      message: 'Select provider',
+      choices: [
+        { name: 'LM Studio — local-first, zero cloud dependency', value: 'lmstudio' },
+        { name: 'OpenAI Codex OAuth — reuse Codex login', value: 'codex_oauth' },
+        { name: 'Custom OpenAI-compatible endpoint', value: 'custom' },
+      ],
+      default: config.provider.authMode === 'codex_oauth' ? 'codex_oauth' : config.provider.kind || 'lmstudio',
+    },
+  ], prompt);
+
+  if (providerChoice.provider === 'lmstudio') {
+    const answer = await promptText([
       {
-        padding: 1,
-        margin: { top: 1, bottom: 1 },
-        borderColor: 'cyan',
-        borderStyle: 'round',
-        title: 'TaxSentry Setup',
-        titleAlignment: 'center',
-      }
-    )
-  );
+        type: 'input',
+        name: 'baseUrl',
+        message: 'LM Studio endpoint',
+        default: config.provider.baseUrl || 'http://localhost:1234/v1',
+      },
+      {
+        type: 'input',
+        name: 'model',
+        message: 'Model name',
+        default: config.provider.model || 'google/gemma-4-e4b',
+      },
+    ], prompt);
+    setValue(config, 'provider', 'kind', 'lmstudio');
+    setValue(config, 'provider', 'authMode', 'lmstudio');
+    setValue(config, 'provider', 'baseUrl', answer.baseUrl || 'http://localhost:1234/v1');
+    setValue(config, 'provider', 'model', answer.model || 'google/gemma-4-e4b');
+    setValue(config, 'provider', 'apiKey', '');
+  } else if (providerChoice.provider === 'codex_oauth') {
+    let codexSummary = '';
+    try {
+      const auth = loadCodexAuth();
+      codexSummary = JSON.stringify(redactCodexAuthSummary(auth));
+    } catch (error) {
+      codexSummary = String(error.message || error);
+    }
+    console.log(chalk.yellow(`\nCodex OAuth check: ${codexSummary}`));
+    const answer = await promptText([
+      {
+        type: 'input',
+        name: 'model',
+        message: 'Model name',
+        default: config.provider.model || 'gpt-4.1',
+      },
+    ], prompt);
+    setValue(config, 'provider', 'kind', 'codex_oauth');
+    setValue(config, 'provider', 'authMode', 'codex_oauth');
+    setValue(config, 'provider', 'baseUrl', 'https://api.openai.com/v1');
+    setValue(config, 'provider', 'model', answer.model || 'gpt-4.1');
+    setValue(config, 'provider', 'apiKey', '');
+  } else {
+    const answer = await promptText([
+      {
+        type: 'input',
+        name: 'baseUrl',
+        message: 'OpenAI-compatible base URL',
+        default: config.provider.baseUrl || 'https://api.openai.com/v1',
+      },
+      {
+        type: 'input',
+        name: 'apiKey',
+        message: 'API key',
+        default: config.provider.apiKey || '',
+      },
+      {
+        type: 'input',
+        name: 'model',
+        message: 'Model name',
+        default: config.provider.model || 'gpt-4.1-mini',
+      },
+    ], prompt);
+    setValue(config, 'provider', 'kind', 'custom');
+    setValue(config, 'provider', 'authMode', 'api_key');
+    setValue(config, 'provider', 'baseUrl', answer.baseUrl || 'https://api.openai.com/v1');
+    setValue(config, 'provider', 'apiKey', answer.apiKey || '');
+    setValue(config, 'provider', 'model', answer.model || 'gpt-4.1-mini');
+  }
 
-  divider();
-  console.log(chalk.bold.red('⚠️ CHÍNH SÁCH BẢO MẬT & ĐIỀU KHOẢN SỬ DỤNG:'));
-  console.log(chalk.yellow('1. Toàn bộ dữ liệu (API key, DB pass, App Password) được lưu cục bộ.'));
-  console.log(chalk.yellow('2. Hệ thống AI xử lý cục bộ hoặc qua dịch vụ được chỉ định rõ ràng.'));
-  console.log(chalk.yellow('3. Bạn chịu trách nhiệm bảo vệ file ~/.taxsentry/config.json.'));
-  console.log(chalk.yellow('4. Bạn có thể thêm/sửa field bất kỳ lúc nào: taxsentry config add-field'));
-  divider();
+  const memory = await promptText([
+    {
+      type: 'input',
+      name: 'sessionTitle',
+      message: 'Default session title',
+      default: config.memory.sessionTitle || `${config.agent.name} session`,
+    },
+    {
+      type: 'number',
+      name: 'maxFacts',
+      message: 'How many memory facts should be injected into the prompt?',
+      default: config.memory.maxFacts || 50,
+    },
+    {
+      type: 'number',
+      name: 'maxTurns',
+      message: 'How many recent turns should be remembered?',
+      default: config.memory.maxTurns || 12,
+    },
+  ], prompt);
 
-  const { agreed } = await inquirer.prompt([
+  setValue(config, 'memory', 'sessionTitle', memory.sessionTitle || `${config.agent.name} session`);
+  setValue(config, 'memory', 'maxFacts', Number(memory.maxFacts) || 50);
+  setValue(config, 'memory', 'maxTurns', Number(memory.maxTurns) || 12);
+
+  const telegram = await promptText([
     {
       type: 'confirm',
-      name: 'agreed',
-      message: 'Bạn có đồng ý với các điều khoản bảo mật dữ liệu trên không?',
-      default: false,
+      name: 'enabled',
+      message: 'Enable Telegram notifications?',
+      default: Boolean(config.integrations.telegram.enabled),
     },
-  ]);
+  ], prompt);
 
-  if (!agreed) {
-    console.log(chalk.yellow('\n👋 Bạn chưa đồng ý điều khoản. Thiết lập bị hủy.'));
-    process.exit(0);
+  config.integrations.telegram = {
+    enabled: Boolean(telegram.enabled),
+    botToken: config.integrations.telegram.botToken || '',
+    adminChatId: config.integrations.telegram.adminChatId || '',
+  };
+
+  if (telegram.enabled) {
+    const tg = await promptText([
+      {
+        type: 'input',
+        name: 'botToken',
+        message: 'Telegram bot token',
+        default: config.integrations.telegram.botToken || '',
+      },
+      {
+        type: 'input',
+        name: 'adminChatId',
+        message: 'Telegram admin chat ID',
+        default: config.integrations.telegram.adminChatId || '',
+      },
+    ], prompt);
+    config.integrations.telegram.botToken = tg.botToken || '';
+    config.integrations.telegram.adminChatId = tg.adminChatId || '';
   }
 
-  console.log(chalk.green('\n✅ Bắt đầu thiết lập cấu hình...\n'));
-
-  let config = options.resetExisting ? getEmptyConfig() : loadConfig();
-  // Start fresh values if not already configured
-  if (options.resetExisting || !config.isConfigured) {
-    config.values = {};
-  }
-
-  // Walk through each group in schema
-  for (const group of config.schema.groups) {
-    console.log(chalk.cyan(`\n📋 Cấu hình: ${group.label}`));
-    console.log(chalk.dim(`   (Group: ${group.id})`));
-
-    const prompts = [];
-
-    for (const field of group.fields) {
-      const currentVal = getValue(config, group.id, field.key);
-      const defaultVal = currentVal || field.default || '';
-
-      const promptConfig = {
-        type: field.type === 'password' ? 'password' : 'input',
-        name: `${group.id}.${field.key}`,
-        message: `${field.label}:`,
-        default: field.type === 'password' ? '' : defaultVal,
-      };
-
-      // Validation cho required fields
-      if (field.required) {
-        promptConfig.validate = (input) => {
-          if (!input || input.trim() === '') return `${field.label} không được để trống.`;
-          // Special validation for Telegram Bot Token
-          if (field.key === 'telegramBotToken') {
-            return input.match(/^\d+:.+/) ? true : 'Token phải bắt đầu bằng số và dấu hai chấm.';
-          }
-          // Validation for Admin Chat ID
-          if (field.key === 'adminChatId') {
-            return /^-?\d+$/.test(input.trim()) ? true : 'Chat ID phải là số nguyên.';
-          }
-          return true;
-        };
-      }
-
-      prompts.push(promptConfig);
-    }
-
-    if (prompts.length > 0) {
-      const answers = await inquirer.prompt(prompts);
-
-      // Save answers
-      for (const [fullKey, value] of Object.entries(answers)) {
-        const [gid, fk] = fullKey.split('.');
-        const fieldDef = config.schema.groups
-          .find((group) => group.id === gid)
-          ?.fields.find((candidate) => candidate.key === fk);
-        const shouldPreserveExistingSecret =
-          fieldDef?.type === 'password' && value === '' && !options.resetExisting && getValue(config, gid, fk);
-
-        if (shouldPreserveExistingSecret) {
-          // Keep existing secret when user leaves password blank in reconfigure mode.
-        } else {
-          setValue(config, gid, fk, value);
-        }
-      }
-    }
-  }
-
-  // Special: verify Telegram token
-  const tgToken = getValue(config, 'telegram', 'telegramBotToken');
-  if (tgToken && tgToken !== 'YOUR_BOT_TOKEN_HERE') {
-    info('Đang xác thực Telegram Token với API...');
-    const result = await verifyTelegramToken(tgToken);
-    if (result.valid) {
-      success(`Token hợp lệ! Bot: @${result.botName}`);
-    } else {
-      warn(`Không thể xác thực Token: ${result.error}`);
-      warn('Bạn vẫn có thể tiếp tục và sửa sau: taxsentry config set telegram.telegramBotToken');
-    }
-  }
-
-  // Finalize
-  config.isConfigured = true;
+  config.configured = true;
   saveConfig(config);
   writeEnvFile(config);
 
-  console.log();
-  success('Cấu hình đã được lưu thành công vào ~/.taxsentry! 🎉');
-  success(`Python .env file cũng đã được generate tại core.`);
-
-  // Show summary
-  console.log(chalk.cyan('\n📊 Tổng kết cấu hình:'));
-  for (const group of config.schema.groups) {
-    console.log(chalk.bold(`  ${group.label}:`));
-    for (const field of group.fields) {
-      const val = getValue(config, group.id, field.key);
-      const displayVal = field.secret ? '••••••••' : (val || '(trống)');
-      console.log(chalk.dim(`    ${field.label}: ${displayVal}`));
-    }
-  }
-
-  console.log(chalk.cyan('\n💡 Các lệnh hữu ích:'));
-  console.log(chalk.dim('  taxsentry config             → Xem toàn bộ config'));
-  console.log(chalk.dim('  taxsentry config set <key> <value>  → Sửa 1 field'));
-  console.log(chalk.dim('  taxsentry config add-field   → Thêm field mới'));
-  console.log(chalk.dim('  taxsentry config rename-field → Đổi tên field'));
-  console.log(chalk.dim('  taxsentry up                 → Chạy hệ thống'));
-  console.log();
-
+  console.log('\n' + boxen(describeConfig(config), { padding: 1, borderStyle: 'round', borderColor: 'green' }));
+  console.log(chalk.green.bold(`\nSetup complete — ${chooseProviderSummary(config.provider)} is ready.`));
   return config;
 }

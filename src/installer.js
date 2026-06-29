@@ -1,196 +1,63 @@
-/**
- * 🛡️ TaxSentry CLI - Installer Engine
- * Creates virtual environment and pip installs dependencies.
- */
+import { cpSync, existsSync, mkdirSync, readdirSync } from "fs";
+import { execFileSync } from "child_process";
+import { join } from "path";
 
-import { execSync } from 'child_process';
-import { existsSync, rmSync, cpSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import ora from 'ora';
-import chalk from 'chalk';
-import { VENV_DIR, CORE_DIR, getPythonPath, getPipPath, ensureDirectories } from './utils/paths.js';
-import { info, success, error, warn } from './utils/logger.js';
+import chalk from "chalk";
 
-// Project root = two levels up from installer.js (src/installer.js → project root)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PROJECT_ROOT = join(__dirname, '..');
-const PROJECT_CORE_DIR = join(PROJECT_ROOT, 'taxsentry-core');
+import {
+  BUNDLED_CORE_DIR,
+  CORE_DIR,
+  TAXSENTRY_HOME,
+  ensureDirectories,
+  getPipPath,
+  getPythonPath,
+} from "./utils/paths.js";
 
-/**
- * Check if virtual environment already exists and is valid.
- */
-export function isVenvInstalled() {
-  return existsSync(getPythonPath()) && existsSync(getPipPath());
-}
-
-/**
- * Remove existing venv (if requested).
- */
-export function cleanupVenv() {
-  if (existsSync(VENV_DIR)) {
-    rmSync(VENV_DIR, { recursive: true, force: true });
+function copyCoreSource() {
+  if (!existsSync(BUNDLED_CORE_DIR)) {
+    throw new Error(`Bundled taxsentry-core folder not found: ${BUNDLED_CORE_DIR}`);
   }
-}
 
-/**
- * Create Python virtual environment.
- */
-export async function createVenv(pythonCmd) {
-  const spinner = ora(`Đang tạo môi trường ảo Python tại ${VENV_DIR}...`).start();
-  try {
-    execSync(`"${pythonCmd}" -m venv "${VENV_DIR}"`, {
-      stdio: 'pipe',
-      timeout: 60000,
-    });
-    
-    if (!isVenvInstalled()) {
-      throw new Error('Tạo venv thất bại: không tìm thấy Python hoặc pip trong môi trường ảo mới.');
+  mkdirSync(CORE_DIR, { recursive: true });
+  const entries = readdirSync(BUNDLED_CORE_DIR, { withFileTypes: true });
+  for (const entry of entries) {
+    const src = join(BUNDLED_CORE_DIR, entry.name);
+    const dst = join(CORE_DIR, entry.name);
+    if (entry.isDirectory()) {
+      cpSync(src, dst, {
+        recursive: true,
+        force: true,
+        filter: (path) =>
+          !path.endsWith(".db") &&
+          !path.includes("__pycache__") &&
+          !path.includes(".pytest_cache") &&
+          !path.includes("downloads") &&
+          !path.includes("scratch"),
+      });
+    } else if (entry.isFile()) {
+      cpSync(src, dst, { force: true });
     }
-    
-    spinner.succeed('Môi trường ảo Python được tạo thành công! 🐍');
-  } catch (err) {
-    spinner.fail(`Tạo môi trường ảo thất bại: ${err.message}`);
-    throw err;
   }
 }
 
-/**
- * Install Python dependencies via pip.
- */
-export async function installDependencies(pythonCmd) {
-  const requirementsPath = join(CORE_DIR, 'requirements.txt');
-  if (!existsSync(requirementsPath)) {
-    throw new Error(`Không tìm thấy file requirements.txt tại ${requirementsPath}`);
-  }
-
-  const spinner = ora('Đang cài đặt dependencies Python (có thể mất vài phút)...').start();
-  try {
-    const pipCmd = getPipPath();
-    const pipArgs = [
-      'install',
-      '--upgrade',
-      'pip',
-      'setuptools',
-      'wheel',
-      '&&',
-      `"${pipCmd}"`,
-      'install', '-r', `"${requirementsPath}"`,
-    ].join(' ');
-
-    // Windows command chaining might need cmd /c, but cross-platform requires different approach
-    // Let's do it in two steps for safety
-    
-    // 1. Upgrade pip (must use python -m pip on pip 25+ to modify itself)
-    execSync(`"${pythonCmd}" -m pip install --upgrade pip setuptools wheel`, {
-      stdio: 'pipe',
-      timeout: 120000,
-    });
-
-    // 2. Install requirements
-    execSync(`"${pipCmd}" install -r "${requirementsPath}"`, {
-      stdio: 'pipe',
-      cwd: CORE_DIR,
-      timeout: 300000, // 5 minutes for large packages like reportlab, pandas
-    });
-
-    spinner.succeed('Cài đặt Python dependencies thành công! 📦');
-  } catch (err) {
-    spinner.fail(`Cài đặt dependencies thất bại: ${err.message}`);
-    console.log(chalk.dim('\nGợi ý: Kiểm tra kết nối mạng và đảm bảo Python tương thích.\n'));
-    throw err;
-  }
+function createVenv(pythonCommand) {
+  const python = pythonCommand || "python";
+  if (existsSync(getPythonPath())) return;
+  execFileSync(python, ["-m", "venv", join(TAXSENTRY_HOME, ".venv")], { stdio: "inherit" });
 }
 
-/**
- * Copy the taxsentry-core source code from the project to ~/.taxsentry/taxsentry-core/
- */
-export async function copyCoreSource() {
-  const spinner = ora('Đang copy mã nguồn taxsentry-core...').start();
-
-  if (!existsSync(PROJECT_CORE_DIR)) {
-    spinner.fail(`Không tìm thấy thư mục taxsentry-core tại ${PROJECT_CORE_DIR}`);
-    throw new Error(`Thư mục taxsentry-core không tồn tại. Kiểm tra lại cấu trúc dự án.`);
-  }
-
-  try {
-    // Ensure target directory exists
-    ensureDirectories();
-
-    // Remove old copy if exists
-    if (existsSync(CORE_DIR)) {
-      rmSync(CORE_DIR, { recursive: true, force: true });
-    }
-
-    // Copy recursively, but never bring along local runtime artifacts or secret env files
-    cpSync(PROJECT_CORE_DIR, CORE_DIR, {
-      recursive: true,
-      filter: (src) => {
-        const normalized = src.replace(/\\/g, '/');
-        const base = normalized.split('/').pop() || '';
-        if (base === '.env' || base.startsWith('.env.')) return false;
-        if (base === '.processed_ids.json' || base === 'audit_report.md' || base === 'parsed_report.json') return false;
-        if (base.endsWith('.db') || base === '__pycache__') return false;
-        if (normalized.includes('/downloads/') || normalized.includes('/scratch/')) return false;
-        return true;
-      },
-    });
-
-    spinner.succeed('Đã copy mã nguồn taxsentry-core thành công! 📁');
-  } catch (err) {
-    spinner.fail(`Copy mã nguồn thất bại: ${err.message}`);
-    throw err;
-  }
+function installDependencies() {
+  const pip = getPipPath();
+  execFileSync(pip, ["install", "--upgrade", "pip"], { stdio: "inherit" });
+  execFileSync(pip, ["install", "-r", join(CORE_DIR, "requirements.txt")], { stdio: "inherit" });
 }
 
-/**
- * Full installation flow.
- */
-export async function runInstallation(pythonCmd, forceReinstall = false) {
-  console.log();
-  info('Bắt đầu quy trình cài đặt môi trường TaxSentry...');
-  
-  if (isVenvInstalled() && !forceReinstall) {
-    warn('Đã tìm thấy môi trường ảo. Đang kiểm tra tính toàn vẹn...');
-    try {
-      // Try to run a quick pip check
-      execSync(`"${getPipPath()}" check`, { stdio: 'pipe', timeout: 5000 });
-      success('Môi trường ảo đã được cài đặt và hoạt động ổn định. ✅\n');
-      return true;
-    } catch {
-      warn('Môi trường ảo hiện tại có vấn đề. Đang cài đặt lại...');
-      cleanupVenv();
-    }
-  } else if (isVenvInstalled() && forceReinstall) {
-    warn('Flag --force được kích hoạt. Đang xóa môi trường cũ...');
-    cleanupVenv();
-  }
-
-  await createVenv(pythonCmd);
-  await copyCoreSource();
-  await installDependencies(pythonCmd);
-
-  success('Cài đặt môi trường Python hoàn tất! 🎉\n');
-  return true;
-}
-
-/**
- * Refresh runtime source + Python dependencies after a source update.
- * Reuse existing venv when possible, but always re-copy core source.
- */
-export async function refreshInstalledRuntime(pythonCmd) {
-  console.log();
-  info('Đang đồng bộ runtime TaxSentry sau khi cập nhật source...');
-
-  if (!isVenvInstalled()) {
-    warn('Chưa tìm thấy venv hiện có. Đang tạo môi trường mới trước khi sync runtime...');
-    await createVenv(pythonCmd);
-  }
-
-  await copyCoreSource();
-  await installDependencies(pythonCmd);
-
-  success('Đồng bộ runtime hoàn tất! 🎉\n');
-  return true;
+export async function runInstallation(pythonCommand = "python") {
+  ensureDirectories();
+  copyCoreSource();
+  console.log(chalk.cyan("Creating or reusing the TaxSentry venv..."));
+  createVenv(pythonCommand);
+  console.log(chalk.cyan("Installing Python dependencies..."));
+  installDependencies();
+  return { pythonPath: getPythonPath() };
 }
