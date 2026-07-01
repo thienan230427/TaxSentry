@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node bin/taxsentry.js start",
     "dev": "node bin/taxsentry.js start",
-    "test": "node tests/cli_surface_regressions.mjs && node tests/privacy_runtime_regressions.mjs && node tests/update_command_regressions.mjs && node tests/package_smoke.mjs",
+    "test": "node tests/cli_surface_regressions.mjs && node tests/service_platform_matrix.mjs && node tests/service_apply_smoke.mjs && node tests/privacy_runtime_regressions.mjs && node tests/update_command_regressions.mjs && node tests/package_smoke.mjs",
     "pack:smoke": "node tests/package_smoke.mjs",
     "prepack": "npm run pack:smoke",
     "prepublishOnly": "npm run test && npm run lint",

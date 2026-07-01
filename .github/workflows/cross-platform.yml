@@ -50,6 +50,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r taxsentry-core/requirements.txt
+          python -m pip install pytest
 
       - name: Run Node verification gates
         run: |
@@ -61,7 +62,7 @@ jobs:
           node --check src/launcher.js
           node --check src/installer.js
           node --check src/commands/status.js
-          node --check src/commands/bot.js
+          node --check src/commands/service.js
           node --check src/utils/service-manager.js
 
       - name: Validate Python imports / syntax
@@ -78,7 +79,7 @@ jobs:
             src/taxsentry/core/pdf_generator.py \
             src/taxsentry/core/excel_parser.py
 
-      - name: Run parser regression tests
+      - name: Run Python regression tests
         working-directory: taxsentry-core
         run: |
-          PYTHONPATH=src python -m unittest tests.test_excel_parser_regressions -v
+          PYTHONPATH=src python -m pytest tests
