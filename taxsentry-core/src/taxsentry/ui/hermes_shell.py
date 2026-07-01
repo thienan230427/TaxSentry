@@ -14,6 +14,7 @@ from rich.text import Text
 from taxsentry.agent import AgentKernel, AgentMode, ProviderPreset
 from taxsentry.config import describe_config, get_value, load_config
 from taxsentry.database.db_manager import TaxSentryDBManager
+from .dashboard import TaxSentryDashboard
 
 console = Console()
 
@@ -65,6 +66,13 @@ class HermesShell:
                 self._show_provider_picker()
                 self._sync_kernel_provider()
                 self._last_frame_note = "Provider updated"
+                self._render_screen()
+                continue
+
+            if user_text == "/dashboard":
+                dashboard = TaxSentryDashboard(self.kernel.runtime_service)
+                self._last_frame_note = "Dashboard opened"
+                dashboard.run()
                 self._render_screen()
                 continue
 
@@ -184,6 +192,9 @@ class HermesShell:
             "/mode chat|analysis|execute|review|setup",
             "/provider",
             "/audit",
+            "/dashboard",
+            "/jobs",
+            "/replay [session_id]",
             "/exit",
         ]:
             actions.append(f"• {line}\n", style="white")
@@ -244,8 +255,10 @@ class HermesShell:
     def _build_right_rail(self, snapshot: dict[str, Any]) -> Panel:
         memory_facts = snapshot["memory_facts"]
         recent_reports = snapshot["recent_reports"]
+        recent_jobs = snapshot.get("recent_jobs") or []
         evidence_context = snapshot["evidence_context"]
         recent_events = snapshot.get("recent_events") or []
+        recent_sessions = snapshot.get("recent_sessions") or []
 
         body = Text()
         body.append("Right Rail\n", style="bold yellow")
@@ -263,11 +276,34 @@ class HermesShell:
         else:
             body.append("• No reports yet\n", style="dim")
 
+        body.append("\nRecent jobs\n", style="bold cyan")
+        if recent_jobs:
+            for job in recent_jobs[:3]:
+                body.append(
+                    f"• {job.get('job_id', 'n/a')[:8]} | {job.get('job_type', 'n/a')} | {job.get('state', 'n/a')}\n",
+                    style="white",
+                )
+        else:
+            body.append("• No jobs yet\n", style="dim")
+
+        body.append("\nRecent sessions\n", style="bold cyan")
+        if recent_sessions:
+            for session in recent_sessions[:3]:
+                body.append(
+                    f"• {session.get('session_id', 'n/a')[:8]} | {session.get('mode', 'n/a')} | {session.get('outcome') or 'open'}\n",
+                    style="white",
+                )
+        else:
+            body.append("• No sessions yet\n", style="dim")
+
         body.append("\nTrace preview\n", style="bold cyan")
         if evidence_context:
             body.append(f"• {evidence_context.get('source_file', 'n/a')}\n", style="white")
             body.append(f"• session={evidence_context.get('session_id', 'n/a')}\n", style="dim")
             body.append(f"• trace={evidence_context.get('trace_id', 'n/a')}\n", style="dim")
+        elif snapshot.get("trace_replay"):
+            for line in snapshot["trace_replay"].splitlines()[:6]:
+                body.append(f"• {line}\n", style="white")
         else:
             body.append("• No evidence context yet\n", style="dim")
 
@@ -291,7 +327,7 @@ class HermesShell:
         state = snapshot["state"]
         footer = Text()
         footer.append("Shortcuts: ", style="bold yellow")
-        footer.append("/help  /status  /memory  /provider  /mode <name>  /audit  /tools  /trace  /exit", style="white")
+        footer.append("/help  /status  /memory  /provider  /mode <name>  /audit  /dashboard  /tools  /trace  /jobs  /replay  /exit", style="white")
         footer.append(f"\nStatus: mode={state.mode.value} | provider={snapshot['provider_label']} | session={state.session_id[:8]}", style="dim")
         return Panel(footer, border_style="deep_sky_blue1", box=box.ROUNDED)
 

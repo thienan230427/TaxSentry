@@ -11,6 +11,9 @@ function runHelp(args = []) {
 const topLevelHelp = runHelp();
 assert.match(topLevelHelp, /taxsentry start/i, 'top-level help should list start');
 assert.match(topLevelHelp, /taxsentry update/i, 'top-level help should list update');
+assert.match(topLevelHelp, /taxsentry dashboard/i, 'top-level help should list dashboard');
+assert.match(topLevelHelp, /taxsentry jobs/i, 'top-level help should list jobs');
+assert.match(topLevelHelp, /taxsentry replay/i, 'top-level help should list replay');
 assert.match(topLevelHelp, /taxsentry reconfigure/i, 'top-level help should list reconfigure');
 assert.match(topLevelHelp, /taxsentry reset-profile/i, 'top-level help should list reset-profile');
 assert.match(topLevelHelp, /taxsentry service/i, 'top-level help should list service');

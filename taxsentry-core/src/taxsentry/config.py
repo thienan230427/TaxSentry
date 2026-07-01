@@ -43,6 +43,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "max_turns": 12,
         "session_title": "TaxSentry session",
     },
+    "jobs": {
+        "tracking_enabled": True,
+        "retry_limit": 2,
+        "default_state": "pending",
+        "needs_human_review_on_missing_data": True,
+        "auto_send_email": True,
+        "auto_send_telegram": True,
+    },
     "integrations": {
         "telegram": {
             "enabled": False,
@@ -75,6 +83,12 @@ ENV_MAPPING: dict[str, str] = {
     "memory.max_facts": "TAXSENTRY_MEMORY_MAX_FACTS",
     "memory.max_turns": "TAXSENTRY_MEMORY_MAX_TURNS",
     "memory.session_title": "TAXSENTRY_SESSION_TITLE",
+    "jobs.tracking_enabled": "TAXSENTRY_JOB_TRACKING",
+    "jobs.retry_limit": "TAXSENTRY_JOB_RETRY_LIMIT",
+    "jobs.default_state": "TAXSENTRY_JOB_DEFAULT_STATE",
+    "jobs.needs_human_review_on_missing_data": "TAXSENTRY_JOB_NEEDS_HUMAN_REVIEW_ON_MISSING_DATA",
+    "jobs.auto_send_email": "AUTO_SEND_EMAIL",
+    "jobs.auto_send_telegram": "AUTO_SEND_TELEGRAM",
     "integrations.telegram.enabled": "TELEGRAM_ENABLED",
     "integrations.telegram.bot_token": "TELEGRAM_BOT_TOKEN",
     "integrations.telegram.admin_chat_id": "ADMIN_CHAT_ID",
@@ -167,9 +181,17 @@ def load_config() -> dict[str, Any]:
 
 
 def _coerce_value(cfg_path: str, value: str) -> Any:
-    if cfg_path in {"agent.memory_enabled", "integrations.telegram.enabled", "ui.show_banner"}:
+    if cfg_path in {
+        "agent.memory_enabled",
+        "integrations.telegram.enabled",
+        "ui.show_banner",
+        "jobs.tracking_enabled",
+        "jobs.needs_human_review_on_missing_data",
+        "jobs.auto_send_email",
+        "jobs.auto_send_telegram",
+    }:
         return value.strip().lower() in {"1", "true", "yes", "on"}
-    if cfg_path in {"memory.max_facts", "memory.max_turns"}:
+    if cfg_path in {"memory.max_facts", "memory.max_turns", "jobs.retry_limit"}:
         try:
             return int(value)
         except ValueError:
@@ -211,6 +233,12 @@ def build_env_lines(config: dict[str, Any]) -> list[str]:
         f'TAXSENTRY_MEMORY_MAX_FACTS="{int(config["memory"]["max_facts"])}"',
         f'TAXSENTRY_MEMORY_MAX_TURNS="{int(config["memory"]["max_turns"])}"',
         f'TAXSENTRY_SESSION_TITLE="{config["memory"]["session_title"]}"',
+        f'TAXSENTRY_JOB_TRACKING="{str(bool(config["jobs"]["tracking_enabled"])).lower()}"',
+        f'TAXSENTRY_JOB_RETRY_LIMIT="{int(config["jobs"]["retry_limit"])}"',
+        f'TAXSENTRY_JOB_DEFAULT_STATE="{config["jobs"]["default_state"]}"',
+        f'TAXSENTRY_JOB_NEEDS_HUMAN_REVIEW_ON_MISSING_DATA="{str(bool(config["jobs"]["needs_human_review_on_missing_data"])).lower()}"',
+        f'AUTO_SEND_EMAIL="{str(bool(config["jobs"]["auto_send_email"])).lower()}"',
+        f'AUTO_SEND_TELEGRAM="{str(bool(config["jobs"]["auto_send_telegram"])).lower()}"',
         f'TELEGRAM_ENABLED="{str(bool(config["integrations"]["telegram"]["enabled"])).lower()}"',
         f'TELEGRAM_BOT_TOKEN="{config["integrations"]["telegram"]["bot_token"]}"',
         f'ADMIN_CHAT_ID="{config["integrations"]["telegram"]["admin_chat_id"]}"',
@@ -251,6 +279,7 @@ def describe_config(config: dict[str, Any]) -> str:
         f'Provider: {provider["kind"]} / {provider["model"]}',
         f'Endpoint: {provider["base_url"]}',
         f'Memory: {"on" if agent["memory_enabled"] else "off"} · facts={memory["max_facts"]} · turns={memory["max_turns"]}',
+        f'Jobs: {"tracking on" if config["jobs"]["tracking_enabled"] else "tracking off"} · retry={config["jobs"]["retry_limit"]} · default={config["jobs"]["default_state"]} · review={"on" if config["jobs"]["needs_human_review_on_missing_data"] else "off"} · email={"on" if config["jobs"]["auto_send_email"] else "off"} · telegram={"on" if config["jobs"]["auto_send_telegram"] else "off"}',
         f'Telegram: {"enabled" if telegram["enabled"] else "disabled"}',
         f'Config file: {CONFIG_FILE}',
         f'Memory DB: {MEMORY_DB}',

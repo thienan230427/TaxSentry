@@ -8,6 +8,8 @@ import { runSetup } from '../src/commands/setup.js';
 import startCommand from '../src/commands/start.js';
 import statusCommand from '../src/commands/status.js';
 import doctorCommand from '../src/commands/doctor.js';
+import dashboardCommand from '../src/commands/dashboard.js';
+import jobsCommand from '../src/commands/jobs.js';
 import reconfigureCommand from '../src/commands/reconfigure.js';
 import resetProfileCommand from '../src/commands/reset-profile.js';
 import {
@@ -24,6 +26,7 @@ import authCodexCommand from '../src/commands/auth-codex.js';
 import updateCommand from '../src/commands/update.js';
 import upCommand from '../src/commands/up.js';
 import stopCommand from '../src/commands/stop.js';
+import replayCommand from '../src/commands/replay.js';
 import { loadConfig, describeConfig } from '../src/config.js';
 
 const require = createRequire(import.meta.url);
@@ -42,6 +45,9 @@ Primary commands:
   taxsentry start   Open the interactive TUI in the foreground
   taxsentry status  Show current configuration and provider health
   taxsentry doctor  Check runtime health
+  taxsentry dashboard  Open the operational dashboard
+  taxsentry jobs    Show recent jobs and their states
+  taxsentry replay  Replay the latest session trace
   taxsentry reconfigure  Re-run onboarding without wiping secrets
   taxsentry reset-profile  Fully reset local profile and onboarding state
   taxsentry auth codex  Link the current configuration to Codex OAuth
@@ -84,6 +90,24 @@ program
   .command('doctor')
   .description('Check runtime health')
   .action(doctorCommand);
+
+program
+  .command('dashboard')
+  .description('Open the operational dashboard')
+  .action(dashboardCommand);
+
+program
+  .command('jobs')
+  .description('Show recent jobs and their states')
+  .action(jobsCommand);
+
+program
+  .command('replay')
+  .description('Replay a session trace')
+  .argument('[sessionId]', 'Session ID to replay')
+  .action((sessionId) => {
+    replayCommand(sessionId);
+  });
 
 program
   .command('reconfigure')

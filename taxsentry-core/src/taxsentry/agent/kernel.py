@@ -19,6 +19,7 @@ from taxsentry.runtime.copilot_prompt import build_copilot_prompt
 from taxsentry.runtime.composer import ResponseComposer
 from taxsentry.runtime.policy import PolicyGate
 from taxsentry.runtime.router import InteractionRouter
+from taxsentry.runtime.service import TaxSentryRuntimeService
 from taxsentry.runtime.session import MemoryManager, RuntimeResponse, SessionManager
 
 from .planner import AgentPlanner, ToolPlanStep
@@ -44,6 +45,7 @@ class AgentKernel:
         self.memory = MemoryManager()
         self.planner = AgentPlanner()
         self.provider = from_settings(self.settings)
+        self.runtime_service = TaxSentryRuntimeService(self.settings)
         self.state = AgentSurfaceState(
             mode=session_mode,
             provider_key=self.provider.kind or "lmstudio",
@@ -63,6 +65,7 @@ class AgentKernel:
         self.tools.register("remember_fact", self._tool_remember_fact)
         self.tools.register("run_audit", self._tool_run_audit)
         self.tools.register("status_summary", self._tool_status_summary)
+        self.tools.register("recent_jobs", self._tool_recent_jobs)
         self.tools.register("recent_reports", self._tool_recent_reports)
         self.tools.register("session_trace", self._tool_session_trace)
         self.tools.register("tool_catalog", self._tool_tool_catalog)
@@ -130,6 +133,8 @@ class AgentKernel:
             "session": session_snapshot,
             "memory_facts": memory_facts,
             "recent_reports": recent_reports,
+            "recent_jobs": self._recent_jobs(limit=5),
+            "recent_sessions": self._recent_sessions(limit=5),
             "evidence_context": evidence_context,
             "state": self.state,
             "available_tools": self.tools.available(),
@@ -377,7 +382,7 @@ class AgentKernel:
         command = text.lstrip("/").strip()
         if command in {"help", "?"}:
             return self.composer.compose(
-                "Commands: /help, /status, /memory, /remember <text>, /mode <chat|analysis|execute|review|setup>, /provider, /audit, /tools, /trace, /exit",
+                "Commands: /help, /status, /memory, /remember <text>, /mode <chat|analysis|execute|review|setup>, /provider, /audit, /dashboard, /tools, /trace, /jobs, /replay [session_id], /exit",
                 route="chat",
                 confidence=1.0,
                 session_id=self.state.session_id,
@@ -458,6 +463,16 @@ class AgentKernel:
                 session_id=self.state.session_id,
                 metadata={"command": "tools", "tool_ok": tool_result.ok},
             )
+        if command == "jobs":
+            tool_result = self.tools.run("recent_jobs")
+            self._record_tool("recent_jobs", tool_result)
+            return self.composer.compose(
+                tool_result.output,
+                route="operation",
+                confidence=1.0,
+                session_id=self.state.session_id,
+                metadata={"command": "jobs", "tool_ok": tool_result.ok},
+            )
         if command == "trace":
             tool_result = self.tools.run("session_trace")
             self._record_tool("session_trace", tool_result)
@@ -467,6 +482,19 @@ class AgentKernel:
                 confidence=1.0,
                 session_id=self.state.session_id,
                 metadata={"command": "trace", "tool_ok": tool_result.ok},
+            )
+        if command.startswith("replay"):
+            parts = command.split(" ", 1)
+            target_session = parts[1].strip() if len(parts) > 1 and parts[1].strip() else self.state.session_id
+            replay_text = self.runtime_service.replay_session(target_session)
+            if not replay_text:
+                replay_text = "No session trace available."
+            return self.composer.compose(
+                replay_text,
+                route="operation",
+                confidence=1.0,
+                session_id=self.state.session_id,
+                metadata={"command": "replay", "target_session": target_session},
             )
         if command == "exit":
             return self.composer.compose(
@@ -567,6 +595,31 @@ class AgentKernel:
             return []
         return []
 
+    def _recent_jobs(self, limit: int = 5) -> list[dict[str, Any]]:
+        try:
+            return [
+                {
+                    "job_id": job.job_id,
+                    "session_id": job.session_id,
+                    "job_type": job.job_type,
+                    "state": job.state,
+                    "source_file": job.source_file,
+                    "source_path": job.source_path,
+                    "retry_count": job.retry_count,
+                    "error_message": job.error_message,
+                    "metadata": job.metadata,
+                }
+                for job in self.runtime_service.recent_jobs(limit=limit)
+            ]
+        except Exception:
+            return []
+
+    def _recent_sessions(self, limit: int = 5) -> list[dict[str, Any]]:
+        try:
+            return self.runtime_service.recent_sessions(limit=limit)
+        except Exception:
+            return []
+
     def _provider_health(self) -> tuple[bool, str]:
         return health_check(self.provider)
 
@@ -622,9 +675,23 @@ class AgentKernel:
             f"Endpoint: {self.provider.base_url}",
             f"Memory: {'on' if get_value(self.settings, 'agent.memory_enabled', True) else 'off'}",
             f"Session: {self.state.session_id}",
+            f"Jobs: {len(self._recent_jobs(limit=3))}",
             f"Provider health: {'OK' if ok else 'FAIL'} — {message}",
         ]
         return ToolResult(name="status_summary", ok=ok, output="\n".join(summary), metadata={"provider_health": message})
+
+    def _tool_recent_jobs(self, limit: int = 5) -> ToolResult:
+        jobs = self._recent_jobs(limit=limit)
+        if not jobs:
+            return ToolResult(name="recent_jobs", ok=True, output="No recent jobs yet.", metadata={"jobs": []})
+
+        lines = ["Recent jobs:"]
+        for job in jobs:
+            lines.append(
+                f"- {job.get('job_id', 'n/a')} | {job.get('job_type', 'n/a')} | {job.get('state', 'n/a')} | "
+                f"{job.get('source_file', 'n/a')} | retry={job.get('retry_count', 0)}"
+            )
+        return ToolResult(name="recent_jobs", ok=True, output="\n".join(lines), metadata={"jobs": jobs})
 
     def _tool_recent_reports(self, limit: int = 5) -> ToolResult:
         reports = self._recent_reports(limit=limit)

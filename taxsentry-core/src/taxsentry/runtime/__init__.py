@@ -5,7 +5,8 @@ from .entrypoints import RuntimeEntrypointSpec, normalize_entrypoint
 from .memory import MemoryManager
 from .policy import PolicyDecision, PolicyGate
 from .router import InteractionRouter, RouteDecision
-from .session import ReplayBundle, RuntimeMessage, RuntimeResponse, RuntimeSession, SessionManager, TraceEnvelope
+from .service import RuntimeEvent, RuntimeEventBus, TaxSentryRuntimeService
+from .session import JobManager, ReplayBundle, RuntimeJob, RuntimeMessage, RuntimeResponse, RuntimeSession, SessionManager, TraceEnvelope
 
 __all__ = [
     "InteractionRouter",
@@ -16,11 +17,16 @@ __all__ = [
     "ResponseComposer",
     "ResponseEnvelope",
     "RouteDecision",
+    "RuntimeEvent",
+    "RuntimeEventBus",
+    "JobManager",
     "RuntimeEntrypointSpec",
+    "RuntimeJob",
     "RuntimeMessage",
     "RuntimeResponse",
     "RuntimeSession",
     "SessionManager",
     "TraceEnvelope",
+    "TaxSentryRuntimeService",
     "normalize_entrypoint",
 ]

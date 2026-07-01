@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from taxsentry.database.db_manager import TaxSentryDBManager
 from taxsentry.database.memory_store import TaxSentryMemoryStore
 from taxsentry.database.session_store import TaxSentrySessionStore
 
@@ -52,6 +53,135 @@ class TraceEnvelope:
     entry_point: str = "unknown"
     mode: str = "unknown"
     title: str | None = None
+
+
+@dataclass
+class RuntimeJob:
+    job_id: str
+    session_id: str | None
+    job_type: str
+    state: str
+    created_at: str
+    updated_at: str
+    source_file: str | None = None
+    source_path: str | None = None
+    email_id: str | None = None
+    event_id: str | None = None
+    trace_id: str | None = None
+    retry_count: int = 0
+    error_message: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class JobManager:
+    """Persist và đọc trạng thái job của runtime."""
+
+    def __init__(self, store: TaxSentryDBManager | None = None):
+        self.store = store or TaxSentryDBManager()
+
+    def start_job(
+        self,
+        *,
+        job_type: str,
+        session_id: str | None = None,
+        state: str = "pending",
+        source_file: str | None = None,
+        source_path: str | None = None,
+        email_id: str | None = None,
+        event_id: str | None = None,
+        trace_id: str | None = None,
+        retry_count: int = 0,
+        metadata: dict[str, Any] | None = None,
+    ) -> RuntimeJob | None:
+        job_id = self.store.log_job(
+            job_type=job_type,
+            session_id=session_id,
+            state=state,
+            source_file=source_file,
+            source_path=source_path,
+            email_id=email_id,
+            event_id=event_id,
+            trace_id=trace_id,
+            retry_count=retry_count,
+            metadata=metadata or {},
+        )
+        if not job_id:
+            return None
+        return self.get_job(job_id)
+
+    def update_job_state(
+        self,
+        job_id: str,
+        state: str,
+        *,
+        retry_count: int | None = None,
+        error_message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        source_file: str | None = None,
+        source_path: str | None = None,
+        email_id: str | None = None,
+        event_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> bool:
+        return self.store.update_job_state(
+            job_id,
+            state,
+            retry_count=retry_count,
+            error_message=error_message,
+            metadata=metadata,
+            source_file=source_file,
+            source_path=source_path,
+            email_id=email_id,
+            event_id=event_id,
+            trace_id=trace_id,
+        )
+
+    def get_job(self, job_id: str) -> RuntimeJob | None:
+        row = self.store.get_job(job_id)
+        if not row:
+            return None
+        return RuntimeJob(
+            job_id=str(row.get("job_id") or job_id),
+            session_id=row.get("session_id"),
+            job_type=str(row.get("job_type") or "unknown"),
+            state=str(row.get("state") or "pending"),
+            created_at=str(row.get("created_at") or datetime.now(timezone.utc).isoformat()),
+            updated_at=str(row.get("updated_at") or datetime.now(timezone.utc).isoformat()),
+            source_file=row.get("source_file"),
+            source_path=row.get("source_path"),
+            email_id=row.get("email_id"),
+            event_id=row.get("event_id"),
+            trace_id=row.get("trace_id"),
+            retry_count=int(row.get("retry_count") or 0),
+            error_message=row.get("error_message"),
+            metadata=dict(row.get("metadata") or {}),
+        )
+
+    def get_recent_jobs(self, limit: int = 5) -> list[RuntimeJob]:
+        return [job for row in self.store.get_recent_jobs(limit=limit) if (job := self._row_to_job(row))]
+
+    def get_jobs_for_session(self, session_id: str) -> list[RuntimeJob]:
+        return [job for row in self.store.get_jobs_for_session(session_id) if (job := self._row_to_job(row))]
+
+    def _row_to_job(self, row: dict[str, Any]) -> RuntimeJob | None:
+        if not row:
+            return None
+        return RuntimeJob(
+            job_id=str(row.get("job_id") or ""),
+            session_id=row.get("session_id"),
+            job_type=str(row.get("job_type") or "unknown"),
+            state=str(row.get("state") or "pending"),
+            created_at=str(row.get("created_at") or datetime.now(timezone.utc).isoformat()),
+            updated_at=str(row.get("updated_at") or datetime.now(timezone.utc).isoformat()),
+            source_file=row.get("source_file"),
+            source_path=row.get("source_path"),
+            email_id=row.get("email_id"),
+            event_id=row.get("event_id"),
+            trace_id=row.get("trace_id"),
+            retry_count=int(row.get("retry_count") or 0),
+            error_message=row.get("error_message"),
+            metadata=dict(row.get("metadata") or {}),
+        )
 
 
 @dataclass
@@ -411,9 +541,11 @@ class MemoryManager:
 
 __all__ = [
     "ReplayBundle",
+    "RuntimeJob",
     "RuntimeMessage",
     "RuntimeResponse",
     "RuntimeSession",
+    "JobManager",
     "SessionManager",
     "TraceEnvelope",
     "MemoryManager",

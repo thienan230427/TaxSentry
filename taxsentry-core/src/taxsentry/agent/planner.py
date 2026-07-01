@@ -47,6 +47,8 @@ class AgentPlanner:
             add("provider_health", "Check provider")
         if any(keyword in text for keyword in ("report", "báo cáo", "log", "file")):
             add("recent_reports", "Inspect reports", limit=3)
+        if any(keyword in text for keyword in ("job", "jobs", "state", "trạng thái job")):
+            add("recent_jobs", "Inspect jobs", limit=5)
         if any(keyword in text for keyword in ("excel", "sheet", "workbook", "parse")):
             add("parse_workbook", "Parse workbook")
         if any(keyword in text for keyword in ("pdf", "export", "generate pdf")):
@@ -55,7 +57,7 @@ class AgentPlanner:
             add("send_email", "Send email report")
         if any(keyword in text for keyword in ("telegram", "notify", "bot")):
             add("send_telegram", "Push Telegram alert")
-        if any(keyword in text for keyword in ("trace", "session", "timeline")):
+        if any(keyword in text for keyword in ("trace", "session", "timeline", "replay")):
             add("session_trace", "Inspect trace bundle")
         if any(keyword in text for keyword in ("audit", "phân tích", "analysis", "kiểm tra", "review")):
             add("run_audit", "Run audit")
