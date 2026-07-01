@@ -1,19 +1,15 @@
-# TaxSentry
+# TaxSentry 1.1.2
 
-TaxSentry is a provider-first local AI agent with a guided setup wizard, persistent memory, and a polished terminal UI.
+TaxSentry is a provider-first local AI agent for tax and finance workflows.
+It combines a guided onboarding flow, a Hermes-style terminal cockpit, durable local memory, and service tooling for running the Telegram bot runtime in the background.
 
-It is designed to make the first run feel simple: choose a provider, confirm the model, and launch into a usable workflow without fighting a wall of flags.
+## What It Does
 
-## Highlights
-
-- Provider-first onboarding with clear setup cards
-- Persistent local memory for durable facts and recent sessions
-- Cross-platform terminal UI for Windows, macOS, and Linux
-- Flexible provider support:
-  - LM Studio
-  - OpenAI Codex OAuth
-  - Any OpenAI-compatible endpoint
-- Safe, inspectable runtime files stored under your local TaxSentry home directory
+- Guides first-time setup with a friendly provider selection flow
+- Runs a focused agent cockpit in the terminal
+- Keeps memory, sessions, and artifacts local and inspectable
+- Supports LM Studio, Codex OAuth, and OpenAI-compatible providers
+- Exposes safe CLI commands for status, repair, reconfigure, and service management
 
 ## Installation
 
@@ -27,106 +23,153 @@ npm install -g taxsentry@latest
 
 ```bash
 npm install
-npm run start
+npm run test
 ```
 
-If this is the first launch, TaxSentry will guide you through setup automatically.
+If you are running the repository locally, the CLI will use the Python core under `taxsentry-core/`.
 
-## First-time setup
+## First Run
 
 ```bash
 taxsentry setup
 ```
 
-You can reset and reconfigure later if needed:
+If you need to rebuild the local profile from scratch:
 
 ```bash
-taxsentry setup --reset
+taxsentry reset-profile
 ```
 
-## Command reference
+If you only want to rerun onboarding while keeping the existing local profile:
 
-| Command | Description |
+```bash
+taxsentry reconfigure
+```
+
+## CLI Reference
+
+### Core commands
+
+| Command | What it does |
 | --- | --- |
-| `taxsentry start` | Open the interactive TUI in the foreground |
-| `taxsentry up` | Start the background agent in service mode |
-| `taxsentry stop` | Stop the background agent |
+| `taxsentry setup` | Install runtime dependencies and run the first-time onboarding wizard |
+| `taxsentry start` | Open the interactive Hermes-style agent cockpit |
 | `taxsentry status` | Show the current configuration and provider health |
 | `taxsentry doctor` | Run a runtime health check |
-| `taxsentry update` | Refresh runtime config only |
-| `taxsentry update --self` | Install `taxsentry@latest` from npm, then refresh runtime config |
+| `taxsentry reconfigure` | Re-run onboarding without wiping existing secrets |
+| `taxsentry reset-profile` | Reset the local profile and rerun onboarding from scratch |
+| `taxsentry update` | Refresh runtime config, or self-update the installed package with `--self` |
 | `taxsentry auth codex` | Link the current configuration to Codex OAuth |
-| `taxsentry config` | Print the current saved configuration |
-| `taxsentry banner` | Show the TaxSentry wordmark |
+| `taxsentry up` | Start the background agent process |
+| `taxsentry stop` | Stop the background agent process |
+| `taxsentry config` | Print the saved configuration |
 
-### Practical usage flow
-
-```bash
-taxsentry setup
-# or, after installing from npm:
-taxsentry start
-```
-
-If you publish a new version to npm and want existing installs to update themselves:
-
-```bash
-taxsentry update --self
-```
-
-If you only want to refresh local config without changing the installed package:
+### Update commands
 
 ```bash
 taxsentry update
+taxsentry update --self
+taxsentry update --config-only
+taxsentry update --package-spec taxsentry@latest
 ```
 
-## Provider options
+### Service commands
+
+`taxsentry service` manages the Telegram bot service artifacts and OS registration.
+
+| Command | What it does |
+| --- | --- |
+| `taxsentry service` | Show service status |
+| `taxsentry service status` | Show service artifact and registration status |
+| `taxsentry service install` | Generate the platform-specific service artifact |
+| `taxsentry service apply` | Apply the generated service artifact to the host OS |
+| `taxsentry service start` | Start the registered OS service |
+| `taxsentry service stop` | Stop the registered OS service |
+| `taxsentry service restart` | Restart the registered OS service |
+| `taxsentry service remove` | Remove the OS registration for the service |
+| `taxsentry service remove --purge-artifacts` | Remove OS registration and delete generated service files |
+| `taxsentry service logs -n 100` | Show the latest service logs |
+
+## Agent Slash Commands
+
+Inside the agent cockpit, these slash commands are available:
+
+- `/help`
+- `/status`
+- `/memory`
+- `/remember <text>`
+- `/mode <chat|analysis|execute|review|setup>`
+- `/provider`
+- `/audit`
+- `/tools`
+- `/trace`
+- `/exit`
+
+## Provider Options
 
 ### LM Studio
 
 Recommended for local-first usage.
 
 - Base URL: `http://localhost:1234/v1`
-- Model: any model available in LM Studio
-- API key: usually blank for local servers
+- Model: any model exposed by LM Studio
+- API key: usually blank
 
-### OpenAI Codex OAuth
+### Codex OAuth
 
-If Codex is already authenticated on the machine, TaxSentry can reuse that login and talk to the OpenAI API through OAuth-backed credentials.
+If Codex is already authenticated on the machine, TaxSentry can reuse that login.
 
 ### Custom endpoint
 
-Use any OpenAI-compatible provider by supplying:
+Use any OpenAI-compatible provider by setting:
 
 - Base URL
 - API key
 - Model name
 
-## Memory
+## Runtime Files
 
-TaxSentry stores durable facts and recent turns under `~/.taxsentry/memory/`.
+TaxSentry keeps its runtime state under your local TaxSentry home directory.
 
-The memory layer is intentionally simple and inspectable:
+Typical files include:
 
-- recent facts are persisted
-- recent turns are stored per session
-- prompts include a compact memory context
+- config JSON
+- `.env`
+- memory database
+- session traces
+- generated service artifacts
 
-## Project layout
+These files are designed to stay local and inspectable.
 
-- `bin/taxsentry.js` — CLI entrypoint and help text
-- `src/` — Node orchestration, setup, launcher, and configuration logic
-- `taxsentry-core/src/taxsentry/` — Python runtime, memory store, provider abstraction, and TUI
+## Project Layout
 
-## Publishing notes
+- `bin/` - Node CLI entrypoint
+- `src/` - Node orchestration, onboarding, service helpers, and config
+- `taxsentry-core/src/taxsentry/` - Python runtime, agent kernel, memory, and TUI
+- `tests/` - Node-level smoke and regression tests
+- `taxsentry-core/tests/` - Python-level regression tests
 
-The package is prepared for npm publishing and includes smoke tests that verify the tarball contents and the absence of secret files.
+## Verification
 
-For a release workflow, the typical order is:
+Common checks:
 
-1. Update the code and documentation
-2. Run the test and lint checks
-3. Publish to npm
-4. Ask users to run `taxsentry update --self` to pull the latest release
+```bash
+npm test
+npm run lint
+```
+
+Python core checks:
+
+```bash
+cd taxsentry-core
+python -m pytest tests
+```
+
+## Notes
+
+- `taxsentry start` is the main interactive entrypoint.
+- `taxsentry update --self` is the supported self-update path for published npm installs.
+- The `service` command family is focused on the Telegram bot runtime and OS registration.
 
 ## License
 

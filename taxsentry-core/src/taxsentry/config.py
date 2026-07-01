@@ -22,7 +22,7 @@ MEMORY_DB = Path(os.getenv("TAXSENTRY_MEMORY_DB", MEMORY_DIR / "memory.db"))
 SESSION_FILE = Path(os.getenv("TAXSENTRY_SESSION_FILE", MEMORY_DIR / "sessions.jsonl"))
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": "1.0.0",
+    "version": "1.1.2",
     "configured": False,
     "agent": {
         "name": "TaxSentry",

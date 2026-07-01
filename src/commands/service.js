@@ -23,7 +23,7 @@ import { info, success, warn } from '../utils/logger.js';
 function resolveAdminChatId() {
   if (!isConfigured()) return '';
   const config = loadConfig();
-  return getValue(config, 'telegram', 'adminChatId') || '';
+  return getValue(config, 'integrations', 'telegram')?.adminChatId || '';
 }
 
 export function showServiceStatus(serviceName = 'telegram_bot') {
@@ -58,7 +58,7 @@ export function showServiceStatus(serviceName = 'telegram_bot') {
 export function installServiceCommand(serviceName = 'telegram_bot') {
   const adminChatId = resolveAdminChatId();
   if (!adminChatId) {
-    warn('Chưa tìm thấy Admin Chat ID trong cấu hình. Artifact vẫn sẽ được tạo nhưng command bot sẽ thiếu tham số runtime cụ thể.');
+    warn('Chưa tìm thấy Admin Chat ID trong cấu hình. Artifact vẫn sẽ được tạo nhưng service runtime sẽ thiếu tham số chat cụ thể.');
   }
 
   const result = installServiceArtifacts(serviceName, adminChatId);
@@ -83,7 +83,7 @@ export function installServiceCommand(serviceName = 'telegram_bot') {
 export function applyServiceCommand(serviceName = 'telegram_bot') {
   const adminChatId = resolveAdminChatId();
   if (!adminChatId) {
-    warn('Chưa tìm thấy Admin Chat ID trong cấu hình. Service vẫn sẽ được apply nhưng command bot có thể thiếu tham số runtime cụ thể.');
+    warn('Chưa tìm thấy Admin Chat ID trong cấu hình. Service vẫn sẽ được apply nhưng runtime có thể thiếu tham số chat cụ thể.');
   }
 
   const result = applyServiceDefinition(serviceName, adminChatId);
@@ -167,20 +167,6 @@ export function removeServiceCommand(serviceName = 'telegram_bot', purgeArtifact
   if (purgeArtifacts) {
     const purge = uninstallServiceArtifacts(serviceName);
     console.log(chalk.dim(`   Xóa artifact local: ${purge.removed ? 'Thành công' : 'Chưa xác nhận'}`));
-  }
-  console.log();
-}
-
-export function uninstallServiceCommand(serviceName = 'telegram_bot') {
-  const result = uninstallServiceArtifacts(serviceName);
-  if (result.removed) {
-    success(`Đã gỡ artifact service cho ${getServiceLabel(serviceName)}.`);
-  } else {
-    warn(`Không thể xác nhận đã gỡ sạch artifact cho ${getServiceLabel(serviceName)}.`);
-  }
-  console.log(chalk.dim(`   Artifact: ${result.artifactPath}`));
-  if (result.supportScriptPath) {
-    console.log(chalk.dim(`   Script hỗ trợ: ${result.supportScriptPath}`));
   }
   console.log();
 }

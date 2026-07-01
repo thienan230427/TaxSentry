@@ -27,6 +27,20 @@ def test_write_env_file_overwrites_previous_content(tmp_path, monkeypatch):
     assert 'TAXSENTRY_PROVIDER_KIND="lmstudio"' in text
 
 
+def test_python_cli_dispatches_to_tui_and_status(monkeypatch):
+    from taxsentry import tui
+
+    calls = {'tui': 0, 'status': 0}
+
+    monkeypatch.setattr(tui, 'run_tui', lambda: calls.__setitem__('tui', calls['tui'] + 1) or 7)
+    monkeypatch.setattr(tui, 'run_status', lambda: calls.__setitem__('status', calls['status'] + 1) or 3)
+
+    assert tui.main([]) == 7
+    assert tui.main(['status']) == 3
+    assert calls['tui'] == 1
+    assert calls['status'] == 1
+
+
 def test_email_poller_marks_specific_email_ids(tmp_path):
     from taxsentry.core.email_poller import TaxSentryEmailPoller
 

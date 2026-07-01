@@ -12,6 +12,7 @@ export const CONFIG_DIR = join(TAXSENTRY_HOME, "config");
 export const MEMORY_DIR = join(TAXSENTRY_HOME, "memory");
 export const LOGS_DIR = join(TAXSENTRY_HOME, "logs");
 export const RUN_DIR = join(TAXSENTRY_HOME, "run");
+export const SERVICES_DIR = join(TAXSENTRY_HOME, "services");
 export const VENV_DIR = join(TAXSENTRY_HOME, ".venv");
 export const CORE_DIR = join(TAXSENTRY_HOME, "taxsentry-core");
 
@@ -23,7 +24,7 @@ export const PID_FILE = join(RUN_DIR, "taxsentry.pid");
 export const LOG_FILE = join(LOGS_DIR, "taxsentry.log");
 
 export function ensureDirectories() {
-  for (const dir of [TAXSENTRY_HOME, CONFIG_DIR, MEMORY_DIR, LOGS_DIR, RUN_DIR, CORE_DIR]) {
+  for (const dir of [TAXSENTRY_HOME, CONFIG_DIR, MEMORY_DIR, LOGS_DIR, RUN_DIR, SERVICES_DIR, CORE_DIR]) {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
