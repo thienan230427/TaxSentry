@@ -27,6 +27,7 @@ def build_copilot_prompt(
     evidence_context: dict,
     financial_json: Any | None = None,
     memory_context: Any | None = None,
+    tool_context: Any | None = None,
 ) -> str:
     """Build a shared TaxSentry Copilot prompt for chat surfaces.
 
@@ -38,6 +39,7 @@ def build_copilot_prompt(
     financial_json_text = _dump_json(financial_json or {})
     evidence_context_text = _dump_json(evidence_context or {})
     memory_context_text = _dump_json(memory_context or [])
+    tool_context_text = _dump_json(tool_context or [])
 
     return f"""# Vai trò: TaxSentry Copilot đồng hành cùng Sếp {director_name}
 Bạn là trợ lý tài chính-thuế của Sếp {director_name}. Hãy trả lời bằng tiếng Việt thật tự nhiên như một người trợ lý đang nói chuyện trực tiếp với Sếp.
@@ -56,6 +58,9 @@ YÊU CẦU GIỌNG VĂN:
 
 ## Memory / state liên quan:
 {memory_context_text}
+
+## Tool context / kết quả tool-call gần đây:
+{tool_context_text}
 
 ## Trích lục quy định pháp luật Thuế Việt Nam:
 {tax_rules_snippet}

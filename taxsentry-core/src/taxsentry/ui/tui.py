@@ -8,8 +8,9 @@ if __name__ == "__main__" and __package__ is None:
 
 from taxsentry.utils.runtime import bootstrap_into_venv, get_project_root, get_venv_python
 
-# Tự động kích hoạt môi trường ảo nếu cần thiết
-bootstrap_into_venv(["-m", "taxsentry", *sys.argv[1:]])
+if __name__ == "__main__":
+    # Chỉ bootstrap khi chạy trực tiếp file này, tránh nổ khi test/import.
+    bootstrap_into_venv(["-m", "taxsentry", *sys.argv[1:]])
 
 # Tiến hành import các thư viện sau khi đã chắc chắn chạy trong môi trường ảo
 import json
