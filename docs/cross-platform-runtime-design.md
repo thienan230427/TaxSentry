@@ -54,9 +54,11 @@ TaxSentry should keep OS-sensitive logic behind adapters/helpers:
 
 ### Already changed in repo
 - Added `taxsentry.utils.runtime` as shared cross-platform bootstrap helper.
+- Consolidated the interactive surface into:
+  - `taxsentry/tui.py` as the CLI dispatcher
+  - `taxsentry/ui/hermes_shell.py` as the agent cockpit
 - Replaced duplicated Windows-first venv bootstrap logic in:
   - `taxsentry/__main__.py`
-  - `taxsentry/ui/tui.py`
   - `taxsentry/bot/telegram_bot.py`
 - Updated Node launcher to build `PYTHONPATH` using `path.delimiter` instead of Windows-only `;`.
 - Removed hardcoded parser sample output/input paths in `excel_parser.py`; now uses config path constants.

@@ -245,7 +245,7 @@ class TaxSentryParser:
         self.document_types = list(dict.fromkeys([r["type"] for r in reports if r.get("type")]))
         self.assumptions = self._collect_assumptions(reports)
         self.canonical_metrics = self._derive_canonical_metrics(reports)
-        self._populate_legacy_income_statement(reports)
+        self._populate_income_statement_fallback(reports)
         self.analysis = {
             "document_types": self.document_types,
             "sheet_reports": self.sheet_reports,
@@ -661,7 +661,7 @@ class TaxSentryParser:
             }
         return canonical
 
-    def _populate_legacy_income_statement(self, reports):
+    def _populate_income_statement_fallback(self, reports):
         self.is_data = {"T4": {}, "T5": {}, "notes": {}}
 
         best_report = None

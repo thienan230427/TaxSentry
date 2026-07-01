@@ -12,7 +12,7 @@ CURRENT_FILE = Path(__file__).resolve()
 BASE_DIR = CURRENT_FILE.parent.parent.parent.parent
 BASE_DIR = BASE_DIR.resolve()
 
-# Fallback for legacy execution (if run directly from old path)
+# Compatibility fallback when the core is executed from an unpacked helper path.
 if not (BASE_DIR / "pyproject.toml").exists() and not (BASE_DIR / "requirements.txt").exists():
     # Use home directory as fallback (KHÔNG HARDCODE path cụ thể)
     fallback_dir = Path.home() / ".taxsentry" / "taxsentry-core"

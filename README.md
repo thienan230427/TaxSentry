@@ -49,7 +49,7 @@ taxsentry setup --reset
 | Command | Description |
 | --- | --- |
 | `taxsentry start` | Open the interactive TUI in the foreground |
-| `taxsentry up` | Start the background agent, kept as a legacy/background mode |
+| `taxsentry up` | Start the background agent in service mode |
 | `taxsentry stop` | Stop the background agent |
 | `taxsentry status` | Show the current configuration and provider health |
 | `taxsentry doctor` | Run a runtime health check |

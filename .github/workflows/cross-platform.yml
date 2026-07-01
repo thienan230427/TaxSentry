@@ -69,8 +69,11 @@ jobs:
         run: |
           PYTHONPATH=src python -m py_compile \
             src/taxsentry/__main__.py \
+            src/taxsentry/app.py \
+            src/taxsentry/tui.py \
+            src/taxsentry/agent/kernel.py \
+            src/taxsentry/ui/hermes_shell.py \
             src/taxsentry/utils/runtime.py \
-            src/taxsentry/ui/tui.py \
             src/taxsentry/bot/telegram_bot.py \
             src/taxsentry/core/pdf_generator.py \
             src/taxsentry/core/excel_parser.py

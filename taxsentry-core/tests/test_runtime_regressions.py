@@ -8,22 +8,23 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 
-def test_write_env_file_overwrites_blank_values(tmp_path, monkeypatch):
-    from taxsentry.ui import tui
+def test_write_env_file_overwrites_previous_content(tmp_path, monkeypatch):
+    from taxsentry import config
 
     env_path = tmp_path / '.env'
     env_path.write_text('DB_PASS=OLD_DB_SECRET\nEMAIL_PASS=OLD_EMAIL_SECRET\nOTHER=keep\n', encoding='utf-8')
-    monkeypatch.setattr(tui, 'ENV_PATH', env_path)
+    monkeypatch.setitem(config.write_env_file.__globals__, 'ENV_FILE', env_path)
 
-    ok = tui.write_env_file({'DB_PASS': '', 'EMAIL_PASS': '', 'OTHER': 'value'})
-    assert ok is True
+    cfg = config.get_empty_config()
+    cfg['extra_env']['OTHER'] = 'value'
+    written = config.write_env_file(cfg)
+    assert written == env_path
 
     text = env_path.read_text(encoding='utf-8')
     assert 'DB_PASS=OLD_DB_SECRET' not in text
     assert 'EMAIL_PASS=OLD_EMAIL_SECRET' not in text
-    assert 'DB_PASS=' in text
-    assert 'EMAIL_PASS=' in text
-    assert 'OTHER=value' in text
+    assert 'OTHER="value"' in text
+    assert 'TAXSENTRY_PROVIDER_KIND="lmstudio"' in text
 
 
 def test_email_poller_marks_specific_email_ids(tmp_path):

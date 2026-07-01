@@ -25,7 +25,7 @@ program
 Primary commands:
   taxsentry setup   Run the provider-first setup wizard
   taxsentry start   Open the interactive TUI in the foreground
-  taxsentry up      Start the TUI in the background (legacy/background mode)
+  taxsentry up      Start the background agent in service mode
   taxsentry stop    Stop the background agent
   taxsentry status  Show current configuration and provider health
   taxsentry doctor  Check runtime health
@@ -93,7 +93,7 @@ program
 
 program
   .command('up')
-  .description('Start the background agent (legacy; use start for the foreground TUI)')
+  .description('Start the background agent in service mode')
   .action(upCommand);
 
 program
