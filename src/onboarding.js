@@ -109,20 +109,27 @@ function printModelMenu(modelIds, { providerKind, currentModel, fallbackModel })
       : 'Custom endpoint';
   console.log(chalk.cyan(`\n${providerLabel} model menu`));
   console.log(chalk.dim('Chọn bằng số, gõ `c` để nhập tay, hoặc Enter để dùng model đầu tiên.'));
+  console.log(
+    [
+      chalk.blue('[recent]'),
+      chalk.green('[recommended]'),
+      chalk.magenta('[custom]'),
+    ].join(' '),
+  );
   console.log('');
   for (const [index, modelId] of modelIds.entries()) {
-    const badge = modelId === currentModel
-      ? chalk.green('đang dùng')
+    const badge = modelId === currentModel && currentModel
+      ? chalk.blue('recent')
       : index === 0
-        ? chalk.yellow('ưu tiên')
+        ? chalk.green('recommended')
         : '';
     const suffix = badge ? ` ${chalk.dim(`[${badge}]`)}` : '';
     console.log(`${chalk.bold(String(index + 1).padStart(2, '0'))}. ${modelId}${suffix}`);
   }
   if (fallbackModel && !modelIds.includes(fallbackModel)) {
-    console.log(`${chalk.bold(String(modelIds.length + 1).padStart(2, '0'))}. ${fallbackModel} ${chalk.dim('[recommended]')}`);
+    console.log(`${chalk.bold(String(modelIds.length + 1).padStart(2, '0'))}. ${fallbackModel} ${chalk.dim(`[${chalk.green('recommended')}]`)}`);
   }
-  console.log(`${chalk.bold(' c')}. Nhập tên model khác`);
+  console.log(`${chalk.bold(' c')}. ${chalk.magenta('Nhập tên model khác')}`);
   console.log('');
 }
 
