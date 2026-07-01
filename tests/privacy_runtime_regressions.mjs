@@ -75,26 +75,132 @@ async function testConfigRoundTrip() {
 
 async function testOnboardingWritesFriendlyProviderConfig() {
   const onboarding = await freshImport('src/onboarding.js');
-  const promptQueue = [
-    { name: 'name', persona: 'warm, concise, and practical', language: 'vi' },
-    { provider: 'lmstudio' },
-    { baseUrl: 'http://localhost:1234/v1', model: 'google/gemma-4-e4b' },
-    { sessionTitle: 'Sếp session', maxFacts: 20, maxTurns: 8 },
-    { enabled: false },
-  ];
-  const prompt = async () => promptQueue.shift();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, async json() { return {}; } });
 
-  const config = await onboarding.runOnboarding({ resetExisting: true, prompt });
-  assert.equal(config.provider.kind, 'lmstudio');
-  assert.equal(config.provider.model, 'google/gemma-4-e4b');
-  assert.equal(config.agent.language, 'vi');
-  assert.equal(config.memory.maxFacts, 20);
+  try {
+    const promptQueue = [
+      { name: 'name', persona: 'warm, concise, and practical', language: 'vi' },
+      { provider: 'lmstudio' },
+      { baseUrl: 'http://localhost:1234/v1' },
+      { selection: '1' },
+      { sessionTitle: 'Sếp session', maxFacts: 20, maxTurns: 8 },
+      { enabled: false },
+    ];
+    const prompt = async () => promptQueue.shift();
 
-  const envText = readFileSync(join(SHARED_HOME, '.taxsentry', 'taxsentry-core', '.env'), 'utf8');
-  assert.ok(envText.includes('TAXSENTRY_PROVIDER_KIND="lmstudio"'), 'onboarding should persist provider kind');
-  assert.ok(envText.includes('TAXSENTRY_PROVIDER_MODEL="google/gemma-4-e4b"'), 'onboarding should persist model');
+    const config = await onboarding.runOnboarding({ resetExisting: true, prompt });
+    assert.equal(config.provider.kind, 'lmstudio');
+    assert.equal(config.provider.model, 'google/gemma-4-e4b');
+    assert.equal(config.agent.language, 'vi');
+    assert.equal(config.memory.maxFacts, 20);
+
+    const envText = readFileSync(join(SHARED_HOME, '.taxsentry', 'taxsentry-core', '.env'), 'utf8');
+    assert.ok(envText.includes('TAXSENTRY_PROVIDER_KIND="lmstudio"'), 'onboarding should persist provider kind');
+    assert.ok(envText.includes('TAXSENTRY_PROVIDER_MODEL="google/gemma-4-e4b"'), 'onboarding should persist model');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+async function testOnboardingCanPickModelFromList() {
+  const onboarding = await freshImport('src/onboarding.js');
+  const originalFetch = globalThis.fetch;
+  const fetchedUrls = [];
+  globalThis.fetch = async (url) => {
+    fetchedUrls.push(String(url));
+    return {
+      ok: true,
+      async json() {
+        return {
+          data: [
+            { id: 'gpt-4.1' },
+            { id: 'gpt-4.1-mini' },
+          ],
+        };
+      },
+    };
+  };
+
+  try {
+    const promptQueue = [
+      { name: 'name', persona: 'warm, concise, and practical', language: 'vi' },
+      { provider: 'custom' },
+      { baseUrl: 'https://example.invalid/v1', apiKey: 'sk-test' },
+      { selection: '1' },
+      { sessionTitle: 'Sếp session', maxFacts: 20, maxTurns: 8 },
+      { enabled: false },
+    ];
+    const prompt = async () => promptQueue.shift();
+
+    const config = await onboarding.runOnboarding({ resetExisting: true, prompt });
+    assert.equal(config.provider.kind, 'custom');
+    assert.equal(config.provider.model, 'gpt-4.1-mini');
+    assert.ok(fetchedUrls.some((url) => url.endsWith('/models')), 'onboarding should fetch model list from the provider');
+
+    const secondPromptQueue = [
+      { name: 'name', persona: 'warm, concise, and practical', language: 'vi' },
+      { provider: 'custom' },
+      { baseUrl: 'https://example.invalid/v1', apiKey: 'sk-test' },
+      { selection: 'c' },
+      { model: 'phi-4' },
+      { sessionTitle: 'Sếp session', maxFacts: 20, maxTurns: 8 },
+      { enabled: false },
+    ];
+    const secondPrompt = async () => secondPromptQueue.shift();
+    const secondConfig = await onboarding.runOnboarding({ resetExisting: true, prompt: secondPrompt });
+    assert.equal(secondConfig.provider.model, 'phi-4', 'custom model shortcut should allow manual entry from the menu');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+async function testOnboardingPrefersRememberedModelOnReconfigure() {
+  const configMod = await freshImport('src/config.js');
+  const onboarding = await freshImport('src/onboarding.js');
+  const { getEmptyConfig, saveConfig, writeEnvFile } = configMod;
+
+  const seeded = getEmptyConfig();
+  seeded.provider.kind = 'custom';
+  seeded.provider.authMode = 'api_key';
+  seeded.provider.baseUrl = 'https://example.invalid/v1';
+  seeded.provider.model = 'gpt-4.1';
+  saveConfig(seeded);
+  writeEnvFile(seeded);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {
+        data: [
+          { id: 'gpt-4.1-mini' },
+          { id: 'claude-3-5-sonnet' },
+        ],
+      };
+    },
+  });
+
+  try {
+    const promptQueue = [
+      { name: 'name', persona: 'warm, concise, and practical', language: 'vi' },
+      { provider: 'custom' },
+      { baseUrl: 'https://example.invalid/v1', apiKey: 'sk-test' },
+      { selection: '1' },
+      { sessionTitle: 'Sếp session', maxFacts: 20, maxTurns: 8 },
+      { enabled: false },
+    ];
+    const prompt = async () => promptQueue.shift();
+
+    const config = await onboarding.runOnboarding({ resetExisting: false, prompt });
+    assert.equal(config.provider.model, 'gpt-4.1', 'reconfigure should keep the remembered model at the top of the menu');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 await testConfigRoundTrip();
 await testOnboardingWritesFriendlyProviderConfig();
+await testOnboardingCanPickModelFromList();
+await testOnboardingPrefersRememberedModelOnReconfigure();
 rmSync(SHARED_HOME, { recursive: true, force: true });

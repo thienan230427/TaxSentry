@@ -5,6 +5,15 @@ import inquirer from 'inquirer';
 import { loadCodexAuth, redactCodexAuthSummary } from './utils/codex-auth.js';
 import { describeConfig, getEmptyConfig, loadConfig, saveConfig, setValue, writeEnvFile } from './config.js';
 
+const MODEL_PICKER_LIMIT = 24;
+const MODEL_FETCH_TIMEOUT_MS = 2500;
+
+const MODEL_SUGGESTIONS = {
+  lmstudio: ['google/gemma-4-e4b', 'llama-3.1-8b-instruct', 'qwen2.5-coder-7b-instruct'],
+  codex_oauth: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'o4-mini'],
+  custom: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'claude-3-5-sonnet'],
+};
+
 function banner() {
   const text = [
     chalk.bold.cyan('TaxSentry Setup Wizard'),
@@ -47,9 +56,132 @@ function chooseProviderSummary(provider) {
   return 'Custom OpenAI-compatible';
 }
 
+function uniqueStrings(values) {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function resolveModelFallback(providerKind) {
+  const suggestions = MODEL_SUGGESTIONS[providerKind] || MODEL_SUGGESTIONS.custom;
+  return suggestions[0] || 'gpt-4.1-mini';
+}
+
+async function fetchModelIds({ baseUrl, apiKey = '', authMode = '', accessToken = '', fetchImpl = globalThis.fetch } = {}) {
+  if (typeof fetchImpl !== 'function' || !baseUrl) return [];
+
+  let url;
+  try {
+    url = new URL('/models', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString();
+  } catch {
+    return [];
+  }
+
+  const headers = { Accept: 'application/json' };
+  if (authMode === 'codex_oauth' && accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  } else if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  try {
+    const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(MODEL_FETCH_TIMEOUT_MS)
+      : undefined;
+    const response = await fetchImpl(url, { headers, signal });
+    if (!response.ok) return [];
+
+    const payload = await response.json();
+    const rawModels = Array.isArray(payload?.data)
+      ? payload.data.map((item) => item?.id || item?.name || item)
+      : Array.isArray(payload)
+        ? payload
+        : [];
+    return uniqueStrings(rawModels).slice(0, MODEL_PICKER_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function printModelMenu(modelIds, { providerKind, currentModel, fallbackModel }) {
+  const providerLabel = providerKind === 'lmstudio'
+    ? 'LM Studio'
+    : providerKind === 'codex_oauth'
+      ? 'Codex OAuth'
+      : 'Custom endpoint';
+  console.log(chalk.cyan(`\n${providerLabel} model menu`));
+  console.log(chalk.dim('Chọn bằng số, gõ `c` để nhập tay, hoặc Enter để dùng model đầu tiên.'));
+  console.log('');
+  for (const [index, modelId] of modelIds.entries()) {
+    const badge = modelId === currentModel
+      ? chalk.green('đang dùng')
+      : index === 0
+        ? chalk.yellow('ưu tiên')
+        : '';
+    const suffix = badge ? ` ${chalk.dim(`[${badge}]`)}` : '';
+    console.log(`${chalk.bold(String(index + 1).padStart(2, '0'))}. ${modelId}${suffix}`);
+  }
+  if (fallbackModel && !modelIds.includes(fallbackModel)) {
+    console.log(`${chalk.bold(String(modelIds.length + 1).padStart(2, '0'))}. ${fallbackModel} ${chalk.dim('[recommended]')}`);
+  }
+  console.log(`${chalk.bold(' c')}. Nhập tên model khác`);
+  console.log('');
+}
+
+async function promptForCustomModel({ prompt, fallbackModel }) {
+  const answer = await promptText([
+    {
+      type: 'input',
+      name: 'model',
+      message: 'Model name',
+      default: fallbackModel,
+    },
+  ], prompt);
+  return answer.model || fallbackModel;
+}
+
+async function promptForModel({ prompt, providerKind, baseUrl, apiKey, authMode, accessToken, currentModel }) {
+  const fallbackModel = resolveModelFallback(providerKind);
+  const fetchedModels = await fetchModelIds({ baseUrl, apiKey, authMode, accessToken });
+  const preferredModel = currentModel || fallbackModel;
+  const modelIds = uniqueStrings([
+    preferredModel,
+    ...fetchedModels,
+    ...(MODEL_SUGGESTIONS[providerKind] || MODEL_SUGGESTIONS.custom),
+  ]).slice(0, MODEL_PICKER_LIMIT);
+
+  if (modelIds.length === 0) {
+    return promptForCustomModel({ prompt, fallbackModel });
+  }
+
+  printModelMenu(modelIds, { providerKind, currentModel, fallbackModel });
+  const answer = await promptText([
+    {
+      type: 'input',
+      name: 'selection',
+      message: 'Model name',
+      default: '1',
+    },
+  ], prompt);
+
+  const selection = String(answer.selection || '').trim();
+  if (!selection) return modelIds[0] || fallbackModel;
+  if (/^c$/i.test(selection) || /^custom$/i.test(selection)) {
+    return promptForCustomModel({ prompt, fallbackModel });
+  }
+
+  const selectionNumber = Number.parseInt(selection, 10);
+  if (!Number.isNaN(selectionNumber) && selectionNumber >= 1 && selectionNumber <= modelIds.length) {
+    return modelIds[selectionNumber - 1];
+  }
+
+  const matched = modelIds.find((modelId) => modelId.toLowerCase() === selection.toLowerCase());
+  if (matched) return matched;
+  return selection;
+}
+
 export async function runOnboarding({ resetExisting = false, prompt = inquirer.prompt.bind(inquirer) } = {}) {
   const base = resetExisting ? getEmptyConfig() : loadConfig();
   const config = nextConfig(base);
+  const rememberedModel = resetExisting ? '' : config.provider.model || '';
 
   console.log(banner());
   printProviderCards();
@@ -106,39 +238,41 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
         message: 'LM Studio endpoint',
         default: config.provider.baseUrl || 'http://localhost:1234/v1',
       },
-      {
-        type: 'input',
-        name: 'model',
-        message: 'Model name',
-        default: config.provider.model || 'google/gemma-4-e4b',
-      },
     ], prompt);
     setValue(config, 'provider', 'kind', 'lmstudio');
     setValue(config, 'provider', 'authMode', 'lmstudio');
     setValue(config, 'provider', 'baseUrl', answer.baseUrl || 'http://localhost:1234/v1');
-    setValue(config, 'provider', 'model', answer.model || 'google/gemma-4-e4b');
+    const model = await promptForModel({
+      prompt,
+      providerKind: 'lmstudio',
+      baseUrl: config.provider.baseUrl || answer.baseUrl || 'http://localhost:1234/v1',
+      authMode: 'lmstudio',
+      currentModel: rememberedModel,
+    });
+    setValue(config, 'provider', 'model', model);
     setValue(config, 'provider', 'apiKey', '');
   } else if (providerChoice.provider === 'codex_oauth') {
     let codexSummary = '';
+    let codexAuth = null;
     try {
-      const auth = loadCodexAuth();
-      codexSummary = JSON.stringify(redactCodexAuthSummary(auth));
+      codexAuth = loadCodexAuth();
+      codexSummary = JSON.stringify(redactCodexAuthSummary(codexAuth));
     } catch (error) {
       codexSummary = String(error.message || error);
     }
     console.log(chalk.yellow(`\nCodex OAuth check: ${codexSummary}`));
-    const answer = await promptText([
-      {
-        type: 'input',
-        name: 'model',
-        message: 'Model name',
-        default: config.provider.model || 'gpt-4.1',
-      },
-    ], prompt);
     setValue(config, 'provider', 'kind', 'codex_oauth');
     setValue(config, 'provider', 'authMode', 'codex_oauth');
     setValue(config, 'provider', 'baseUrl', 'https://api.openai.com/v1');
-    setValue(config, 'provider', 'model', answer.model || 'gpt-4.1');
+    const model = await promptForModel({
+      prompt,
+      providerKind: 'codex_oauth',
+      baseUrl: 'https://api.openai.com/v1',
+      authMode: 'codex_oauth',
+      accessToken: codexAuth?.accessToken || '',
+      currentModel: rememberedModel,
+    });
+    setValue(config, 'provider', 'model', model);
     setValue(config, 'provider', 'apiKey', '');
   } else {
     const answer = await promptText([
@@ -154,18 +288,20 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
         message: 'API key',
         default: config.provider.apiKey || '',
       },
-      {
-        type: 'input',
-        name: 'model',
-        message: 'Model name',
-        default: config.provider.model || 'gpt-4.1-mini',
-      },
     ], prompt);
     setValue(config, 'provider', 'kind', 'custom');
     setValue(config, 'provider', 'authMode', 'api_key');
     setValue(config, 'provider', 'baseUrl', answer.baseUrl || 'https://api.openai.com/v1');
     setValue(config, 'provider', 'apiKey', answer.apiKey || '');
-    setValue(config, 'provider', 'model', answer.model || 'gpt-4.1-mini');
+    const model = await promptForModel({
+      prompt,
+      providerKind: 'custom',
+      baseUrl: answer.baseUrl || 'https://api.openai.com/v1',
+      apiKey: answer.apiKey || '',
+      authMode: 'api_key',
+      currentModel: rememberedModel,
+    });
+    setValue(config, 'provider', 'model', model);
   }
 
   const memory = await promptText([
