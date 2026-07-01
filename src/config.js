@@ -32,6 +32,14 @@ const DEFAULT_CONFIG = {
     maxTurns: 12,
     sessionTitle: "TaxSentry session",
   },
+  jobs: {
+    trackingEnabled: true,
+    retryLimit: 2,
+    defaultState: "pending",
+    needsHumanReviewOnMissingData: true,
+    autoSendEmail: true,
+    autoSendTelegram: true,
+  },
   integrations: {
     telegram: {
       enabled: false,
@@ -156,6 +164,14 @@ export function loadConfig() {
     TAXSENTRY_MEMORY_MAX_FACTS: process.env.TAXSENTRY_MEMORY_MAX_FACTS ?? envFileValues.TAXSENTRY_MEMORY_MAX_FACTS,
     TAXSENTRY_MEMORY_MAX_TURNS: process.env.TAXSENTRY_MEMORY_MAX_TURNS ?? envFileValues.TAXSENTRY_MEMORY_MAX_TURNS,
     TAXSENTRY_SESSION_TITLE: process.env.TAXSENTRY_SESSION_TITLE ?? envFileValues.TAXSENTRY_SESSION_TITLE,
+    TAXSENTRY_JOB_TRACKING: process.env.TAXSENTRY_JOB_TRACKING ?? envFileValues.TAXSENTRY_JOB_TRACKING,
+    TAXSENTRY_JOB_RETRY_LIMIT: process.env.TAXSENTRY_JOB_RETRY_LIMIT ?? envFileValues.TAXSENTRY_JOB_RETRY_LIMIT,
+    TAXSENTRY_JOB_DEFAULT_STATE: process.env.TAXSENTRY_JOB_DEFAULT_STATE ?? envFileValues.TAXSENTRY_JOB_DEFAULT_STATE,
+    TAXSENTRY_JOB_NEEDS_HUMAN_REVIEW_ON_MISSING_DATA:
+      process.env.TAXSENTRY_JOB_NEEDS_HUMAN_REVIEW_ON_MISSING_DATA ??
+      envFileValues.TAXSENTRY_JOB_NEEDS_HUMAN_REVIEW_ON_MISSING_DATA,
+    AUTO_SEND_EMAIL: process.env.AUTO_SEND_EMAIL ?? envFileValues.AUTO_SEND_EMAIL,
+    AUTO_SEND_TELEGRAM: process.env.AUTO_SEND_TELEGRAM ?? envFileValues.AUTO_SEND_TELEGRAM,
     TELEGRAM_ENABLED: process.env.TELEGRAM_ENABLED ?? envFileValues.TELEGRAM_ENABLED,
     TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN ?? envFileValues.TELEGRAM_BOT_TOKEN,
     ADMIN_CHAT_ID: process.env.ADMIN_CHAT_ID ?? envFileValues.ADMIN_CHAT_ID,
@@ -176,6 +192,12 @@ export function loadConfig() {
     TAXSENTRY_MEMORY_MAX_FACTS: ["memory", "maxFacts"],
     TAXSENTRY_MEMORY_MAX_TURNS: ["memory", "maxTurns"],
     TAXSENTRY_SESSION_TITLE: ["memory", "sessionTitle"],
+    TAXSENTRY_JOB_TRACKING: ["jobs", "trackingEnabled"],
+    TAXSENTRY_JOB_RETRY_LIMIT: ["jobs", "retryLimit"],
+    TAXSENTRY_JOB_DEFAULT_STATE: ["jobs", "defaultState"],
+    TAXSENTRY_JOB_NEEDS_HUMAN_REVIEW_ON_MISSING_DATA: ["jobs", "needsHumanReviewOnMissingData"],
+    AUTO_SEND_EMAIL: ["jobs", "autoSendEmail"],
+    AUTO_SEND_TELEGRAM: ["jobs", "autoSendTelegram"],
     TELEGRAM_ENABLED: ["integrations", "telegram", "enabled"],
     TELEGRAM_BOT_TOKEN: ["integrations", "telegram", "botToken"],
     ADMIN_CHAT_ID: ["integrations", "telegram", "adminChatId"],
@@ -187,9 +209,21 @@ export function loadConfig() {
     if (raw === undefined || raw === "") continue;
     const path = fieldMap[envName];
     if (!path) continue;
-    if (envName === "TAXSENTRY_MEMORY_ENABLED" || envName === "TELEGRAM_ENABLED" || envName === "TAXSENTRY_SHOW_BANNER") {
+    if (
+      envName === "TAXSENTRY_MEMORY_ENABLED" ||
+      envName === "TELEGRAM_ENABLED" ||
+      envName === "TAXSENTRY_SHOW_BANNER" ||
+      envName === "TAXSENTRY_JOB_TRACKING" ||
+      envName === "TAXSENTRY_JOB_NEEDS_HUMAN_REVIEW_ON_MISSING_DATA" ||
+      envName === "AUTO_SEND_EMAIL" ||
+      envName === "AUTO_SEND_TELEGRAM"
+    ) {
       setByPath(config, path, /^(1|true|yes|on)$/i.test(raw));
-    } else if (envName === "TAXSENTRY_MEMORY_MAX_FACTS" || envName === "TAXSENTRY_MEMORY_MAX_TURNS") {
+    } else if (
+      envName === "TAXSENTRY_MEMORY_MAX_FACTS" ||
+      envName === "TAXSENTRY_MEMORY_MAX_TURNS" ||
+      envName === "TAXSENTRY_JOB_RETRY_LIMIT"
+    ) {
       const parsed = Number.parseInt(raw, 10);
       if (!Number.isNaN(parsed)) setByPath(config, path, parsed);
     } else {
@@ -233,6 +267,12 @@ export function buildEnvLines(config) {
     `TAXSENTRY_MEMORY_MAX_FACTS=${JSON.stringify(String(Number(envValue(config, "memory.maxFacts", memory.maxFacts ?? 50))))}`,
     `TAXSENTRY_MEMORY_MAX_TURNS=${JSON.stringify(String(Number(envValue(config, "memory.maxTurns", memory.maxTurns ?? 12))))}`,
     `TAXSENTRY_SESSION_TITLE=${JSON.stringify(envValue(config, "memory.sessionTitle", memory.sessionTitle || "TaxSentry session"))}`,
+    `TAXSENTRY_JOB_TRACKING=${JSON.stringify(String(Boolean(envValue(config, "jobs.trackingEnabled", true))).toLowerCase())}`,
+    `TAXSENTRY_JOB_RETRY_LIMIT=${JSON.stringify(String(Number(envValue(config, "jobs.retryLimit", 2))))}`,
+    `TAXSENTRY_JOB_DEFAULT_STATE=${JSON.stringify(envValue(config, "jobs.defaultState", "pending"))}`,
+    `TAXSENTRY_JOB_NEEDS_HUMAN_REVIEW_ON_MISSING_DATA=${JSON.stringify(String(Boolean(envValue(config, "jobs.needsHumanReviewOnMissingData", true))).toLowerCase())}`,
+    `AUTO_SEND_EMAIL=${JSON.stringify(String(Boolean(envValue(config, "jobs.autoSendEmail", true))).toLowerCase())}`,
+    `AUTO_SEND_TELEGRAM=${JSON.stringify(String(Boolean(envValue(config, "jobs.autoSendTelegram", true))).toLowerCase())}`,
     `TELEGRAM_ENABLED=${JSON.stringify(String(Boolean(envValue(config, "integrations.telegram.enabled", telegram.enabled || false))).toLowerCase())}`,
     `TELEGRAM_BOT_TOKEN=${JSON.stringify(envValue(config, "integrations.telegram.botToken", telegram.botToken || ""))}`,
     `ADMIN_CHAT_ID=${JSON.stringify(envValue(config, "integrations.telegram.adminChatId", telegram.adminChatId || ""))}`,
@@ -264,6 +304,7 @@ export function describeConfig(config) {
     `Provider: ${config.provider.kind} / ${config.provider.model}`,
     `Endpoint: ${config.provider.baseUrl}`,
     `Memory: ${config.agent.memoryEnabled ? "on" : "off"} · facts=${config.memory.maxFacts} · turns=${config.memory.maxTurns}`,
+    `Jobs: ${config.jobs.trackingEnabled ? "tracking on" : "tracking off"} · retry=${config.jobs.retryLimit} · default=${config.jobs.defaultState} · review=${config.jobs.needsHumanReviewOnMissingData ? "on" : "off"} · email=${config.jobs.autoSendEmail ? "on" : "off"} · telegram=${config.jobs.autoSendTelegram ? "on" : "off"}`,
     `Telegram: ${config.integrations.telegram.enabled ? "enabled" : "disabled"}`,
     `Config file: ${CONFIG_FILE}`,
     `Memory DB: ${MEMORY_DB_FILE}`,

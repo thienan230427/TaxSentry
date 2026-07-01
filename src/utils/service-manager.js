@@ -64,8 +64,8 @@ export function getPlatformServiceProfile() {
   return getServiceProfileForPlatform(process.platform);
 }
 
-export function getServiceAdapter(serviceName) {
-  const profile = getPlatformServiceProfile();
+export function getServiceAdapter(serviceName, platform = process.platform) {
+  const profile = getServiceProfileForPlatform(platform);
   return {
     serviceName,
     runtimeMode: profile.manager,
@@ -80,8 +80,8 @@ export function getServiceAdapter(serviceName) {
   };
 }
 
-export function formatServiceAdapterSummary(serviceName) {
-  const adapter = getServiceAdapter(serviceName);
+export function formatServiceAdapterSummary(serviceName, platform = process.platform) {
+  const adapter = getServiceAdapter(serviceName, platform);
   return `${adapter.runtimeMode} | supervisor: ${adapter.recommendedSupervisor}`;
 }
 
@@ -122,9 +122,9 @@ export function getServiceModuleArgs(serviceName, adminChatId = '') {
   return ['-m', 'taxsentry'];
 }
 
-export function getInstallHintLines(serviceName, artifactPath) {
-  const adapter = getServiceAdapter(serviceName);
-  const appliedName = getAppliedServiceName(serviceName);
+export function getInstallHintLines(serviceName, artifactPath, platform = process.platform) {
+  const adapter = getServiceAdapter(serviceName, platform);
+  const appliedName = getAppliedServiceNameForPlatform(platform, serviceName);
 
   if (adapter.artifactType === 'systemd') {
     return [

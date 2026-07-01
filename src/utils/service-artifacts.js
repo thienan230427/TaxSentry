@@ -238,14 +238,15 @@ export function getAppliedServiceStatus(serviceName) {
   return parseLaunchdListStatusOutput(detail, appliedName);
 }
 
-export function applyServiceDefinition(serviceName, adminChatId = '') {
+export function applyServiceDefinition(serviceName, adminChatId = '', deps = {}) {
+  const exec = deps.runCommand ?? runCommand;
   const installResult = installServiceArtifacts(serviceName, adminChatId);
   const profile = getPlatformServiceProfile();
   const artifactPath = installResult.artifactPath;
   const appliedName = getAppliedServiceName(serviceName);
 
   if (profile.artifactType === 'task-scheduler') {
-    const create = runCommand('schtasks', ['/Create', '/TN', appliedName, '/XML', artifactPath, '/F']);
+    const create = exec('schtasks', ['/Create', '/TN', appliedName, '/XML', artifactPath, '/F']);
     return {
       ok: create.status === 0,
       action: 'register',
@@ -260,8 +261,8 @@ export function applyServiceDefinition(serviceName, adminChatId = '') {
   copyFileSync(artifactPath, targetPath);
 
   if (profile.artifactType === 'systemd') {
-    const reload = runCommand('systemctl', ['--user', 'daemon-reload']);
-    const enable = runCommand('systemctl', ['--user', 'enable', appliedName]);
+    const reload = exec('systemctl', ['--user', 'daemon-reload']);
+    const enable = exec('systemctl', ['--user', 'enable', appliedName]);
     return {
       ok: reload.status === 0 && enable.status === 0,
       action: 'register',
@@ -272,8 +273,8 @@ export function applyServiceDefinition(serviceName, adminChatId = '') {
     };
   }
 
-  const unload = runCommand('launchctl', ['unload', targetPath]);
-  const load = runCommand('launchctl', ['load', targetPath]);
+  const unload = exec('launchctl', ['unload', targetPath]);
+  const load = exec('launchctl', ['load', targetPath]);
   return {
     ok: load.status === 0,
     action: 'register',

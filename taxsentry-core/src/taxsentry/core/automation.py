@@ -3,10 +3,8 @@
 Điều phối toàn bộ quy trình: Quét hòm thư -> Tải file -> Parse dữ liệu -> AI Phân tích -> Tạo PDF -> Gửi Email & Telegram.
 """
 
-import os
 import sys
 import time
-import asyncio
 import inspect
 from datetime import datetime
 from pathlib import Path
@@ -65,7 +63,8 @@ from taxsentry.core.evidence_preview import build_trace_context, build_evidence_
 from taxsentry.config.paths import DOWNLOAD_DIR, JSON_PATH, EVIDENCE_CONTEXT_PATH
 from taxsentry.database import TaxSentryArtifactStore
 from taxsentry.database.session_store import TaxSentrySessionStore
-from taxsentry.runtime.session import SessionManager
+from taxsentry.runtime.session import JobManager, SessionManager
+from taxsentry.core.workflow_service import TaxSentryWorkflowService
 
 # Toàn cục lưu logs hoạt động để main.py hiển thị trên TUI
 AUTOMATION_LOGS = []
@@ -113,6 +112,12 @@ class TaxSentryAutomationWorkflow:
         self.session_store = TaxSentrySessionStore()
         self.session_store.connect()
         self.session_manager = SessionManager(self.session_store)
+        self.job_manager = JobManager()
+        self.workflow_service = TaxSentryWorkflowService(
+            session_manager=self.session_manager,
+            job_manager=self.job_manager,
+            log_callback=log_activity,
+        )
         self.download_dir = DOWNLOAD_DIR
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
@@ -165,6 +170,12 @@ class TaxSentryAutomationWorkflow:
             email_id = file_context.get('email_id') if file_context else None
             trace_context = build_trace_context(source_file=file_path.name, source_path=str(file_path))
             log_activity(f"📂 Đang xử lý tệp tin: '{file_path.name}'...")
+            job = self.workflow_service.create_job_for_file(
+                session_id=session_id,
+                file_path=file_path,
+                file_context=file_context,
+                trace_context=trace_context,
+            )
 
             try:
                 # 3. Phân tích dữ liệu tài chính (Parser)
@@ -182,7 +193,9 @@ class TaxSentryAutomationWorkflow:
                     # Parser mới đọc linh hoạt nhiều workbook; chỉ bỏ qua nếu thật sự không trích xuất được dữ liệu nào.
                     if not parser.has_meaningful_data():
                         log_activity("⚠️ File Excel không có đủ dữ liệu kế toán/tài chính để phân tích. Bỏ qua.")
+                        self.workflow_service.mark_missing_data(session_id=session_id, job=job, file_path=file_path)
                         continue
+                    self.workflow_service.mark_processing(job, phase="excel_parse")
                     _call_with_supported_kwargs(
                         parser.export_json,
                         json_output_path,
@@ -199,11 +212,13 @@ class TaxSentryAutomationWorkflow:
                     db_success = _call_with_supported_kwargs(
                         parser.log_to_database,
                         trace_context=trace_context,
+                        job_id=job.job_id if job else None,
                     )
                 elif is_pdf:
 
                     pdf_parser = TaxSentryPDFParser(str(file_path))
                     if pdf_parser.parse_with_ai():
+                        self.workflow_service.mark_processing(job, phase="pdf_parse")
                         _call_with_supported_kwargs(
                             pdf_parser.export_json,
                             json_output_path,
@@ -213,6 +228,7 @@ class TaxSentryAutomationWorkflow:
                         db_success = _call_with_supported_kwargs(
                             pdf_parser.log_to_database,
                             trace_context=trace_context,
+                            job_id=job.job_id if job else None,
                         )
                     else:
                         raise ValueError("AI không thể đọc hiểu cấu trúc file PDF báo cáo!")
@@ -224,6 +240,7 @@ class TaxSentryAutomationWorkflow:
                     log_activity("✅ Đã chuẩn hóa dữ liệu thành công và lưu vào MySQL Database.")
                 else:
                     log_activity("⚠️ Dữ liệu trích xuất thành công nhưng không thể đồng bộ MySQL DB.")
+                    self.workflow_service.mark_db_failure(session_id=session_id, job=job, file_path=file_path)
                     if email_id:
                         failed_email_ids.add(email_id)
                     continue
@@ -262,7 +279,7 @@ class TaxSentryAutomationWorkflow:
 
                 # 6. Gửi báo cáo PDF qua Email cho Giám đốc
                 log_activity("📧 Đang gửi email đính kèm báo cáo PDF cho Giám đốc...")
-                email_success = self.sender.send_report(str(pdf_report_path), summary_text)
+                email_success = self.workflow_service.send_email_report(self.sender, pdf_report_path, summary_text)
                 if email_success:
                     log_activity("✅ Đã gửi Email báo cáo thành công.")
                 else:
@@ -273,13 +290,10 @@ class TaxSentryAutomationWorkflow:
                 
                 # Để tránh chặn tiến trình chính, chạy async qua loop
                 try:
-                    from taxsentry.bot.telegram_bot import send_active_report_to_director
-                    tele_success = asyncio.run(
-                        send_active_report_to_director(
-                            str(pdf_report_path),
-                            summary_text,
-                            evidence_context_path=str(EVIDENCE_CONTEXT_PATH),
-                        )
+                    tele_success = self.workflow_service.send_telegram_report(
+                        pdf_report_path=pdf_report_path,
+                        summary_text=summary_text,
+                        evidence_context_path=str(EVIDENCE_CONTEXT_PATH),
                     )
                     if tele_success:
                         log_activity("✅ Đã gửi thông báo Telegram thành công.")
@@ -287,6 +301,13 @@ class TaxSentryAutomationWorkflow:
                         log_activity("❌ Gửi thông báo Telegram thất bại.")
                 except Exception as tele_err:
                     log_activity(f"❌ Lỗi tích hợp Telegram: {tele_err}")
+                    self.workflow_service.mark_notification_failure(
+                        session_id=session_id,
+                        job=job,
+                        file_path=file_path,
+                        error=tele_err,
+                        channel="telegram",
+                    )
                     if email_id:
                         failed_email_ids.add(email_id)
                     continue
@@ -294,12 +315,27 @@ class TaxSentryAutomationWorkflow:
                 processed_count += 1
                 if email_id:
                     successful_email_ids.add(email_id)
+                self.workflow_service.mark_completed(
+                    session_id=session_id,
+                    job=job,
+                    file_path=file_path,
+                    pdf_report_path=pdf_report_path,
+                    email_sent=email_success,
+                    telegram_sent=tele_success,
+                )
 
                 log_activity(f"🎉 Hoàn thành xử lý tự động hoàn toàn cho file: '{file_path.name}'!")
 
             except Exception as ex:
                 log_activity(f"❌ Lỗi nghiêm trọng khi xử lý file '{file_path.name}': {ex}")
                 log_activity(f"⚠️ Email này sẽ được QUÉT LẠI ở chu kỳ tiếp theo (chưa đánh dấu processed).")
+                self.workflow_service.mark_notification_failure(
+                    session_id=session_id,
+                    job=job,
+                    file_path=file_path,
+                    error=ex,
+                    channel="exception",
+                )
                 if email_id:
                     failed_email_ids.add(email_id)
 

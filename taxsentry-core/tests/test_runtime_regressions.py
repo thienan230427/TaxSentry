@@ -117,12 +117,7 @@ def test_automation_marks_only_successful_email_ids(tmp_path, monkeypatch):
     workflow = automation.TaxSentryAutomationWorkflow()
     workflow.engine.run_audit = lambda: '# report'
     workflow.sender.send_report = lambda *args, **kwargs: True
-
-    def fake_run(coro):
-        coro.close()
-        return True
-
-    monkeypatch.setattr(automation.asyncio, 'run', fake_run)
+    workflow.workflow_service.send_telegram_report = lambda **kwargs: True
 
     result = workflow.run_once()
 
@@ -324,6 +319,12 @@ def test_config_round_trip_persists_provider_and_memory_settings(tmp_path, monke
         "TAXSENTRY_AI_AUTH_MODE",
         "TAXSENTRY_MEMORY_MAX_FACTS",
         "TAXSENTRY_MEMORY_MAX_TURNS",
+        "TAXSENTRY_JOB_TRACKING",
+        "TAXSENTRY_JOB_RETRY_LIMIT",
+        "TAXSENTRY_JOB_DEFAULT_STATE",
+        "TAXSENTRY_JOB_NEEDS_HUMAN_REVIEW_ON_MISSING_DATA",
+        "AUTO_SEND_EMAIL",
+        "AUTO_SEND_TELEGRAM",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -339,6 +340,12 @@ def test_config_round_trip_persists_provider_and_memory_settings(tmp_path, monke
     config_mod.set_value(config, "provider.api_key", "secret")
     config_mod.set_value(config, "memory.max_facts", 99)
     config_mod.set_value(config, "memory.max_turns", 7)
+    config_mod.set_value(config, "jobs.tracking_enabled", True)
+    config_mod.set_value(config, "jobs.retry_limit", 3)
+    config_mod.set_value(config, "jobs.default_state", "queued")
+    config_mod.set_value(config, "jobs.needs_human_review_on_missing_data", False)
+    config_mod.set_value(config, "jobs.auto_send_email", False)
+    config_mod.set_value(config, "jobs.auto_send_telegram", True)
     config_mod.save_config(config)
 
     reloaded = config_mod.load_config()
@@ -349,3 +356,147 @@ def test_config_round_trip_persists_provider_and_memory_settings(tmp_path, monke
     assert config_mod.get_value(reloaded, "provider.api_key") == ""
     assert config_mod.get_value(reloaded, "memory.max_facts") == 99
     assert config_mod.get_value(reloaded, "memory.max_turns") == 7
+    assert config_mod.get_value(reloaded, "jobs.tracking_enabled") is True
+    assert config_mod.get_value(reloaded, "jobs.retry_limit") == 3
+    assert config_mod.get_value(reloaded, "jobs.default_state") == "queued"
+    assert config_mod.get_value(reloaded, "jobs.needs_human_review_on_missing_data") is False
+    assert config_mod.get_value(reloaded, "jobs.auto_send_email") is False
+    assert config_mod.get_value(reloaded, "jobs.auto_send_telegram") is True
+
+
+def test_job_manager_persists_state_transitions(tmp_path):
+    from taxsentry.database.db_manager import TaxSentryDBManager
+    from taxsentry.runtime.session import JobManager
+
+    db_path = tmp_path / "jobs.sqlite3"
+    store = TaxSentryDBManager(str(db_path))
+    manager = JobManager(store)
+
+    job = manager.start_job(
+        job_type="report_processing",
+        session_id="sess-1",
+        source_file="report.xlsx",
+        source_path="C:/reports/report.xlsx",
+        email_id="email-1",
+        trace_id="trace-1",
+        metadata={"source": "test"},
+    )
+    assert job is not None
+    assert job.state == "pending"
+    assert job.metadata == {"source": "test"}
+
+    ok = manager.update_job_state(
+        job.job_id,
+        "completed",
+        metadata={"source": "test", "phase": "done"},
+    )
+    assert ok is True
+
+    reloaded = manager.get_job(job.job_id)
+    assert reloaded is not None
+    assert reloaded.state == "completed"
+    assert reloaded.metadata == {"source": "test", "phase": "done"}
+    assert reloaded.source_file == "report.xlsx"
+
+    session_jobs = manager.get_jobs_for_session("sess-1")
+    assert len(session_jobs) == 1
+    assert session_jobs[0].job_id == job.job_id
+
+
+def test_runtime_service_replays_sessions_and_jobs(tmp_path):
+    from taxsentry.database.db_manager import TaxSentryDBManager
+    from taxsentry.database.session_store import TaxSentrySessionStore
+    from taxsentry.runtime.service import TaxSentryRuntimeService
+
+    db_path = tmp_path / "service.sqlite3"
+    db_manager = TaxSentryDBManager(str(db_path))
+    session_store = TaxSentrySessionStore(str(db_path))
+    service = TaxSentryRuntimeService(
+        settings={
+            "agent": {"name": "TaxSentry", "persona": "warm, precise, and practical", "language": "vi", "memory_enabled": True},
+            "provider": {"kind": "lmstudio", "base_url": "http://localhost:1234/v1", "model": "google/gemma-4-e4b", "auth_mode": "lmstudio", "api_key": ""},
+            "memory": {"max_facts": 50, "max_turns": 12, "session_title": "TaxSentry session"},
+            "jobs": {"tracking_enabled": True, "retry_limit": 2, "default_state": "pending", "needs_human_review_on_missing_data": True, "auto_send_email": True, "auto_send_telegram": True},
+            "integrations": {"telegram": {"enabled": False, "bot_token": "", "admin_chat_id": ""}},
+            "ui": {"theme": "midnight", "show_banner": True},
+            "extra_env": {},
+        },
+        session_store=session_store,
+        db_manager=db_manager,
+    )
+
+    session = service.session_manager.start_session(entry_point="cli", mode="tui", title="Replay test")
+    job = service.job_manager.start_job(
+        job_type="report_processing",
+        session_id=session.session_id,
+        source_file="replay.xlsx",
+        source_path="C:/reports/replay.xlsx",
+        metadata={"source": "test"},
+    )
+    assert job is not None
+    service.session_manager.record_event(
+        session_id=session.session_id,
+        event_type="job_update",
+        actor="automation",
+        action="mark job completed",
+        result="completed",
+        payload={"job_id": job.job_id},
+    )
+
+    replay = service.replay_session(session.session_id)
+    assert session.session_id in replay
+    assert job.job_id in replay
+    assert "Recent jobs" not in replay or "jobs:" in replay
+
+
+def test_run_replay_prompts_for_recent_session(monkeypatch):
+    from taxsentry import app
+
+    calls = {}
+
+    class FakeService:
+        def __init__(self):
+            pass
+
+        @property
+        def settings(self):
+            return {}
+
+        def recent_sessions(self, limit=10):
+            calls["limit"] = limit
+            return [
+                {"session_id": "sess-1", "mode": "chat", "outcome": "success", "started_at": "2026-07-01T00:00:00"},
+                {"session_id": "sess-2", "mode": "analysis", "outcome": "open", "started_at": "2026-07-01T01:00:00"},
+            ]
+
+        def replay_session(self, session_id):
+            calls["session_id"] = session_id
+            return f"Replay {session_id}"
+
+    monkeypatch.setattr(app, "TaxSentryRuntimeService", FakeService)
+    monkeypatch.setattr(app.Prompt, "ask", lambda *args, **kwargs: "2")
+
+    exit_code = app.run_replay()
+
+    assert exit_code == 0
+    assert calls["limit"] == 10
+    assert calls["session_id"] == "sess-2"
+
+
+def test_run_dashboard_delegates_to_dashboard_view(monkeypatch):
+    from taxsentry import app
+
+    calls = {"run": 0}
+
+    class FakeDashboard:
+        def __init__(self, service=None):
+            self.service = service
+
+        def run(self):
+            calls["run"] += 1
+            return 0
+
+    monkeypatch.setattr(app, "TaxSentryDashboard", FakeDashboard)
+
+    assert app.run_dashboard() == 0
+    assert calls["run"] == 1

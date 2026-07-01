@@ -192,7 +192,7 @@ class TaxSentryPDFParser:
             Path(output_path).write_text(json_str, encoding="utf-8")
         return json_str
 
-    def log_to_database(self) -> bool:
+    def log_to_database(self, trace_context: dict | None = None, job_id: str | None = None) -> bool:
         """Ghi kết quả phân tích vào Database."""
         if not self.parsed_data:
             return False
@@ -239,7 +239,8 @@ class TaxSentryPDFParser:
             net_income=net_income,
             hospitality_no_invoice=no_invoice,
             tax_risk_status=tax_risk_status,
-            status="Processed"
+            status="Processed",
+            job_id=job_id,
         )
         db.close()
         return success

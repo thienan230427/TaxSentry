@@ -158,7 +158,7 @@ class TaxSentryParser:
                 )
         return json_str
 
-    def log_to_database(self, trace_context: dict | None = None) -> bool:
+    def log_to_database(self, trace_context: dict | None = None, job_id: str | None = None) -> bool:
         """Ghi nhận báo cáo đã phân tích vào SQLite Database."""
         import os
         from datetime import datetime
@@ -221,6 +221,7 @@ class TaxSentryParser:
             hospitality_no_invoice=no_invoice,
             tax_risk_status=tax_risk_status,
             status="Processed",
+            job_id=job_id,
             session_id=(trace_context or {}).get("session_id"),
             event_id=(trace_context or {}).get("event_id"),
             trace_id=(trace_context or {}).get("trace_id"),

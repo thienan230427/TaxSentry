@@ -35,6 +35,12 @@ async function testConfigRoundTrip() {
   setValue(cfg, 'provider', 'baseUrl', 'https://example.invalid/v1');
   setValue(cfg, 'provider', 'model', 'gpt-4.1-mini');
   setValue(cfg, 'provider', 'apiKey', 'SECRET_KEY_123');
+  setValue(cfg, 'jobs', 'trackingEnabled', true);
+  setValue(cfg, 'jobs', 'retryLimit', 4);
+  setValue(cfg, 'jobs', 'defaultState', 'queued');
+  setValue(cfg, 'jobs', 'needsHumanReviewOnMissingData', false);
+  setValue(cfg, 'jobs', 'autoSendEmail', false);
+  setValue(cfg, 'jobs', 'autoSendTelegram', true);
   setValue(cfg, 'integrations', 'telegram', {
     enabled: true,
     botToken: 'BOT_SECRET_456',
@@ -50,10 +56,21 @@ async function testConfigRoundTrip() {
   assert.ok(!configText.includes('BOT_SECRET_456'), 'config.json must not store telegram secrets');
   assert.ok(envText.includes('TAXSENTRY_PROVIDER_API_KEY="SECRET_KEY_123"'), '.env must store provider secret');
   assert.ok(envText.includes('TELEGRAM_BOT_TOKEN="BOT_SECRET_456"'), '.env must store telegram secret');
+  assert.ok(envText.includes('TAXSENTRY_JOB_TRACKING="true"'), '.env must store job tracking flag');
+  assert.ok(envText.includes('TAXSENTRY_JOB_RETRY_LIMIT="4"'), '.env must store retry limit');
+  assert.ok(envText.includes('TAXSENTRY_JOB_DEFAULT_STATE="queued"'), '.env must store default job state');
+  assert.ok(envText.includes('AUTO_SEND_EMAIL="false"'), '.env must store email toggle');
+  assert.ok(envText.includes('AUTO_SEND_TELEGRAM="true"'), '.env must store telegram toggle');
 
   const loaded = loadConfig();
   assert.equal(loaded.provider.apiKey, 'SECRET_KEY_123', 'loadConfig should restore provider secret from .env');
   assert.equal(loaded.integrations.telegram.botToken, 'BOT_SECRET_456', 'loadConfig should restore telegram secret from .env');
+  assert.equal(loaded.jobs.trackingEnabled, true, 'loadConfig should restore job tracking flag');
+  assert.equal(loaded.jobs.retryLimit, 4, 'loadConfig should restore job retry limit');
+  assert.equal(loaded.jobs.defaultState, 'queued', 'loadConfig should restore job default state');
+  assert.equal(loaded.jobs.needsHumanReviewOnMissingData, false, 'loadConfig should restore job review flag');
+  assert.equal(loaded.jobs.autoSendEmail, false, 'loadConfig should restore email toggle');
+  assert.equal(loaded.jobs.autoSendTelegram, true, 'loadConfig should restore telegram toggle');
 }
 
 async function testOnboardingWritesFriendlyProviderConfig() {
