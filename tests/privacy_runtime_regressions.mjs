@@ -77,6 +77,11 @@ async function testOnboardingWritesFriendlyProviderConfig() {
   const onboarding = await freshImport('src/onboarding.js');
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: false, async json() { return {}; } });
+  const originalLog = console.log;
+  const capturedLogs = [];
+  console.log = (...args) => {
+    capturedLogs.push(args.map((value) => String(value)).join(' '));
+  };
 
   try {
     const promptQueue = [
@@ -98,8 +103,10 @@ async function testOnboardingWritesFriendlyProviderConfig() {
     const envText = readFileSync(join(SHARED_HOME, '.taxsentry', 'taxsentry-core', '.env'), 'utf8');
     assert.ok(envText.includes('TAXSENTRY_PROVIDER_KIND="lmstudio"'), 'onboarding should persist provider kind');
     assert.ok(envText.includes('TAXSENTRY_PROVIDER_MODEL="google/gemma-4-e4b"'), 'onboarding should persist model');
+    assert.ok(capturedLogs.some((line) => line.includes('[local]') && line.includes('[oauth]') && line.includes('[flex]')), 'provider cockpit should show color legend');
   } finally {
     globalThis.fetch = originalFetch;
+    console.log = originalLog;
   }
 }
 
@@ -155,6 +162,43 @@ async function testOnboardingCanPickModelFromList() {
   }
 }
 
+async function testOnboardingSearchesModelListByKeyword() {
+  const onboarding = await freshImport('src/onboarding.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {
+        data: [
+          { id: 'gpt-4.1' },
+          { id: 'gpt-4.1-mini' },
+          { id: 'gpt-4o-mini' },
+          { id: 'claude-3-5-sonnet' },
+        ],
+      };
+    },
+  });
+
+  try {
+    const promptQueue = [
+      { name: 'name', persona: 'warm, concise, and practical', language: 'vi' },
+      { provider: 'custom' },
+      { baseUrl: 'https://example.invalid/v1', apiKey: 'sk-test' },
+      { selection: 's' },
+      { query: 'mini' },
+      { selection: '1' },
+      { sessionTitle: 'Sếp session', maxFacts: 20, maxTurns: 8 },
+      { enabled: false },
+    ];
+    const prompt = async () => promptQueue.shift();
+
+    const config = await onboarding.runOnboarding({ resetExisting: true, prompt });
+    assert.equal(config.provider.model, 'gpt-4.1-mini', 'search should filter model list by keyword');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 async function testOnboardingPrefersRememberedModelOnReconfigure() {
   const configMod = await freshImport('src/config.js');
   const onboarding = await freshImport('src/onboarding.js');
@@ -202,5 +246,6 @@ async function testOnboardingPrefersRememberedModelOnReconfigure() {
 await testConfigRoundTrip();
 await testOnboardingWritesFriendlyProviderConfig();
 await testOnboardingCanPickModelFromList();
+await testOnboardingSearchesModelListByKeyword();
 await testOnboardingPrefersRememberedModelOnReconfigure();
 rmSync(SHARED_HOME, { recursive: true, force: true });

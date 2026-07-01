@@ -7,6 +7,7 @@ import { describeConfig, getEmptyConfig, loadConfig, saveConfig, setValue, write
 
 const MODEL_PICKER_LIMIT = 24;
 const MODEL_FETCH_TIMEOUT_MS = 2500;
+const MODEL_SEARCH_TRIGGER = 8;
 
 const MODEL_SUGGESTIONS = {
   lmstudio: ['google/gemma-4-e4b', 'llama-3.1-8b-instruct', 'qwen2.5-coder-7b-instruct'],
@@ -25,14 +26,13 @@ function banner() {
 }
 
 function printProviderCards() {
-  const cards = [
-    [chalk.bold('LM Studio'), chalk.green('Local OpenAI-compatible server'), chalk.dim('http://localhost:1234/v1 · zero cloud dependency')],
-    [chalk.bold('OpenAI Codex OAuth'), chalk.yellow('Use existing Codex login'), chalk.dim('Great if the user already authenticated via Codex CLI')],
-    [chalk.bold('Custom endpoint'), chalk.magenta('Any OpenAI-compatible provider'), chalk.dim('Bring your own URL, model, and API key')],
-  ];
+  const cards = ['lmstudio', 'codex_oauth', 'custom'].map((kind) => providerTheme(kind));
+  console.log(chalk.cyan('\nProvider cockpit'));
+  console.log(chalk.dim('Select provider with the arrows, then press Enter to confirm.'));
+  console.log([chalk.green('[local]'), chalk.yellow('[oauth]'), chalk.magenta('[flex]')].join(' '));
   console.log('');
-  for (const [title, subtitle, footer] of cards) {
-    console.log(boxen([title, subtitle, footer].join('\n'), { padding: 1, borderStyle: 'round', borderColor: 'gray' }));
+  for (const card of cards) {
+    console.log(boxen([`${card.badge} ${chalk.bold(card.label)}`, card.accent(card.detail), chalk.dim(card.footer)].join('\n'), { padding: 1, borderStyle: 'round', borderColor: 'gray' }));
   }
 }
 
@@ -54,6 +54,34 @@ function chooseProviderSummary(provider) {
   if (provider.authMode === 'codex_oauth') return 'OpenAI Codex OAuth';
   if (provider.kind === 'lmstudio') return 'LM Studio';
   return 'Custom OpenAI-compatible';
+}
+
+function providerTheme(kind) {
+  if (kind === 'lmstudio') {
+    return {
+      badge: chalk.green('[local]'),
+      accent: chalk.green,
+      label: 'LM Studio',
+      detail: 'Local OpenAI-compatible server',
+      footer: 'http://localhost:1234/v1 · zero cloud dependency',
+    };
+  }
+  if (kind === 'codex_oauth') {
+    return {
+      badge: chalk.yellow('[oauth]'),
+      accent: chalk.yellow,
+      label: 'OpenAI Codex OAuth',
+      detail: 'Use existing Codex login',
+      footer: 'Great if the user already authenticated via Codex CLI',
+    };
+  }
+  return {
+    badge: chalk.magenta('[flex]'),
+    accent: chalk.magenta,
+    label: 'Custom endpoint',
+    detail: 'Any OpenAI-compatible provider',
+    footer: 'Bring your own URL, model, and API key',
+  };
 }
 
 function uniqueStrings(values) {
@@ -108,7 +136,7 @@ function printModelMenu(modelIds, { providerKind, currentModel, fallbackModel })
       ? 'Codex OAuth'
       : 'Custom endpoint';
   console.log(chalk.cyan(`\n${providerLabel} model menu`));
-  console.log(chalk.dim('Chọn bằng số, gõ `c` để nhập tay, hoặc Enter để dùng model đầu tiên.'));
+  console.log(chalk.dim('Chọn bằng số, gõ `s` để tìm, `c` để nhập tay, hoặc Enter để dùng model đầu tiên.'));
   console.log(
     [
       chalk.blue('[recent]'),
@@ -129,6 +157,9 @@ function printModelMenu(modelIds, { providerKind, currentModel, fallbackModel })
   if (fallbackModel && !modelIds.includes(fallbackModel)) {
     console.log(`${chalk.bold(String(modelIds.length + 1).padStart(2, '0'))}. ${fallbackModel} ${chalk.dim(`[${chalk.green('recommended')}]`)}`);
   }
+  if (modelIds.length >= MODEL_SEARCH_TRIGGER) {
+    console.log(chalk.dim('gõ `s` để lọc nhanh theo tên model khi danh sách dài'));
+  }
   console.log(`${chalk.bold(' c')}. ${chalk.magenta('Nhập tên model khác')}`);
   console.log('');
 }
@@ -145,20 +176,19 @@ async function promptForCustomModel({ prompt, fallbackModel }) {
   return answer.model || fallbackModel;
 }
 
-async function promptForModel({ prompt, providerKind, baseUrl, apiKey, authMode, accessToken, currentModel }) {
-  const fallbackModel = resolveModelFallback(providerKind);
-  const fetchedModels = await fetchModelIds({ baseUrl, apiKey, authMode, accessToken });
-  const preferredModel = currentModel || fallbackModel;
-  const modelIds = uniqueStrings([
-    preferredModel,
-    ...fetchedModels,
-    ...(MODEL_SUGGESTIONS[providerKind] || MODEL_SUGGESTIONS.custom),
-  ]).slice(0, MODEL_PICKER_LIMIT);
+async function promptForSearchQuery({ prompt, fallbackQuery = '' }) {
+  const answer = await promptText([
+    {
+      type: 'input',
+      name: 'query',
+      message: 'Search models',
+      default: fallbackQuery,
+    },
+  ], prompt);
+  return String(answer.query || '').trim();
+}
 
-  if (modelIds.length === 0) {
-    return promptForCustomModel({ prompt, fallbackModel });
-  }
-
+async function selectModelFromMenu({ prompt, modelIds, providerKind, currentModel, fallbackModel }) {
   printModelMenu(modelIds, { providerKind, currentModel, fallbackModel });
   const answer = await promptText([
     {
@@ -174,6 +204,25 @@ async function promptForModel({ prompt, providerKind, baseUrl, apiKey, authMode,
   if (/^c$/i.test(selection) || /^custom$/i.test(selection)) {
     return promptForCustomModel({ prompt, fallbackModel });
   }
+  if (/^s$/i.test(selection) || /^search$/i.test(selection)) {
+    const query = await promptForSearchQuery({ prompt, fallbackQuery: fallbackModel });
+    if (!query) {
+      return selectModelFromMenu({ prompt, modelIds, providerKind, currentModel, fallbackModel });
+    }
+
+    const filtered = modelIds.filter((modelId) => modelId.toLowerCase().includes(query.toLowerCase()));
+    if (filtered.length === 0) {
+      console.log(chalk.yellow(`Không tìm thấy model nào khớp "${query}".`));
+      return selectModelFromMenu({ prompt, modelIds, providerKind, currentModel, fallbackModel });
+    }
+    return selectModelFromMenu({
+      prompt,
+      modelIds: filtered,
+      providerKind,
+      currentModel: filtered.includes(currentModel) ? currentModel : '',
+      fallbackModel: filtered.includes(fallbackModel) ? fallbackModel : filtered[0],
+    });
+  }
 
   const selectionNumber = Number.parseInt(selection, 10);
   if (!Number.isNaN(selectionNumber) && selectionNumber >= 1 && selectionNumber <= modelIds.length) {
@@ -183,6 +232,23 @@ async function promptForModel({ prompt, providerKind, baseUrl, apiKey, authMode,
   const matched = modelIds.find((modelId) => modelId.toLowerCase() === selection.toLowerCase());
   if (matched) return matched;
   return selection;
+}
+
+async function promptForModel({ prompt, providerKind, baseUrl, apiKey, authMode, accessToken, currentModel }) {
+  const fallbackModel = resolveModelFallback(providerKind);
+  const fetchedModels = await fetchModelIds({ baseUrl, apiKey, authMode, accessToken });
+  const preferredModel = currentModel || fallbackModel;
+  const modelIds = uniqueStrings([
+    preferredModel,
+    ...fetchedModels,
+    ...(MODEL_SUGGESTIONS[providerKind] || MODEL_SUGGESTIONS.custom),
+  ]).slice(0, MODEL_PICKER_LIMIT);
+
+  if (modelIds.length === 0) {
+    return promptForCustomModel({ prompt, fallbackModel });
+  }
+
+  return selectModelFromMenu({ prompt, modelIds, providerKind, currentModel, fallbackModel });
 }
 
 export async function runOnboarding({ resetExisting = false, prompt = inquirer.prompt.bind(inquirer) } = {}) {
