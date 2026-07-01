@@ -292,3 +292,45 @@ def test_config_package_reexports_implementation():
     assert callable(describe_config)
     assert callable(get_value)
     assert isinstance(describe_config(config), str)
+
+
+def test_config_round_trip_persists_provider_and_memory_settings(tmp_path, monkeypatch):
+    import importlib
+    import sys
+
+    monkeypatch.setenv("TAXSENTRY_HOME", str(tmp_path / ".taxsentry"))
+    monkeypatch.setenv("TAXSENTRY_CONFIG_FILE", str(tmp_path / "config.json"))
+    monkeypatch.setenv("TAXSENTRY_MEMORY_DB", str(tmp_path / "memory.db"))
+    for key in [
+        "TAXSENTRY_PROVIDER_KIND",
+        "TAXSENTRY_PROVIDER_URL",
+        "TAXSENTRY_PROVIDER_MODEL",
+        "TAXSENTRY_PROVIDER_API_KEY",
+        "TAXSENTRY_AI_AUTH_MODE",
+        "TAXSENTRY_MEMORY_MAX_FACTS",
+        "TAXSENTRY_MEMORY_MAX_TURNS",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    sys.modules.pop("taxsentry.config", None)
+    sys.modules.pop("taxsentry._config_impl", None)
+    config_mod = importlib.import_module("taxsentry.config")
+
+    config = config_mod.load_config()
+    config_mod.set_value(config, "provider.kind", "custom")
+    config_mod.set_value(config, "provider.base_url", "http://localhost:9999/v1")
+    config_mod.set_value(config, "provider.model", "gpt-4.1-mini")
+    config_mod.set_value(config, "provider.auth_mode", "api_key")
+    config_mod.set_value(config, "provider.api_key", "secret")
+    config_mod.set_value(config, "memory.max_facts", 99)
+    config_mod.set_value(config, "memory.max_turns", 7)
+    config_mod.save_config(config)
+
+    reloaded = config_mod.load_config()
+    assert config_mod.get_value(reloaded, "provider.kind") == "custom"
+    assert config_mod.get_value(reloaded, "provider.base_url") == "http://localhost:9999/v1"
+    assert config_mod.get_value(reloaded, "provider.model") == "gpt-4.1-mini"
+    assert config_mod.get_value(reloaded, "provider.auth_mode") == "api_key"
+    assert config_mod.get_value(reloaded, "provider.api_key") == ""
+    assert config_mod.get_value(reloaded, "memory.max_facts") == 99
+    assert config_mod.get_value(reloaded, "memory.max_turns") == 7
