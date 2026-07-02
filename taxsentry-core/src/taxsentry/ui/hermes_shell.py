@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,12 +17,14 @@ try:
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
     from prompt_toolkit.completion import WordCompleter
     from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import CompleteStyle
 except Exception:  # pragma: no cover - graceful fallback if dependency is missing
     PromptSession = None
     AutoSuggestFromHistory = None
     WordCompleter = None
     HTML = None
+    DummyOutput = None
     CompleteStyle = None
 
 from taxsentry.agent import AgentKernel, AgentMode, ProviderPreset
@@ -123,14 +126,32 @@ class HermesShell:
             return None
 
         completer = WordCompleter(SLASH_COMMANDS, ignore_case=True, match_middle=True)
-        return PromptSession(
-            completer=completer,
-            auto_suggest=AutoSuggestFromHistory(),
-            complete_while_typing=True,
-            enable_history_search=True,
-            complete_style=CompleteStyle.MULTI_COLUMN,
-            reserve_space_for_menu=8,
-        )
+        kwargs = {
+            "completer": completer,
+            "auto_suggest": AutoSuggestFromHistory(),
+            "complete_while_typing": True,
+            "enable_history_search": True,
+            "complete_style": CompleteStyle.MULTI_COLUMN,
+            "reserve_space_for_menu": 8,
+        }
+        if self._should_use_dummy_prompt_output() and DummyOutput is not None:
+            kwargs["output"] = DummyOutput()
+
+        try:
+            return PromptSession(**kwargs)
+        except Exception as exc:
+            if DummyOutput is None or not self._is_prompt_console_error(exc):
+                raise
+            kwargs["output"] = DummyOutput()
+            return PromptSession(**kwargs)
+
+    @staticmethod
+    def _should_use_dummy_prompt_output() -> bool:
+        return os.getenv("CI", "").strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _is_prompt_console_error(exc: Exception) -> bool:
+        return exc.__class__.__name__ == "NoConsoleScreenBufferError"
 
     def _prompt_user(self) -> str:
         if self._prompt_session is None or HTML is None:

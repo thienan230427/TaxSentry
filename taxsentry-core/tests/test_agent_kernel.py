@@ -401,3 +401,32 @@ def test_hermes_shell_smoke_builds_layout(monkeypatch):
     assert "Suggestions:" in frame.footer.renderable.plain
     assert frame.center is not None
     assert frame.right is not None
+
+
+def test_hermes_shell_uses_dummy_prompt_output_in_ci(monkeypatch):
+    from taxsentry.ui import hermes_shell as hermes_module
+
+    calls = []
+
+    class FakeDummyOutput:
+        pass
+
+    class FakePromptSession:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    class FakeCompleteStyle:
+        MULTI_COLUMN = "multi-column"
+
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(hermes_module, "PromptSession", FakePromptSession)
+    monkeypatch.setattr(hermes_module, "DummyOutput", FakeDummyOutput)
+    monkeypatch.setattr(hermes_module, "WordCompleter", lambda *args, **kwargs: object())
+    monkeypatch.setattr(hermes_module, "AutoSuggestFromHistory", lambda: object())
+    monkeypatch.setattr(hermes_module, "CompleteStyle", FakeCompleteStyle)
+
+    shell = hermes_module.HermesShell.__new__(hermes_module.HermesShell)
+    session = shell._create_prompt_session()
+
+    assert isinstance(session, FakePromptSession)
+    assert isinstance(calls[0]["output"], FakeDummyOutput)
