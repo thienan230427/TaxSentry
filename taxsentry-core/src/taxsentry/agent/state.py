@@ -89,7 +89,7 @@ def build_provider_presets(settings: dict[str, Any]) -> list[ProviderPreset]:
             description="Reuse Codex login or direct OpenAI API",
             kind="codex_oauth",
             base_url="https://api.openai.com/v1",
-            model=active_model if active_key == "codex_oauth" else "gpt-4.1",
+            model=active_model if active_key == "codex_oauth" else "gpt-5.5",
             auth_mode="codex_oauth",
             available=_codex_available(),
             badge="oauth",

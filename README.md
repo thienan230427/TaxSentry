@@ -113,23 +113,15 @@ Recommended fields:
 
 ### Option B: Codex OAuth
 
-Use this when Codex is already authenticated on the machine.
+Use this when you want to sign in with the same ChatGPT/Codex account used by Codex CLI.
 
 ```bash
 taxsentry auth codex
 ```
 
-Then run:
+TaxSentry opens the Codex login page at `https://chatgpt.com/auth/login?next=%2Fcodex%2Fcloud`, waits for you to choose the target account, then reads the refreshed Codex OAuth profile from `~/.codex/auth.json`.
 
-```bash
-taxsentry reconfigure
-```
-
-Choose:
-
-```text
-OpenAI Codex OAuth
-```
+After login, choose one of the Codex model IDs shown in the model picker. TaxSentry fetches available models from OpenAI when the token allows it, and falls back to current Codex IDs such as `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini`.
 
 ### Option C: Custom OpenAI-Compatible Endpoint
 
@@ -454,11 +446,7 @@ Run:
 taxsentry auth codex
 ```
 
-Then:
-
-```bash
-taxsentry reconfigure
-```
+The command opens the Codex login page, waits for sign-in, then updates the provider and model in the local config.
 
 ### Service mode does not start
 

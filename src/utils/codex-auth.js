@@ -8,6 +8,13 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 export const CODEX_LOGIN_URL = 'https://chatgpt.com/auth/login?next=%2Fcodex%2Fcloud';
+export const CODEX_API_BASE_URL = 'https://api.openai.com/v1';
+export const CODEX_RECOMMENDED_MODELS = [
+  'gpt-5.5',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.3-codex-spark',
+];
 
 export function getCodexAuthPath() {
   return join(homedir(), '.codex', 'auth.json');
@@ -61,6 +68,52 @@ export function redactCodexAuthSummary(auth) {
   };
 }
 
+export function orderCodexModelIds(modelIds = []) {
+  const models = uniqueStrings(modelIds);
+  const recommended = CODEX_RECOMMENDED_MODELS.filter((model) => models.includes(model));
+  const rest = models.filter((model) => !CODEX_RECOMMENDED_MODELS.includes(model));
+  return [...recommended, ...rest];
+}
+
+export async function fetchCodexModelIds({
+  auth,
+  fetchImpl = globalThis.fetch,
+  timeoutMs = 2500,
+  limit = 24,
+} = {}) {
+  if (typeof fetchImpl !== 'function' || !auth?.accessToken) return [];
+
+  let response;
+  try {
+    const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(timeoutMs)
+      : undefined;
+    response = await fetchImpl(`${CODEX_API_BASE_URL}/models`, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${auth.accessToken}`,
+      },
+      signal,
+    });
+  } catch {
+    return [];
+  }
+
+  if (!response?.ok) return [];
+
+  try {
+    const payload = await response.json();
+    const rawModels = Array.isArray(payload?.data)
+      ? payload.data.map((item) => item?.id || item?.name || item)
+      : Array.isArray(payload)
+        ? payload
+        : [];
+    return orderCodexModelIds(rawModels).slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
 export function openCodexLoginPage(url = CODEX_LOGIN_URL) {
   const platform = process.platform;
   const command = platform === 'win32' ? 'cmd' : platform === 'darwin' ? 'open' : 'xdg-open';
@@ -74,6 +127,10 @@ export function openCodexLoginPage(url = CODEX_LOGIN_URL) {
   } catch {
     return false;
   }
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
 }
 
 function maskEmail(value) {

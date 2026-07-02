@@ -3,9 +3,12 @@ import boxen from 'boxen';
 import inquirer from 'inquirer';
 
 import {
+  CODEX_API_BASE_URL,
   CODEX_LOGIN_URL,
+  CODEX_RECOMMENDED_MODELS,
   loadCodexAuth,
   openCodexLoginPage,
+  orderCodexModelIds,
   redactCodexAuthSummary,
 } from './utils/codex-auth.js';
 import { describeConfig, getEmptyConfig, loadConfig, saveConfig, setValue, writeEnvFile } from './config.js';
@@ -16,7 +19,7 @@ const MODEL_SEARCH_TRIGGER = 8;
 
 const MODEL_SUGGESTIONS = {
   lmstudio: ['google/gemma-4-e4b', 'llama-3.1-8b-instruct', 'qwen2.5-coder-7b-instruct'],
-  codex_oauth: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'o4-mini'],
+  codex_oauth: CODEX_RECOMMENDED_MODELS,
   openai_api: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'o4-mini'],
   openrouter: ['openai/gpt-4.1-mini', 'anthropic/claude-3.5-sonnet', 'google/gemini-2.0-flash-001'],
   custom: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'claude-3-5-sonnet'],
@@ -182,7 +185,10 @@ async function fetchModelIds({ baseUrl, apiKey = '', authMode = '', accessToken 
       : Array.isArray(payload)
         ? payload
         : [];
-    return uniqueStrings(rawModels).slice(0, MODEL_PICKER_LIMIT);
+    const models = uniqueStrings(rawModels);
+    return authMode === 'codex_oauth'
+      ? orderCodexModelIds(models).slice(0, MODEL_PICKER_LIMIT)
+      : models.slice(0, MODEL_PICKER_LIMIT);
   } catch {
     return [];
   }
@@ -292,9 +298,18 @@ async function selectModelFromMenu({ prompt, modelIds, providerKind, currentMode
   return selection;
 }
 
-async function promptForModel({ prompt, providerKind, baseUrl, apiKey, authMode, accessToken, currentModel }) {
+export async function promptForModel({
+  prompt,
+  providerKind,
+  baseUrl,
+  apiKey,
+  authMode,
+  accessToken,
+  currentModel,
+  fetchImpl = globalThis.fetch,
+}) {
   const fallbackModel = resolveModelFallback(providerKind);
-  const fetchedModels = await fetchModelIds({ baseUrl, apiKey, authMode, accessToken });
+  const fetchedModels = await fetchModelIds({ baseUrl, apiKey, authMode, accessToken, fetchImpl });
   const preferredModel = currentModel || fallbackModel;
   const modelIds = uniqueStrings([
     preferredModel,
@@ -455,11 +470,11 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
     }
     setValue(config, 'provider', 'kind', 'codex_oauth');
     setValue(config, 'provider', 'authMode', 'codex_oauth');
-    setValue(config, 'provider', 'baseUrl', 'https://api.openai.com/v1');
+    setValue(config, 'provider', 'baseUrl', CODEX_API_BASE_URL);
     const model = await promptForModel({
       prompt,
       providerKind: 'codex_oauth',
-      baseUrl: 'https://api.openai.com/v1',
+      baseUrl: CODEX_API_BASE_URL,
       authMode: 'codex_oauth',
       accessToken: codexAuth?.accessToken || '',
       currentModel: rememberedModel,
