@@ -156,7 +156,7 @@ class TaxSentrySessionStore:
             raise RuntimeError("Session store is not available")
 
         event_id = uuid.uuid4().hex[:10]
-        payload_json = json.dumps(payload or {}, ensure_ascii=False)
+        payload_json = json.dumps(payload or {}, ensure_ascii=False, default=str)
         assert self.connection is not None
         cursor = self.connection.cursor()
         cursor.execute(

@@ -21,9 +21,18 @@ def test_interaction_router_routes_analysis_operation_and_clarification():
     assert analysis.route == 'analysis'
     assert analysis.intent == 'analysis'
 
+    no_accent_analysis = router.route('Hay phan tich bao cao thue va kiem tra provider ngay')
+    assert no_accent_analysis.route == 'analysis'
+    assert 'analysis-intent' in no_accent_analysis.hints
+    assert no_accent_analysis.urgency == 'high'
+
     operation = router.route('Hãy chạy bot Telegram ngay')
     assert operation.route == 'operation'
     assert operation.intent == 'operation'
+
+    no_accent_operation = router.route('Hay chay bot Telegram va gui thong bao ngay')
+    assert no_accent_operation.route == 'operation'
+    assert 'notification-intent' in no_accent_operation.hints
 
     clarification = router.route('ok')
     assert clarification.route == 'clarification'

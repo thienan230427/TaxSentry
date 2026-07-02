@@ -122,7 +122,7 @@ class AgentKernel:
 
     def snapshot(self) -> dict[str, Any]:
         session_snapshot = self.session_manager.snapshot(self.state.session_id)
-        memory_facts = self.memory.recall_compact("", limit=5)
+        memory_facts = self.memory.recall_compact("", limit=5) if self._memory_enabled() else []
         recent_reports = self._recent_reports(limit=5)
         evidence_context = load_evidence_context(EVIDENCE_CONTEXT_PATH)
         return {
@@ -142,6 +142,18 @@ class AgentKernel:
             "active_plan": self.state.last_plan,
             "toolchain": list(self.state.last_toolchain),
         }
+
+    def _config_bool(self, path: str, default: bool) -> bool:
+        value = get_value(self.settings, path, default)
+        if isinstance(value, str):
+            return value.strip().lower() not in {"0", "false", "no", "off"}
+        return bool(value)
+
+    def _memory_enabled(self) -> bool:
+        return self._config_bool("agent.memory_enabled", True)
+
+    def _llm_planner_enabled(self) -> bool:
+        return self._config_bool("agent.llm_planner_enabled", False)
 
     def handle(
         self,
@@ -263,7 +275,77 @@ class AgentKernel:
                 context=request.context,
                 hints=request.hints,
             )
-        return self.planner.build_tool_plan(effective_request, self.tools.available())
+        rule_plan = self.planner.build_tool_plan(effective_request, self.tools.available())
+        if not self._llm_planner_enabled():
+            return rule_plan
+        return self._merge_llm_plan(effective_request, rule_plan)
+
+    def _merge_llm_plan(self, request: AgentRequest, rule_plan: list[ToolPlanStep]) -> list[ToolPlanStep]:
+        available_tools = self.tools.available()
+        allowed_tools = set(available_tools)
+        if not allowed_tools:
+            return rule_plan
+
+        prompt = (
+            "You are a tool planner for TaxSentry. Return only JSON in this shape: "
+            '{"tools":["tool_name"]}. '
+            "Choose zero to four tools from the allowlist. Do not invent tool names.\n"
+            f"Allowlist: {', '.join(available_tools)}\n"
+            f"Route: {request.route}\n"
+            f"Mode: {request.mode.value}\n"
+            f"User request: {request.sanitized_text[:1000]}"
+        )
+        try:
+            raw = generate_chat(
+                self.provider,
+                [
+                    {"role": "system", "content": "Return strict JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+            )
+            suggested = self._parse_llm_tool_suggestions(raw, allowed_tools)
+        except Exception as exc:
+            self.state.push_event(
+                SurfaceEvent(kind="planner", title="LLM planner fallback", detail=str(exc)[:160], status="warning")
+            )
+            return rule_plan
+
+        plan = list(rule_plan)
+        existing = {step.tool_name for step in plan}
+        for tool_name in suggested:
+            if tool_name in existing:
+                continue
+            plan.append(ToolPlanStep(tool_name=tool_name, title=f"LLM suggested {tool_name}"))
+            existing.add(tool_name)
+        return plan
+
+    @staticmethod
+    def _parse_llm_tool_suggestions(raw: str, allowed_tools: set[str]) -> list[str]:
+        payload = (raw or "").strip()
+        if not payload:
+            return []
+        start = payload.find("{")
+        end = payload.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return []
+        try:
+            parsed = json.loads(payload[start : end + 1])
+        except json.JSONDecodeError:
+            return []
+        tools = parsed.get("tools", [])
+        if not isinstance(tools, list):
+            return []
+        suggestions: list[str] = []
+        for tool_name in tools:
+            if not isinstance(tool_name, str):
+                continue
+            value = tool_name.strip()
+            if value in allowed_tools and value not in suggestions:
+                suggestions.append(value)
+            if len(suggestions) >= 4:
+                break
+        return suggestions
 
     def _execute_tool_plan(
         self,
@@ -399,6 +481,14 @@ class AgentKernel:
                 metadata={"command": "status", "tool_ok": tool_result.ok},
             )
         if command == "memory":
+            if not self._memory_enabled():
+                return self.composer.compose(
+                    "Memory đang tắt trong cấu hình hiện tại.",
+                    route="chat",
+                    confidence=1.0,
+                    session_id=self.state.session_id,
+                    metadata={"command": "memory", "facts": [], "memory_enabled": False},
+                )
             facts = self.memory.recall_compact(self.state.last_user_input or "", limit=8)
             text_out = self._format_memory_facts(facts)
             return self.composer.compose(
@@ -513,7 +603,7 @@ class AgentKernel:
         )
 
     def _chat_reply(self, user_text: str, *, tool_results: list[ToolResult] | None = None) -> str:
-        memory_context = self.memory.recall_compact(user_text, limit=5)
+        memory_context = self.memory.recall_compact(user_text, limit=5) if self._memory_enabled() else []
         evidence_context = load_evidence_context(EVIDENCE_CONTEXT_PATH)
         financial_context = self._recent_reports(limit=3)
         tool_context = [
@@ -633,6 +723,13 @@ class AgentKernel:
         )
 
     def _tool_memory_search(self, query: str = "", limit: int = 5) -> ToolResult:
+        if not self._memory_enabled():
+            return ToolResult(
+                name="memory_search",
+                ok=True,
+                output="Memory is disabled.",
+                metadata={"items": [], "memory_enabled": False},
+            )
         items = self.memory.recall_compact(query, limit=limit)
         return ToolResult(
             name="memory_search",
@@ -642,6 +739,13 @@ class AgentKernel:
         )
 
     def _tool_remember_fact(self, text: str = "") -> ToolResult:
+        if not self._memory_enabled():
+            return ToolResult(
+                name="remember_fact",
+                ok=False,
+                output="Memory is disabled.",
+                metadata={"memory_enabled": False},
+            )
         fact = text.strip()
         if not fact:
             return ToolResult(name="remember_fact", ok=False, output="No fact provided.")

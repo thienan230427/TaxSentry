@@ -11,12 +11,48 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.shortcuts import CompleteStyle
+except Exception:  # pragma: no cover - graceful fallback if dependency is missing
+    PromptSession = None
+    AutoSuggestFromHistory = None
+    WordCompleter = None
+    HTML = None
+    CompleteStyle = None
+
 from taxsentry.agent import AgentKernel, AgentMode, ProviderPreset
-from taxsentry.config import describe_config, get_value, load_config
-from taxsentry.database.db_manager import TaxSentryDBManager
+from taxsentry.config import get_value, load_config
 from .dashboard import TaxSentryDashboard
 
 console = Console()
+
+SLASH_COMMANDS = [
+    "/help",
+    "/status",
+    "/memory",
+    "/remember",
+    "/mode",
+    "/provider",
+    "/audit",
+    "/dashboard",
+    "/tools",
+    "/trace",
+    "/jobs",
+    "/replay",
+    "/exit",
+]
+
+MODE_HINTS = {
+    AgentMode.CHAT: ["/help", "/status", "/memory", "/provider", "/dashboard", "/exit"],
+    AgentMode.ANALYZE: ["/audit", "/tools", "/trace", "/jobs", "/replay", "/mode chat"],
+    AgentMode.EXECUTE: ["/status", "/provider", "/dashboard", "/jobs", "/trace", "/exit"],
+    AgentMode.REVIEW: ["/audit", "/status", "/jobs", "/replay", "/dashboard", "/exit"],
+    AgentMode.SETUP: ["/provider", "/mode chat", "/dashboard", "/exit"],
+}
 
 
 @dataclass
@@ -34,6 +70,7 @@ class HermesShell:
         self.kernel = AgentKernel(self.settings, session_entry_point="tui", session_mode=AgentMode.CHAT)
         self._last_frame_note = "Ready"
         self._last_turn: Any | None = None
+        self._prompt_session = self._create_prompt_session()
 
     def run(self) -> int:
         self._show_provider_picker()
@@ -42,7 +79,7 @@ class HermesShell:
 
         while True:
             try:
-                user_text = input("\nSếp > ").strip()
+                user_text = self._prompt_user().strip()
             except (EOFError, KeyboardInterrupt):
                 console.print("\nExiting...")
                 return 0
@@ -81,6 +118,43 @@ class HermesShell:
             self._last_frame_note = result.route
             self._render_screen(last_result=result.response.text)
 
+    def _create_prompt_session(self):
+        if PromptSession is None:
+            return None
+
+        completer = WordCompleter(SLASH_COMMANDS, ignore_case=True, match_middle=True)
+        return PromptSession(
+            completer=completer,
+            auto_suggest=AutoSuggestFromHistory(),
+            complete_while_typing=True,
+            enable_history_search=True,
+            complete_style=CompleteStyle.MULTI_COLUMN,
+            reserve_space_for_menu=8,
+        )
+
+    def _prompt_user(self) -> str:
+        if self._prompt_session is None or HTML is None:
+            return input("\nSếp > ")
+
+        return self._prompt_session.prompt(
+            HTML('<ansicyan>Sếp</ansicyan> <ansiblue>></ansiblue> '),
+            bottom_toolbar=self._build_prompt_toolbar,
+        )
+
+    def _build_prompt_toolbar(self):
+        hints = self._command_hints()
+        chips = "  ".join(f"[{hint}]" for hint in hints)
+        return HTML(
+            f'<ansigray>Gợi ý:</ansigray> <ansicyan>{chips}</ansicyan> '
+            '<ansigray>| Tab để xem thêm lệnh</ansigray>'
+        )
+
+    def _command_hints(self) -> list[str]:
+        mode_hints = list(MODE_HINTS.get(self.kernel.state.mode, MODE_HINTS[AgentMode.CHAT]))
+        if self._last_turn is not None and getattr(self._last_turn, "route", "") == "analysis":
+            return ["/audit", "/tools", "/trace", "/jobs", "/replay", "/dashboard"]
+        return mode_hints
+
     def _show_provider_picker(self) -> None:
         presets = self.kernel.available_provider_presets()
         console.clear()
@@ -115,14 +189,9 @@ class HermesShell:
         frame = self._build_frame(last_result=last_result, initial=initial)
         layout = Layout()
         layout.split_column(
-            Layout(frame.header, size=7),
-            Layout(name="body", ratio=1),
-            Layout(frame.footer, size=4),
-        )
-        layout["body"].split_row(
-            Layout(frame.left, ratio=3),
-            Layout(frame.center, ratio=5),
-            Layout(frame.right, ratio=4),
+            Layout(frame.header, size=5),
+            Layout(frame.center, ratio=1),
+            Layout(frame.footer, size=5),
         )
         console.print(layout)
 
@@ -155,20 +224,24 @@ class HermesShell:
         provider = snapshot["provider"]
         provider_health = snapshot["provider_health"]
         state = snapshot["state"]
-        active_plan = snapshot.get("active_plan") or "-"
         title = Text()
-        title.append("TaxSentry 1.1.2\n", style="bold white")
+        title.append("TaxSentry TUI", style="bold white")
+        title.append("  ")
         title.append(
-            f"Agent: {get_value(self.settings, 'agent.name', 'TaxSentry')}  ",
+            f"{get_value(self.settings, 'agent.name', 'TaxSentry')}",
             style="cyan",
         )
-        title.append(f"Mode: {state.mode.value}  ", style="magenta")
-        title.append(f"Provider: {snapshot['provider_label']}  ", style="green")
-        title.append(f"Model: {provider.model}  ", style="yellow")
-        title.append(f"Session: {state.session_id[:8]}  ", style="white")
-        title.append(f"Health: {'OK' if provider_health[0] else 'FAIL'}", style="bold green" if provider_health[0] else "bold red")
-        title.append(f"\nPlan: {active_plan[:80]}", style="dim")
-        return Panel(title, border_style="deep_sky_blue1", style="bold white on black")
+        title.append("\n")
+        title.append(f"mode={state.mode.value}", style="magenta")
+        title.append(" | ")
+        title.append(f"provider={snapshot['provider_label']}", style="green")
+        title.append(" | ")
+        title.append(f"model={provider.model}", style="yellow")
+        title.append(" | ")
+        title.append(f"health={'OK' if provider_health[0] else 'FAIL'}", style="bold green" if provider_health[0] else "bold red")
+        title.append(" | ")
+        title.append(f"session={state.session_id[:8]}", style="dim")
+        return Panel(title, border_style="cyan", style="bold white on black", box=box.SQUARE)
 
     def _build_left_rail(self, snapshot: dict[str, Any]) -> Panel:
         presets = self.kernel.available_provider_presets()
@@ -218,24 +291,27 @@ class HermesShell:
         turn_plan = getattr(self._last_turn, "plan", "") if self._last_turn is not None else ""
         turn_toolchain = getattr(self._last_turn, "toolchain", []) if self._last_turn is not None else []
         body = Text()
-        body.append("Main Task Stream\n", style="bold yellow")
-        body.append(f"Current frame note: {self._last_frame_note}\n", style="dim")
-        body.append(f"Last route: {state.last_route}\n", style="white")
-        body.append(f"Last tool: {state.last_tool_name or '-'} ({state.last_tool_status or '-'})\n", style="white")
-        body.append(f"Last plan: {active_plan}\n", style="white")
-        body.append(f"Progress: {state.last_progress or '-'}\n", style="cyan")
-        body.append(f"Toolchain: {', '.join(toolchain) if toolchain else '-'}\n", style="dim")
+        body.append("Conversation stream\n", style="bold #f0a27a")
+        body.append(f"gateway connected | {self._last_frame_note}\n", style="dim")
+        body.append(f"plan={active_plan} | progress={state.last_progress or '-'}\n", style="dim")
+        body.append(f"tools={', '.join(toolchain) if toolchain else '-'}\n\n", style="dim")
         if turn_plan:
             body.append(f"Turn plan: {turn_plan}\n", style="dim")
         if turn_toolchain:
             body.append(f"Turn tools: {', '.join(turn_toolchain)}\n", style="dim")
-        body.append(f"Last input: {state.last_user_input or '-'}\n\n", style="white")
 
         if initial:
-            body.append("Type a request or use /help for shortcuts.\n", style="green")
-            body.append("Try /mode analysis for audit flow or /provider to switch model.\n", style="cyan")
+            body.append("Ready for the first request.\n", style="white")
+            body.append("Type / then Tab to open slash command suggestions.\n", style="cyan")
+            body.append("\n")
+            body.append("Suggested flow:\n", style="bold white")
+            for command in self._command_hints():
+                body.append(f"  {command}\n", style="white")
         elif last_result:
-            body.append("Latest response:\n", style="bold green")
+            if state.last_user_input:
+                body.append("Sếp\n", style="bold cyan")
+                body.append(f" {state.last_user_input} \n\n", style="white on grey23")
+            body.append("TaxSentry\n", style="bold green")
             body.append(last_result[:1200], style="white")
             if self._last_turn is not None:
                 hints = getattr(self._last_turn, "hints", []) or []
@@ -250,7 +326,7 @@ class HermesShell:
         else:
             body.append("Waiting for the next action.\n", style="dim")
 
-        return Panel(body, title="Conversation / Task Stream", border_style="green", box=box.ROUNDED)
+        return Panel(body, title="Chat", border_style="grey39", box=box.SQUARE)
 
     def _build_right_rail(self, snapshot: dict[str, Any]) -> Panel:
         memory_facts = snapshot["memory_facts"]
@@ -326,10 +402,13 @@ class HermesShell:
     def _build_footer_panel(self, snapshot: dict[str, Any]) -> Panel:
         state = snapshot["state"]
         footer = Text()
-        footer.append("Shortcuts: ", style="bold yellow")
-        footer.append("/help  /status  /memory  /provider  /mode <name>  /audit  /dashboard  /tools  /trace  /jobs  /replay  /exit", style="white")
-        footer.append(f"\nStatus: mode={state.mode.value} | provider={snapshot['provider_label']} | session={state.session_id[:8]}", style="dim")
-        return Panel(footer, border_style="deep_sky_blue1", box=box.ROUNDED)
+        footer.append("Sếp > ", style="bold cyan")
+        footer.append("type a message or / command", style="white on grey23")
+        footer.append("\n")
+        footer.append("Suggestions: ", style="bold #f0a27a")
+        footer.append("  ".join(self._command_hints()), style="white")
+        footer.append(f"\nmode={state.mode.value} | provider={snapshot['provider_label']} | Tab opens completions", style="dim")
+        return Panel(footer, border_style="cyan", box=box.SQUARE)
 
     @staticmethod
     def _parse_mode(value: str) -> AgentMode:

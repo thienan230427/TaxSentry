@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
+from taxsentry.text_normalize import normalize_for_match
+
 from .request import AgentRequest
 from .state import AgentMode
 
@@ -17,6 +19,7 @@ class ToolPlanStep:
 class AgentPlanner:
     def build_tool_plan(self, request: AgentRequest, available_tools: Sequence[str] | None = None) -> list[ToolPlanStep]:
         text = (request.text or "").lower()
+        normalized_text = normalize_for_match(request.text)
         route = request.route
         plan: list[ToolPlanStep] = []
         toolset = set(available_tools or [])
@@ -41,27 +44,30 @@ class AgentPlanner:
             add("session_trace", "Inspect current trace bundle")
             return plan
 
-        if any(keyword in text for keyword in ("memory", "nhớ", "remember")):
+        def mentions(*keywords: str) -> bool:
+            return any(keyword in text or keyword in normalized_text for keyword in keywords)
+
+        if mentions("memory", "nhớ", "remember", "nho"):
             add("memory_search", "Recall memory", query=request.text, limit=5)
-        if any(keyword in text for keyword in ("provider", "model", "health", "endpoint")):
+        if mentions("provider", "model", "health", "endpoint"):
             add("provider_health", "Check provider")
-        if any(keyword in text for keyword in ("report", "báo cáo", "log", "file")):
+        if mentions("report", "báo cáo", "bao cao", "log", "file"):
             add("recent_reports", "Inspect reports", limit=3)
-        if any(keyword in text for keyword in ("job", "jobs", "state", "trạng thái job")):
+        if mentions("job", "jobs", "state", "trạng thái job", "trang thai job"):
             add("recent_jobs", "Inspect jobs", limit=5)
-        if any(keyword in text for keyword in ("excel", "sheet", "workbook", "parse")):
+        if mentions("excel", "sheet", "workbook", "parse"):
             add("parse_workbook", "Parse workbook")
-        if any(keyword in text for keyword in ("pdf", "export", "generate pdf")):
+        if mentions("pdf", "export", "generate pdf"):
             add("generate_pdf", "Generate PDF")
-        if any(keyword in text for keyword in ("email", "send mail", "smtp")):
+        if mentions("email", "send mail", "smtp", "gui mail", "gửi mail"):
             add("send_email", "Send email report")
-        if any(keyword in text for keyword in ("telegram", "notify", "bot")):
+        if mentions("telegram", "notify", "bot", "thong bao", "thông báo"):
             add("send_telegram", "Push Telegram alert")
-        if any(keyword in text for keyword in ("trace", "session", "timeline", "replay")):
+        if mentions("trace", "session", "timeline", "replay"):
             add("session_trace", "Inspect trace bundle")
-        if any(keyword in text for keyword in ("audit", "phân tích", "analysis", "kiểm tra", "review")):
+        if mentions("audit", "phân tích", "phan tich", "analysis", "kiểm tra", "kiem tra", "review"):
             add("run_audit", "Run audit")
-        if any(keyword in text for keyword in ("status", "summary")):
+        if mentions("status", "summary", "trang thai", "trạng thái"):
             add("status_summary", "Summarize runtime status")
 
         return plan

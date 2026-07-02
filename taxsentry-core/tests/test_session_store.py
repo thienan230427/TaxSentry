@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,3 +54,22 @@ def test_session_store_roundtrip(tmp_path):
     assert events[0]['payload']['interval_seconds'] == 60
     assert events[1]['payload']['file_name'] == 'report.xlsx'
     assert events[1]['latency_ms'] == 12.5
+
+
+def test_session_store_serializes_datetime_payloads(tmp_path):
+    db_path = tmp_path / 'session.sqlite3'
+    store = TaxSentrySessionStore(str(db_path))
+
+    session_id = store.start_session(entry_point='tui', mode='analysis')
+    event_id = store.log_event(
+        session_id=session_id,
+        event_type='tool_dispatch',
+        actor='kernel',
+        action='run memory_search',
+        result='ok',
+        payload={'created_at': datetime(2026, 7, 1, tzinfo=timezone.utc)},
+    )
+
+    assert event_id
+    events = store.get_session_events(session_id)
+    assert events[0]['payload']['created_at'] == '2026-07-01 00:00:00+00:00'

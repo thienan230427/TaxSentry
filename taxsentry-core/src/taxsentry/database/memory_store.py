@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from taxsentry.config.paths import DB_PATH
+from taxsentry.text_normalize import tokens_for_match, normalize_for_match
 
 
 @dataclass(frozen=True)
@@ -149,7 +150,8 @@ class TaxSentryMemoryStore:
         if not self._ensure_connection():
             return []
 
-        tokens = [token for token in query.lower().split() if token]
+        tokens = tokens_for_match(query)
+        normalized_query = normalize_for_match(query)
         assert self.connection is not None
         cursor = self.connection.cursor()
         if scope:
@@ -168,7 +170,7 @@ class TaxSentryMemoryStore:
         now = datetime.now(timezone.utc)
         for row in rows:
             record = self._row_to_record(row)
-            score = self._score_record(record, tokens, now)
+            score = self._score_record(record, tokens, normalized_query, now)
             if score <= 0:
                 continue
             scored_rows.append((score, self._record_to_dict(record)))
@@ -219,7 +221,7 @@ class TaxSentryMemoryStore:
         }
 
     @staticmethod
-    def _score_record(record: MemoryRecord, tokens: list[str], now: datetime) -> float:
+    def _score_record(record: MemoryRecord, tokens: list[str], normalized_query: str, now: datetime) -> float:
         haystack = " ".join(
             [
                 record.memory_type,
@@ -228,12 +230,34 @@ class TaxSentryMemoryStore:
                 " ".join(record.tags),
                 json.dumps(record.payload, ensure_ascii=False),
             ]
-        ).lower()
-        relevance = sum(1 for token in tokens if token in haystack)
-        if not relevance:
+        )
+        haystack_lower = haystack.lower()
+        normalized_haystack = normalize_for_match(haystack)
+        relevance = sum(1 for token in tokens if token in haystack_lower)
+        relevance += sum(1 for token in tokens if token in normalized_haystack)
+        semantic_similarity = TaxSentryMemoryStore._trigram_similarity(normalized_query, normalized_haystack)
+        if not relevance and semantic_similarity < 0.08:
             return 0.0
 
         created_at = datetime.fromisoformat(record.created_at)
         age_seconds = max((now - created_at).total_seconds(), 0.0)
         recency = 1.0 / (1.0 + age_seconds / 86400.0)
-        return (relevance * 2.0) + (record.importance * 1.5) + (record.confidence * 1.0) + (recency * 0.5)
+        return (
+            (relevance * 2.0)
+            + (semantic_similarity * 4.0)
+            + (record.importance * 1.5)
+            + (record.confidence * 1.0)
+            + (recency * 0.5)
+        )
+
+    @staticmethod
+    def _trigram_similarity(left: str, right: str) -> float:
+        left = " ".join(left.split())
+        right = " ".join(right.split())
+        if len(left) < 3 or len(right) < 3:
+            return 0.0
+        left_grams = {left[index : index + 3] for index in range(len(left) - 2)}
+        right_grams = {right[index : index + 3] for index in range(len(right) - 2)}
+        if not left_grams or not right_grams:
+            return 0.0
+        return len(left_grams & right_grams) / math.sqrt(len(left_grams) * len(right_grams))

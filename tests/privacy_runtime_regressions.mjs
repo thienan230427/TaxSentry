@@ -103,7 +103,15 @@ async function testOnboardingWritesFriendlyProviderConfig() {
     const envText = readFileSync(join(SHARED_HOME, '.taxsentry', 'taxsentry-core', '.env'), 'utf8');
     assert.ok(envText.includes('TAXSENTRY_PROVIDER_KIND="lmstudio"'), 'onboarding should persist provider kind');
     assert.ok(envText.includes('TAXSENTRY_PROVIDER_MODEL="google/gemma-4-e4b"'), 'onboarding should persist model');
-    assert.ok(capturedLogs.some((line) => line.includes('[local]') && line.includes('[oauth]') && line.includes('[flex]')), 'provider cockpit should show color legend');
+    assert.ok(
+      capturedLogs.some((line) => line.includes('Model/auth provider')),
+      'onboarding should render the provider wizard step',
+    );
+    assert.ok(
+      capturedLogs.some((line) => line.includes('OpenRouter')),
+      'provider wizard should show expanded radio options',
+    );
+    assert.ok(capturedLogs.some((line) => line.includes('Skip for now')), 'provider wizard should expose skip');
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;

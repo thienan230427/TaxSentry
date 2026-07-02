@@ -121,6 +121,35 @@ def test_build_provider_presets_marks_codex_oauth_available(monkeypatch, tmp_pat
     assert presets[0].label == "LM Studio"
 
 
+def test_agent_kernel_respects_memory_disabled(monkeypatch):
+    kernel = _build_kernel(monkeypatch)
+    kernel.settings["agent"]["memory_enabled"] = False
+
+    memory_response = kernel.handle("/memory")
+    assert memory_response.response.metadata["memory_enabled"] is False
+    assert "Memory đang tắt" in memory_response.response.text
+
+    remember_response = kernel.handle("/remember Không được lưu fact này")
+    assert remember_response.response.metadata["tool_ok"] is False
+    assert kernel.memory.saved == []
+
+    search_result = kernel._tool_memory_search("fact")
+    assert search_result.ok is True
+    assert search_result.metadata["memory_enabled"] is False
+    assert search_result.metadata["items"] == []
+
+
+def test_agent_kernel_llm_planner_parser_filters_unknown_tools(monkeypatch):
+    kernel = _build_kernel(monkeypatch)
+
+    suggestions = kernel._parse_llm_tool_suggestions(
+        'Here: {"tools":["provider_health","delete_everything","memory_search","provider_health","run_audit"]}',
+        {"provider_health", "memory_search", "run_audit"},
+    )
+
+    assert suggestions == ["provider_health", "memory_search", "run_audit"]
+
+
 def test_agent_planner_builds_route_specific_plans():
     from taxsentry.agent import AgentMode, AgentPlanner, AgentRequest
 
@@ -366,8 +395,9 @@ def test_hermes_shell_smoke_builds_layout(monkeypatch):
     shell = hermes_module.HermesShell(settings={"agent": {"name": "TaxSentry"}})
     frame = shell._build_frame(last_result="Đã phân tích xong", initial=False)
 
-    assert "TaxSentry 1.1.2" in frame.header.renderable.plain
-    assert "Progress: 2/2" in frame.center.renderable.plain
-    assert "Tool timeline" in frame.right.renderable.plain
+    assert "TaxSentry TUI" in frame.header.renderable.plain
+    assert "progress=2/2" in frame.center.renderable.plain
+    assert "Conversation stream" in frame.center.renderable.plain
+    assert "Suggestions:" in frame.footer.renderable.plain
     assert frame.center is not None
     assert frame.right is not None

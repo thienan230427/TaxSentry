@@ -236,4 +236,6 @@ npm-debug.log
 
 # TaxSentry CLI Config
 .taxsentry/
+.codex-remote-attachments/
+.npm-cache/
 

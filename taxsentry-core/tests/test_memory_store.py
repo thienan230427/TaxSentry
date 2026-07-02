@@ -38,3 +38,39 @@ def test_memory_store_remember_recall_and_forget_roundtrip(tmp_path):
     removed = store.forget(memory_id)
     assert removed is True
     assert store.recall('release verification', limit=5) == []
+
+
+def test_memory_store_recalls_vietnamese_without_accents(tmp_path):
+    db_path = tmp_path / 'memory.sqlite3'
+    store = TaxSentryMemoryStore(str(db_path))
+
+    memory_id = store.remember(
+        memory_type='preference',
+        subject='khách hàng ACME',
+        summary='Khách hàng ACME cần kiểm tra hóa đơn đầu vào tháng 7.',
+        tags=['thuế', 'hóa đơn'],
+        confidence=0.9,
+        importance=0.8,
+    )
+
+    results = store.recall('khach hang acme hoa don dau vao', limit=5)
+    assert results
+    assert results[0]['memory_id'] == memory_id
+
+
+def test_memory_store_semantic_lite_recall_handles_partial_query(tmp_path):
+    db_path = tmp_path / 'memory.sqlite3'
+    store = TaxSentryMemoryStore(str(db_path))
+
+    memory_id = store.remember(
+        memory_type='decision',
+        subject='audit workflow',
+        summary='Always verify provider health before running tax audit.',
+        tags=['workflow', 'audit'],
+        confidence=0.9,
+        importance=0.8,
+    )
+
+    results = store.recall('provider readiness before audit run', limit=5)
+    assert results
+    assert results[0]['memory_id'] == memory_id

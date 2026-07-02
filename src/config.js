@@ -18,6 +18,7 @@ const DEFAULT_CONFIG = {
     persona: "warm, precise, and practical",
     language: "vi",
     memoryEnabled: true,
+    llmPlannerEnabled: false,
     welcomeMessage: "Chào Sếp, em là TaxSentry — trợ lý agent local-first.",
   },
   provider: {
@@ -156,6 +157,8 @@ export function loadConfig() {
     TAXSENTRY_AGENT_PERSONA: process.env.TAXSENTRY_AGENT_PERSONA ?? envFileValues.TAXSENTRY_AGENT_PERSONA,
     TAXSENTRY_LANGUAGE: process.env.TAXSENTRY_LANGUAGE ?? envFileValues.TAXSENTRY_LANGUAGE,
     TAXSENTRY_MEMORY_ENABLED: process.env.TAXSENTRY_MEMORY_ENABLED ?? envFileValues.TAXSENTRY_MEMORY_ENABLED,
+    TAXSENTRY_LLM_PLANNER_ENABLED:
+      process.env.TAXSENTRY_LLM_PLANNER_ENABLED ?? envFileValues.TAXSENTRY_LLM_PLANNER_ENABLED,
     TAXSENTRY_PROVIDER_KIND: process.env.TAXSENTRY_PROVIDER_KIND ?? envFileValues.TAXSENTRY_PROVIDER_KIND,
     TAXSENTRY_PROVIDER_URL: process.env.TAXSENTRY_PROVIDER_URL ?? envFileValues.TAXSENTRY_PROVIDER_URL,
     TAXSENTRY_PROVIDER_MODEL: process.env.TAXSENTRY_PROVIDER_MODEL ?? envFileValues.TAXSENTRY_PROVIDER_MODEL,
@@ -184,6 +187,7 @@ export function loadConfig() {
     TAXSENTRY_AGENT_PERSONA: ["agent", "persona"],
     TAXSENTRY_LANGUAGE: ["agent", "language"],
     TAXSENTRY_MEMORY_ENABLED: ["agent", "memoryEnabled"],
+    TAXSENTRY_LLM_PLANNER_ENABLED: ["agent", "llmPlannerEnabled"],
     TAXSENTRY_PROVIDER_KIND: ["provider", "kind"],
     TAXSENTRY_PROVIDER_URL: ["provider", "baseUrl"],
     TAXSENTRY_PROVIDER_MODEL: ["provider", "model"],
@@ -211,6 +215,7 @@ export function loadConfig() {
     if (!path) continue;
     if (
       envName === "TAXSENTRY_MEMORY_ENABLED" ||
+      envName === "TAXSENTRY_LLM_PLANNER_ENABLED" ||
       envName === "TELEGRAM_ENABLED" ||
       envName === "TAXSENTRY_SHOW_BANNER" ||
       envName === "TAXSENTRY_JOB_TRACKING" ||
@@ -260,6 +265,7 @@ export function buildEnvLines(config) {
     `TAXSENTRY_AGENT_PERSONA=${JSON.stringify(envValue(config, "agent.persona", agent.persona || "practical"))}`,
     `TAXSENTRY_LANGUAGE=${JSON.stringify(envValue(config, "agent.language", agent.language || "vi"))}`,
     `TAXSENTRY_MEMORY_ENABLED=${JSON.stringify(String(Boolean(envValue(config, "agent.memoryEnabled", true))).toLowerCase())}`,
+    `TAXSENTRY_LLM_PLANNER_ENABLED=${JSON.stringify(String(Boolean(envValue(config, "agent.llmPlannerEnabled", false))).toLowerCase())}`,
     `TAXSENTRY_PROVIDER_KIND=${JSON.stringify(envValue(config, "provider.kind", provider.kind || "lmstudio"))}`,
     `TAXSENTRY_PROVIDER_URL=${JSON.stringify(envValue(config, "provider.baseUrl", provider.baseUrl || "http://localhost:1234/v1"))}`,
     `TAXSENTRY_PROVIDER_MODEL=${JSON.stringify(envValue(config, "provider.model", provider.model || "google/gemma-4-e4b"))}`,
@@ -304,6 +310,7 @@ export function describeConfig(config) {
     `Provider: ${config.provider.kind} / ${config.provider.model}`,
     `Endpoint: ${config.provider.baseUrl}`,
     `Memory: ${config.agent.memoryEnabled ? "on" : "off"} · facts=${config.memory.maxFacts} · turns=${config.memory.maxTurns}`,
+    `LLM planner: ${config.agent.llmPlannerEnabled ? "on" : "off"}`,
     `Jobs: ${config.jobs.trackingEnabled ? "tracking on" : "tracking off"} · retry=${config.jobs.retryLimit} · default=${config.jobs.defaultState} · review=${config.jobs.needsHumanReviewOnMissingData ? "on" : "off"} · email=${config.jobs.autoSendEmail ? "on" : "off"} · telegram=${config.jobs.autoSendTelegram ? "on" : "off"}`,
     `Telegram: ${config.integrations.telegram.enabled ? "enabled" : "disabled"}`,
     `Config file: ${CONFIG_FILE}`,

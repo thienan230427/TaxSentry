@@ -2,7 +2,12 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import inquirer from 'inquirer';
 
-import { loadCodexAuth, redactCodexAuthSummary } from './utils/codex-auth.js';
+import {
+  CODEX_LOGIN_URL,
+  loadCodexAuth,
+  openCodexLoginPage,
+  redactCodexAuthSummary,
+} from './utils/codex-auth.js';
 import { describeConfig, getEmptyConfig, loadConfig, saveConfig, setValue, writeEnvFile } from './config.js';
 
 const MODEL_PICKER_LIMIT = 24;
@@ -12,28 +17,108 @@ const MODEL_SEARCH_TRIGGER = 8;
 const MODEL_SUGGESTIONS = {
   lmstudio: ['google/gemma-4-e4b', 'llama-3.1-8b-instruct', 'qwen2.5-coder-7b-instruct'],
   codex_oauth: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'o4-mini'],
+  openai_api: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'o4-mini'],
+  openrouter: ['openai/gpt-4.1-mini', 'anthropic/claude-3.5-sonnet', 'google/gemini-2.0-flash-001'],
   custom: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'claude-3-5-sonnet'],
 };
+
+const API_KEY_PRESETS = {
+  openai_api: {
+    label: 'OpenAI API key',
+    baseUrl: 'https://api.openai.com/v1',
+    apiKeyMessage: 'OpenAI API key',
+  },
+  openrouter: {
+    label: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    apiKeyMessage: 'OpenRouter API key',
+  },
+};
+
+const SETUP_ACCENT = chalk.hex('#f0a27a');
 
 function banner() {
   const text = [
     chalk.bold.cyan('TaxSentry Setup Wizard'),
-    chalk.dim('Provider-first setup with local memory and friendly defaults.'),
+    chalk.dim('Provider-first setup with local memory, OAuth, and terminal chat.'),
     '',
-    chalk.white('Choose one of the supported providers:'),
+    chalk.white('Use the arrow keys to move through each setup step.'),
   ].join('\n');
-  return boxen(text, { padding: 1, borderStyle: 'round', borderColor: 'cyan' });
+  return boxen(text, { padding: 1, borderStyle: 'single', borderColor: 'gray' });
 }
 
-function printProviderCards() {
-  const cards = ['lmstudio', 'codex_oauth', 'custom'].map((kind) => providerTheme(kind));
-  console.log(chalk.cyan('\nProvider cockpit'));
-  console.log(chalk.dim('Select provider with the arrows, then press Enter to confirm.'));
-  console.log([chalk.green('[local]'), chalk.yellow('[oauth]'), chalk.magenta('[flex]')].join(' '));
+function printWizardStep(title, lines = []) {
   console.log('');
-  for (const card of cards) {
-    console.log(boxen([`${card.badge} ${chalk.bold(card.label)}`, card.accent(card.detail), chalk.dim(card.footer)].join('\n'), { padding: 1, borderStyle: 'round', borderColor: 'gray' }));
+  console.log(`${chalk.cyan('◇')}  ${SETUP_ACCENT.bold(title)}`);
+  for (const line of lines) {
+    console.log(`${chalk.cyan('│')}  ${line}`);
   }
+}
+
+function radioLine(label, detail = '', { selected = false, muted = false } = {}) {
+  const marker = selected ? chalk.green('●') : chalk.gray('○');
+  const labelColor = selected ? chalk.bold.white : muted ? chalk.dim : chalk.gray;
+  const suffix = detail ? chalk.dim(` ${detail}`) : '';
+  return `${marker} ${labelColor(label)}${suffix}`;
+}
+
+function resolveProviderChoice(config) {
+  if (config.provider?.authMode === 'codex_oauth') return 'codex_oauth';
+  if (config.provider?.kind === 'lmstudio') return 'lmstudio';
+  if (config.provider?.baseUrl === API_KEY_PRESETS.openai_api.baseUrl) return 'openai_api';
+  if (config.provider?.baseUrl === API_KEY_PRESETS.openrouter.baseUrl) return 'openrouter';
+  return config.provider?.kind || 'lmstudio';
+}
+
+function providerChoices(config) {
+  const active = resolveProviderChoice(config);
+
+  return [
+    {
+      name: radioLine('LM Studio', '(local model server)', { selected: active === 'lmstudio' }),
+      value: 'lmstudio',
+    },
+    {
+      name: radioLine('OpenAI Codex OAuth', '(choose Gmail account in browser)', { selected: active === 'codex_oauth' }),
+      value: 'codex_oauth',
+    },
+    {
+      name: radioLine('OpenAI', '(API key)', { selected: active === 'openai_api' }),
+      value: 'openai_api',
+    },
+    {
+      name: radioLine('OpenRouter', '(API key gateway)', { selected: active === 'openrouter' }),
+      value: 'openrouter',
+    },
+    {
+      name: radioLine('Custom endpoint', '(OpenAI-compatible)', { selected: active === 'custom' }),
+      value: 'custom',
+    },
+    {
+      name: radioLine('Skip for now', '(keep current provider)', { muted: true }),
+      value: 'skip',
+    },
+  ];
+}
+
+function printProviderMenuPreview(config) {
+  const choices = providerChoices(config);
+  printWizardStep('Model/auth provider', choices.map((choice) => choice.name));
+}
+
+function printCodexOAuthPanel(auth = null) {
+  const lines = [
+    chalk.white(`Login URL: ${CODEX_LOGIN_URL}`),
+    chalk.dim('Open the link, choose the target Gmail account, then return here.'),
+  ];
+
+  if (auth) {
+    const summary = redactCodexAuthSummary(auth);
+    lines.push(chalk.green(`Current profile: ${summary.accountEmail || summary.accountName || 'linked account'}`));
+    lines.push(chalk.dim(`Account ID: ${summary.accountId || 'n/a'} | Last refresh: ${summary.lastRefresh || 'n/a'}`));
+  }
+
+  printWizardStep('Codex OAuth account', lines);
 }
 
 function promptText(questions, prompt) {
@@ -53,35 +138,9 @@ function nextConfig(base) {
 function chooseProviderSummary(provider) {
   if (provider.authMode === 'codex_oauth') return 'OpenAI Codex OAuth';
   if (provider.kind === 'lmstudio') return 'LM Studio';
+  if (provider.baseUrl === API_KEY_PRESETS.openai_api.baseUrl) return 'OpenAI API key';
+  if (provider.baseUrl === API_KEY_PRESETS.openrouter.baseUrl) return 'OpenRouter';
   return 'Custom OpenAI-compatible';
-}
-
-function providerTheme(kind) {
-  if (kind === 'lmstudio') {
-    return {
-      badge: chalk.green('[local]'),
-      accent: chalk.green,
-      label: 'LM Studio',
-      detail: 'Local OpenAI-compatible server',
-      footer: 'http://localhost:1234/v1 · zero cloud dependency',
-    };
-  }
-  if (kind === 'codex_oauth') {
-    return {
-      badge: chalk.yellow('[oauth]'),
-      accent: chalk.yellow,
-      label: 'OpenAI Codex OAuth',
-      detail: 'Use existing Codex login',
-      footer: 'Great if the user already authenticated via Codex CLI',
-    };
-  }
-  return {
-    badge: chalk.magenta('[flex]'),
-    accent: chalk.magenta,
-    label: 'Custom endpoint',
-    detail: 'Any OpenAI-compatible provider',
-    footer: 'Bring your own URL, model, and API key',
-  };
 }
 
 function uniqueStrings(values) {
@@ -134,17 +193,16 @@ function printModelMenu(modelIds, { providerKind, currentModel, fallbackModel })
     ? 'LM Studio'
     : providerKind === 'codex_oauth'
       ? 'Codex OAuth'
-      : 'Custom endpoint';
-  console.log(chalk.cyan(`\n${providerLabel} model menu`));
-  console.log(chalk.dim('Chọn bằng số, gõ `s` để tìm, `c` để nhập tay, hoặc Enter để dùng model đầu tiên.'));
-  console.log(
+      : API_KEY_PRESETS[providerKind]?.label || 'Custom endpoint';
+  const lines = [
+    chalk.dim('Choose by number, type `s` to search, `c` for custom, Enter for default.'),
     [
       chalk.blue('[recent]'),
       chalk.green('[recommended]'),
       chalk.magenta('[custom]'),
     ].join(' '),
-  );
-  console.log('');
+    '',
+  ];
   for (const [index, modelId] of modelIds.entries()) {
     const badge = modelId === currentModel && currentModel
       ? chalk.blue('recent')
@@ -152,16 +210,16 @@ function printModelMenu(modelIds, { providerKind, currentModel, fallbackModel })
         ? chalk.green('recommended')
         : '';
     const suffix = badge ? ` ${chalk.dim(`[${badge}]`)}` : '';
-    console.log(`${chalk.bold(String(index + 1).padStart(2, '0'))}. ${modelId}${suffix}`);
+    lines.push(`${chalk.bold(String(index + 1).padStart(2, '0'))}. ${modelId}${suffix}`);
   }
   if (fallbackModel && !modelIds.includes(fallbackModel)) {
-    console.log(`${chalk.bold(String(modelIds.length + 1).padStart(2, '0'))}. ${fallbackModel} ${chalk.dim(`[${chalk.green('recommended')}]`)}`);
+    lines.push(`${chalk.bold(String(modelIds.length + 1).padStart(2, '0'))}. ${fallbackModel} ${chalk.dim(`[${chalk.green('recommended')}]`)}`);
   }
   if (modelIds.length >= MODEL_SEARCH_TRIGGER) {
-    console.log(chalk.dim('gõ `s` để lọc nhanh theo tên model khi danh sách dài'));
+    lines.push(chalk.dim('Type `s` to filter large model lists.'));
   }
-  console.log(`${chalk.bold(' c')}. ${chalk.magenta('Nhập tên model khác')}`);
-  console.log('');
+  lines.push(`${chalk.bold(' c')}. ${chalk.magenta('Enter another model name')}`);
+  printWizardStep(`${providerLabel} model`, lines);
 }
 
 async function promptForCustomModel({ prompt, fallbackModel }) {
@@ -251,13 +309,41 @@ async function promptForModel({ prompt, providerKind, baseUrl, apiKey, authMode,
   return selectModelFromMenu({ prompt, modelIds, providerKind, currentModel, fallbackModel });
 }
 
+async function configureApiKeyProvider({ config, prompt, providerKind, currentModel }) {
+  const preset = API_KEY_PRESETS[providerKind];
+  const answer = await promptText([
+    {
+      type: 'input',
+      name: 'apiKey',
+      message: preset.apiKeyMessage,
+      default: config.provider.apiKey || '',
+    },
+  ], prompt);
+
+  setValue(config, 'provider', 'kind', 'custom');
+  setValue(config, 'provider', 'authMode', 'api_key');
+  setValue(config, 'provider', 'baseUrl', preset.baseUrl);
+  setValue(config, 'provider', 'apiKey', answer.apiKey || '');
+  const model = await promptForModel({
+    prompt,
+    providerKind,
+    baseUrl: preset.baseUrl,
+    apiKey: answer.apiKey || '',
+    authMode: 'api_key',
+    currentModel,
+  });
+  setValue(config, 'provider', 'model', model);
+}
+
 export async function runOnboarding({ resetExisting = false, prompt = inquirer.prompt.bind(inquirer) } = {}) {
   const base = resetExisting ? getEmptyConfig() : loadConfig();
   const config = nextConfig(base);
   const rememberedModel = resetExisting ? '' : config.provider.model || '';
 
   console.log(banner());
-  printProviderCards();
+  printWizardStep('Agent profile', [
+    chalk.dim('Name, persona, and default language for the local assistant.'),
+  ]);
 
   const intro = await promptText([
     {
@@ -288,18 +374,16 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
   setValue(config, 'agent', 'persona', intro.persona || 'warm, precise, and practical');
   setValue(config, 'agent', 'language', intro.language || 'vi');
   setValue(config, 'agent', 'memoryEnabled', true);
+  setValue(config, 'agent', 'llmPlannerEnabled', Boolean(config.agent.llmPlannerEnabled));
 
+  printProviderMenuPreview(config);
   const providerChoice = await promptText([
     {
       type: 'list',
       name: 'provider',
       message: 'Select provider',
-      choices: [
-        { name: 'LM Studio — local-first, zero cloud dependency', value: 'lmstudio' },
-        { name: 'OpenAI Codex OAuth — reuse Codex login', value: 'codex_oauth' },
-        { name: 'Custom OpenAI-compatible endpoint', value: 'custom' },
-      ],
-      default: config.provider.authMode === 'codex_oauth' ? 'codex_oauth' : config.provider.kind || 'lmstudio',
+      choices: providerChoices(config),
+      default: resolveProviderChoice(config),
     },
   ], prompt);
 
@@ -324,16 +408,51 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
     });
     setValue(config, 'provider', 'model', model);
     setValue(config, 'provider', 'apiKey', '');
+  } else if (providerChoice.provider === 'openai_api' || providerChoice.provider === 'openrouter') {
+    await configureApiKeyProvider({
+      config,
+      prompt,
+      providerKind: providerChoice.provider,
+      currentModel: rememberedModel,
+    });
   } else if (providerChoice.provider === 'codex_oauth') {
-    let codexSummary = '';
     let codexAuth = null;
     try {
       codexAuth = loadCodexAuth();
-      codexSummary = JSON.stringify(redactCodexAuthSummary(codexAuth));
-    } catch (error) {
-      codexSummary = String(error.message || error);
+    } catch {
+      codexAuth = null;
     }
-    console.log(chalk.yellow(`\nCodex OAuth check: ${codexSummary}`));
+    printCodexOAuthPanel(codexAuth);
+    const linkChoice = await promptText([
+      {
+        type: 'confirm',
+        name: 'openLogin',
+        message: 'Open Codex login page now?',
+        default: true,
+      },
+    ], prompt);
+    if (linkChoice.openLogin) {
+      const opened = openCodexLoginPage(CODEX_LOGIN_URL);
+      console.log(opened
+        ? chalk.green('Opened the Codex login page in your browser.')
+        : chalk.yellow(`Could not auto-open a browser. Open this URL manually: ${CODEX_LOGIN_URL}`));
+    }
+    await promptText([
+      {
+        type: 'input',
+        name: 'continue',
+        message: 'Press Enter after you finish selecting the Gmail account and signing in',
+        default: '',
+      },
+    ], prompt);
+    try {
+      codexAuth = loadCodexAuth();
+    } catch (error) {
+      console.log(chalk.yellow(`Codex OAuth check: ${String(error.message || error)}`));
+    }
+    if (codexAuth) {
+      console.log(chalk.green(`Codex OAuth linked: ${JSON.stringify(redactCodexAuthSummary(codexAuth))}`));
+    }
     setValue(config, 'provider', 'kind', 'codex_oauth');
     setValue(config, 'provider', 'authMode', 'codex_oauth');
     setValue(config, 'provider', 'baseUrl', 'https://api.openai.com/v1');
@@ -347,7 +466,7 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
     });
     setValue(config, 'provider', 'model', model);
     setValue(config, 'provider', 'apiKey', '');
-  } else {
+  } else if (providerChoice.provider === 'custom') {
     const answer = await promptText([
       {
         type: 'input',
@@ -377,6 +496,9 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
     setValue(config, 'provider', 'model', model);
   }
 
+  printWizardStep('Memory policy', [
+    chalk.dim('Session title and context limits for future chat turns.'),
+  ]);
   const memory = await promptText([
     {
       type: 'input',
@@ -402,6 +524,10 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
   setValue(config, 'memory', 'maxFacts', Number(memory.maxFacts) || 50);
   setValue(config, 'memory', 'maxTurns', Number(memory.maxTurns) || 12);
 
+  printWizardStep('Select channel (QuickStart)', [
+    radioLine('Telegram', '(Bot API)', { selected: Boolean(config.integrations.telegram.enabled) }),
+    radioLine('Skip for now', '', { selected: !config.integrations.telegram.enabled }),
+  ]);
   const telegram = await promptText([
     {
       type: 'confirm',

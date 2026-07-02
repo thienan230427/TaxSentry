@@ -25,16 +25,19 @@ class TaxSentryDBManager:
     def connect(self):
         """Khởi tạo kết nối tới SQLite Database và tự động tạo bảng nếu chưa có."""
         try:
-            self.connection = sqlite3.connect(
-                self.db_path,
-                detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-            )
+            self.connection = sqlite3.connect(self.db_path)
             self.connection.row_factory = sqlite3.Row
             self.init_db()
             return True
         except Exception as e:
             print(f"❌ Kết nối SQLite thất bại rồi Sếp ơi: {e}")
             return False
+
+    @staticmethod
+    def _to_db_timestamp(value: datetime | str | None) -> str | None:
+        if isinstance(value, datetime):
+            return value.isoformat(sep=" ")
+        return value
 
     def _ensure_column(self, table_name: str, column_name: str, sql_type: str):
         cursor = self.connection.cursor()
@@ -170,7 +173,7 @@ class TaxSentryDBManager:
             cursor.execute(
                 sql,
                 (
-                    received_at,
+                    self._to_db_timestamp(received_at),
                     sender,
                     file_name,
                     revenue,

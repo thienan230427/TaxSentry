@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from taxsentry.runtime.policy import PolicyGate, PolicyDecision
+from taxsentry.text_normalize import normalize_for_match
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class InteractionRouter:
     def route(self, user_input: str, *, context: dict[str, Any] | None = None) -> RouteDecision:
         text = (user_input or "").strip()
         lowered = text.lower()
+        normalized = normalize_for_match(text)
         policy = self.policy_gate.evaluate(text)
 
         route = "chat"
@@ -36,15 +38,39 @@ class InteractionRouter:
         hints: list[str] = []
         confidence = 0.75
 
-        if any(keyword in lowered for keyword in ("phân tích", "analysis", "audit", "kiểm tra", "review", "đối chiếu")):
+        analysis_keywords = (
+            "phân tích",
+            "analysis",
+            "audit",
+            "kiểm tra",
+            "review",
+            "đối chiếu",
+            "phan tich",
+            "kiem tra",
+            "doi chieu",
+            "bao cao thue",
+        )
+        if any(keyword in lowered or keyword in normalized for keyword in analysis_keywords):
             route = intent = "analysis"
             hints.append("analysis-intent")
             confidence = 0.9
-        if any(keyword in lowered for keyword in ("chạy", "start", "khởi động", "bot", "up", "deploy", "service")):
+        operation_keywords = (
+            "chạy",
+            "start",
+            "khởi động",
+            "bot",
+            "up",
+            "deploy",
+            "service",
+            "chay",
+            "khoi dong",
+        )
+        if any(keyword in lowered or keyword in normalized for keyword in operation_keywords):
             route = intent = "operation"
             hints.append("operation-intent")
             confidence = max(confidence, 0.85)
-        if any(keyword in lowered for keyword in ("gửi", "email", "telegram", "notify", "thông báo")):
+        notification_keywords = ("gửi", "email", "telegram", "notify", "thông báo", "gui", "thong bao")
+        if any(keyword in lowered or keyword in normalized for keyword in notification_keywords):
             route = intent = "operation"
             hints.append("notification-intent")
         if "?" in text and route == "chat":
@@ -57,7 +83,8 @@ class InteractionRouter:
             hints.append("too-short")
             confidence = 0.35
 
-        if any(keyword in lowered for keyword in ("khẩn", "urgent", "ngay", "asap")):
+        urgent_keywords = ("khẩn", "urgent", "ngay", "asap", "khan")
+        if any(keyword in lowered or keyword in normalized for keyword in urgent_keywords):
             urgency = "high"
             hints.append("urgent")
 

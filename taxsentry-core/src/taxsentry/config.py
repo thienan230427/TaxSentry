@@ -29,6 +29,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "persona": "warm, precise, and practical",
         "language": "vi",
         "memory_enabled": True,
+        "llm_planner_enabled": False,
         "welcome_message": "Chào Sếp, em là TaxSentry — trợ lý agent local-first.",
     },
     "provider": {
@@ -75,6 +76,7 @@ ENV_MAPPING: dict[str, str] = {
     "agent.persona": "TAXSENTRY_AGENT_PERSONA",
     "agent.language": "TAXSENTRY_LANGUAGE",
     "agent.memory_enabled": "TAXSENTRY_MEMORY_ENABLED",
+    "agent.llm_planner_enabled": "TAXSENTRY_LLM_PLANNER_ENABLED",
     "provider.kind": "TAXSENTRY_PROVIDER_KIND",
     "provider.base_url": "TAXSENTRY_PROVIDER_URL",
     "provider.model": "TAXSENTRY_PROVIDER_MODEL",
@@ -183,6 +185,7 @@ def load_config() -> dict[str, Any]:
 def _coerce_value(cfg_path: str, value: str) -> Any:
     if cfg_path in {
         "agent.memory_enabled",
+        "agent.llm_planner_enabled",
         "integrations.telegram.enabled",
         "ui.show_banner",
         "jobs.tracking_enabled",
@@ -226,6 +229,7 @@ def build_env_lines(config: dict[str, Any]) -> list[str]:
         f'TAXSENTRY_AGENT_PERSONA="{config["agent"]["persona"]}"',
         f'TAXSENTRY_LANGUAGE="{config["agent"]["language"]}"',
         f'TAXSENTRY_MEMORY_ENABLED="{str(bool(config["agent"]["memory_enabled"])).lower()}"',
+        f'TAXSENTRY_LLM_PLANNER_ENABLED="{str(bool(config["agent"].get("llm_planner_enabled", False))).lower()}"',
         f'TAXSENTRY_PROVIDER_KIND="{config["provider"]["kind"]}"',
         f'TAXSENTRY_PROVIDER_URL="{config["provider"]["base_url"]}"',
         f'TAXSENTRY_PROVIDER_MODEL="{config["provider"]["model"]}"',
@@ -279,6 +283,7 @@ def describe_config(config: dict[str, Any]) -> str:
         f'Provider: {provider["kind"]} / {provider["model"]}',
         f'Endpoint: {provider["base_url"]}',
         f'Memory: {"on" if agent["memory_enabled"] else "off"} · facts={memory["max_facts"]} · turns={memory["max_turns"]}',
+        f'LLM planner: {"on" if agent.get("llm_planner_enabled", False) else "off"}',
         f'Jobs: {"tracking on" if config["jobs"]["tracking_enabled"] else "tracking off"} · retry={config["jobs"]["retry_limit"]} · default={config["jobs"]["default_state"]} · review={"on" if config["jobs"]["needs_human_review_on_missing_data"] else "off"} · email={"on" if config["jobs"]["auto_send_email"] else "off"} · telegram={"on" if config["jobs"]["auto_send_telegram"] else "off"}',
         f'Telegram: {"enabled" if telegram["enabled"] else "disabled"}',
         f'Config file: {CONFIG_FILE}',
