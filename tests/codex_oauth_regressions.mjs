@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -137,6 +137,75 @@ try {
   const configText = readFileSync(join(SHARED_HOME, '.taxsentry', 'config', 'config.json'), 'utf8');
   assert.ok(configText.includes('"kind": "codex_oauth"'), 'auth codex should persist Codex OAuth provider kind');
   assert.ok(configText.includes('"model": "gpt-5.5"'), 'auth codex should persist the selected Codex model');
+
+  mkdirSync(join(SHARED_HOME, '.codex'), { recursive: true });
+  writeFileSync(join(SHARED_HOME, '.codex', 'auth.json'), JSON.stringify({
+    auth_mode: 'chatgpt',
+    tokens: {
+      access_token: 'token-123',
+      refresh_token: 'refresh-456',
+      account_id: 'abc123456789',
+      email: 'thienan@gmail.com',
+      name: 'Thiên Ân',
+    },
+    last_refresh: '2026-07-01T00:00:00Z',
+  }), 'utf8');
+
+  const onboarding = await freshImport('src/onboarding.js');
+  const onboardingPrompts = [
+    { name: 'name', persona: 'warm, concise, and practical', language: 'vi' },
+    { provider: 'codex_oauth' },
+    { credentials: 'existing' },
+    { selection: '1' },
+    { sessionTitle: 'Sếp session', maxFacts: 20, maxTurns: 8 },
+    { enabled: false },
+  ];
+  const onboardingConfig = await onboarding.runOnboarding({
+    resetExisting: true,
+    prompt: async () => onboardingPrompts.shift(),
+  });
+
+  assert.equal(
+    onboardingConfig.provider.model,
+    'gpt-5.5',
+    'onboarding should ask whether to reuse existing Codex credentials before choosing a current Codex model',
+  );
+
+  const configModule = await freshImport('src/config.js');
+  const existingConfig = configModule.getEmptyConfig();
+  existingConfig.configured = true;
+  existingConfig.provider = {
+    kind: 'custom',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4.1-mini',
+    apiKey: 'secret-key',
+    authMode: 'api_key',
+  };
+  configModule.saveConfig(existingConfig);
+  configModule.writeEnvFile(existingConfig);
+
+  const cancelPrompts = [
+    { name: 'name', persona: 'warm, concise, and practical', language: 'vi' },
+    { provider: 'codex_oauth' },
+    { credentials: 'cancel' },
+    { sessionTitle: 'Sếp session', maxFacts: 20, maxTurns: 8 },
+    { enabled: false },
+  ];
+  const cancelledConfig = await onboarding.runOnboarding({
+    resetExisting: false,
+    prompt: async () => cancelPrompts.shift(),
+  });
+
+  assert.equal(
+    cancelledConfig.provider.kind,
+    'custom',
+    'cancelling Codex OAuth onboarding should keep the existing provider kind',
+  );
+  assert.equal(
+    cancelledConfig.provider.model,
+    'gpt-4.1-mini',
+    'cancelling Codex OAuth onboarding should preserve the existing provider model',
+  );
 } finally {
   console.log = originalLog;
   rmSync(SHARED_HOME, { recursive: true, force: true });

@@ -124,6 +124,63 @@ function printCodexOAuthPanel(auth = null) {
   printWizardStep('Codex OAuth account', lines);
 }
 
+function codexAuthFingerprint(auth = null) {
+  if (!auth) return '';
+  return [
+    auth.accountId || '',
+    auth.accountEmail || '',
+    auth.lastRefresh || '',
+    auth.accessToken ? 'access' : '',
+    auth.refreshToken ? 'refresh' : '',
+  ].join('|');
+}
+
+async function chooseCodexCredentialMode({ prompt, auth }) {
+  if (!auth) return 'reauthenticate';
+
+  const answer = await promptText([
+    {
+      type: 'list',
+      name: 'credentials',
+      message: 'OpenAI Codex credentials',
+      choices: [
+        { name: 'Use existing credentials', value: 'existing' },
+        { name: 'Reauthenticate / switch account in browser', value: 'reauthenticate' },
+        { name: 'Cancel Codex OAuth setup', value: 'cancel' },
+      ],
+      default: 'existing',
+    },
+  ], prompt);
+  return answer.credentials || 'existing';
+}
+
+async function runCodexBrowserLogin({ prompt }) {
+  const linkChoice = await promptText([
+    {
+      type: 'confirm',
+      name: 'openLogin',
+      message: 'Open Codex login page now?',
+      default: true,
+    },
+  ], prompt);
+  if (linkChoice.openLogin) {
+    const opened = openCodexLoginPage(CODEX_LOGIN_URL);
+    console.log(opened
+      ? chalk.green('Opened the Codex login page in your browser.')
+      : chalk.yellow(`Could not auto-open a browser. Open this URL manually: ${CODEX_LOGIN_URL}`));
+  } else {
+    console.log(chalk.yellow(`Open this URL manually: ${CODEX_LOGIN_URL}`));
+  }
+  await promptText([
+    {
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter after you finish selecting the Gmail account and signing in',
+      default: '',
+    },
+  ], prompt);
+}
+
 function promptText(questions, prompt) {
   return prompt(questions);
 }
@@ -438,49 +495,43 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
       codexAuth = null;
     }
     printCodexOAuthPanel(codexAuth);
-    const linkChoice = await promptText([
-      {
-        type: 'confirm',
-        name: 'openLogin',
-        message: 'Open Codex login page now?',
-        default: true,
-      },
-    ], prompt);
-    if (linkChoice.openLogin) {
-      const opened = openCodexLoginPage(CODEX_LOGIN_URL);
-      console.log(opened
-        ? chalk.green('Opened the Codex login page in your browser.')
-        : chalk.yellow(`Could not auto-open a browser. Open this URL manually: ${CODEX_LOGIN_URL}`));
+    const previousAuthFingerprint = codexAuthFingerprint(codexAuth);
+    const credentialMode = await chooseCodexCredentialMode({ prompt, auth: codexAuth });
+    if (credentialMode === 'cancel') {
+      console.log(chalk.yellow('Codex OAuth setup cancelled; keeping the current provider configuration.'));
+    } else {
+      if (credentialMode === 'reauthenticate') {
+        await runCodexBrowserLogin({ prompt });
+        try {
+          codexAuth = loadCodexAuth();
+        } catch (error) {
+          console.log(chalk.yellow(`Codex OAuth check: ${String(error.message || error)}`));
+        }
+        if (previousAuthFingerprint && codexAuthFingerprint(codexAuth) === previousAuthFingerprint) {
+          console.log(chalk.yellow([
+            'Codex OAuth profile did not change after browser login.',
+            'If Chrome opened the Codex home page instead of account selection, it is reusing the current ChatGPT session.',
+            'To switch accounts, sign out from ChatGPT/Codex in the browser or use another browser profile, then run this step again.',
+          ].join(' ')));
+        }
+      }
+      if (codexAuth) {
+        console.log(chalk.green(`Codex OAuth linked: ${JSON.stringify(redactCodexAuthSummary(codexAuth))}`));
+      }
+      setValue(config, 'provider', 'kind', 'codex_oauth');
+      setValue(config, 'provider', 'authMode', 'codex_oauth');
+      setValue(config, 'provider', 'baseUrl', CODEX_API_BASE_URL);
+      const model = await promptForModel({
+        prompt,
+        providerKind: 'codex_oauth',
+        baseUrl: CODEX_API_BASE_URL,
+        authMode: 'codex_oauth',
+        accessToken: codexAuth?.accessToken || '',
+        currentModel: rememberedModel,
+      });
+      setValue(config, 'provider', 'model', model);
+      setValue(config, 'provider', 'apiKey', '');
     }
-    await promptText([
-      {
-        type: 'input',
-        name: 'continue',
-        message: 'Press Enter after you finish selecting the Gmail account and signing in',
-        default: '',
-      },
-    ], prompt);
-    try {
-      codexAuth = loadCodexAuth();
-    } catch (error) {
-      console.log(chalk.yellow(`Codex OAuth check: ${String(error.message || error)}`));
-    }
-    if (codexAuth) {
-      console.log(chalk.green(`Codex OAuth linked: ${JSON.stringify(redactCodexAuthSummary(codexAuth))}`));
-    }
-    setValue(config, 'provider', 'kind', 'codex_oauth');
-    setValue(config, 'provider', 'authMode', 'codex_oauth');
-    setValue(config, 'provider', 'baseUrl', CODEX_API_BASE_URL);
-    const model = await promptForModel({
-      prompt,
-      providerKind: 'codex_oauth',
-      baseUrl: CODEX_API_BASE_URL,
-      authMode: 'codex_oauth',
-      accessToken: codexAuth?.accessToken || '',
-      currentModel: rememberedModel,
-    });
-    setValue(config, 'provider', 'model', model);
-    setValue(config, 'provider', 'apiKey', '');
   } else if (providerChoice.provider === 'custom') {
     const answer = await promptText([
       {
