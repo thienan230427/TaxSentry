@@ -27,7 +27,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/thienan230427/TaxSentry.git"
+    "url": "git+https://github.com/thienan230427/TaxSentry.git"
   },
   "dependencies": {
     "boxen": "^7.1.0",
