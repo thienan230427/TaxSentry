@@ -1,23 +1,26 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 function packTarball() {
   const npmCli = process.env.npm_execpath;
   assert.ok(npmCli, 'npm_execpath must be set when running under npm');
+  const npmCacheDir = mkdtempSync(join(process.cwd(), 'scratch', 'npm-cache-'));
   const output = execFileSync(process.execPath, [npmCli, 'pack', '--ignore-scripts', '--json', '--silent'], {
     cwd: process.cwd(),
     encoding: 'utf8',
     env: {
       ...process.env,
       npm_config_dry_run: 'false',
+      npm_config_cache: npmCacheDir,
+      npm_config_tmp: npmCacheDir,
     },
   }).trim();
   const packed = JSON.parse(output);
   assert.equal(Array.isArray(packed), true, 'npm pack should return a JSON array');
   assert.equal(packed.length, 1, 'npm pack should produce exactly one tarball');
-  return packed[0].filename;
+  return { filename: packed[0].filename, cacheDir: npmCacheDir };
 }
 
 function inspectTarball(tarballPath) {
@@ -34,7 +37,7 @@ function assertNoMatch(names, predicate, message) {
   assert.ok(!names.some(predicate), message);
 }
 
-const tarballName = packTarball();
+const { filename: tarballName, cacheDir } = packTarball();
 const tarballPath = join(process.cwd(), tarballName);
 
 try {
@@ -69,4 +72,5 @@ try {
   await import('../src/commands/start.js');
 } finally {
   if (existsSync(tarballPath)) rmSync(tarballPath, { force: true });
+  if (existsSync(cacheDir)) rmSync(cacheDir, { recursive: true, force: true });
 }

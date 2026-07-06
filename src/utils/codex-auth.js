@@ -114,19 +114,36 @@ export async function fetchCodexModelIds({
   }
 }
 
-export function openCodexLoginPage(url = CODEX_LOGIN_URL) {
-  const platform = process.platform;
-  const command = platform === 'win32' ? 'cmd' : platform === 'darwin' ? 'open' : 'xdg-open';
-  const args = platform === 'win32'
-    ? ['/c', 'start', '', url]
-    : [url];
+export function openCodexLoginPage(url = CODEX_LOGIN_URL, { platform = process.platform, runner = execFileSync } = {}) {
+  const candidates = platform === 'win32'
+    ? [
+        ['msedge', ['--inprivate', url]],
+        ['chrome', ['--incognito', url]],
+        ['cmd', ['/d', '/s', '/c', 'start', '', url]],
+      ]
+    : platform === 'darwin'
+      ? [
+          ['open', ['-na', 'Google Chrome', '--args', '--incognito', url]],
+          ['open', ['-na', 'Microsoft Edge', '--args', '--inprivate', url]],
+          ['open', [url]],
+        ]
+      : [
+          ['google-chrome', ['--incognito', url]],
+          ['chromium', ['--incognito', url]],
+          ['chromium-browser', ['--incognito', url]],
+          ['xdg-open', [url]],
+        ];
 
-  try {
-    execFileSync(command, args, { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
+  for (const [command, args] of candidates) {
+    try {
+      runner(command, args, { stdio: 'ignore' });
+      return true;
+    } catch {
+      continue;
+    }
   }
+
+  return false;
 }
 
 function uniqueStrings(values) {

@@ -32,6 +32,46 @@ async function promptText(questions, prompt) {
   return prompt(questions);
 }
 
+async function configureTelegramAfterAuth({ config, prompt }) {
+  const answer = await promptText([
+    {
+      type: 'confirm',
+      name: 'enabled',
+      message: 'Configure Telegram now?',
+      default: true,
+    },
+  ], prompt);
+
+  if (!answer.enabled) {
+    return false;
+  }
+
+  const telegram = config.integrations?.telegram || {};
+  const tg = await promptText([
+    {
+      type: 'input',
+      name: 'botToken',
+      message: 'Telegram bot token',
+      default: telegram.botToken || '',
+    },
+    {
+      type: 'input',
+      name: 'adminChatId',
+      message: 'Telegram admin chat ID',
+      default: telegram.adminChatId || '',
+    },
+  ], prompt);
+
+  setValue(config, 'integrations', 'telegram', {
+    enabled: true,
+    botToken: tg.botToken || '',
+    adminChatId: tg.adminChatId || '',
+  });
+  saveConfig(config);
+  writeEnvFile(config);
+  return true;
+}
+
 async function chooseCodexCredentials({ existingAuth, prompt }) {
   if (!existingAuth) return 'reauthenticate';
 
@@ -45,10 +85,10 @@ async function chooseCodexCredentials({ existingAuth, prompt }) {
         { name: 'Reauthenticate (new OAuth login)', value: 'reauthenticate' },
         { name: 'Cancel', value: 'cancel' },
       ],
-      default: 'existing',
+      default: 'reauthenticate',
     },
   ], prompt);
-  return answer.credentials || 'existing';
+  return answer.credentials || 'reauthenticate';
 }
 
 export async function runAuthCodex({
@@ -129,6 +169,15 @@ export async function runAuthCodex({
     chalk.white(`Model: ${model}`),
     chalk.green(`Account: ${JSON.stringify(redactCodexAuthSummary(auth))}`),
   ].join('\n'), { padding: 1, borderStyle: 'round', borderColor: 'green' }));
+
+  if (await configureTelegramAfterAuth({ config, prompt })) {
+    console.log(boxen([
+      chalk.bold.cyan('Telegram configured'),
+      chalk.white(`Bot token: ${config.integrations.telegram.botToken ? 'set' : 'missing'}`),
+      chalk.white(`Admin chat ID: ${config.integrations.telegram.adminChatId || 'missing'}`),
+    ].join('\n'), { padding: 1, borderStyle: 'round', borderColor: 'green' }));
+  }
+
   return { skipped: false, auth, model, config };
 }
 

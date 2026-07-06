@@ -148,10 +148,10 @@ async function chooseCodexCredentialMode({ prompt, auth }) {
         { name: 'Reauthenticate / switch account in browser', value: 'reauthenticate' },
         { name: 'Cancel Codex OAuth setup', value: 'cancel' },
       ],
-      default: 'existing',
+      default: 'reauthenticate',
     },
   ], prompt);
-  return answer.credentials || 'existing';
+  return answer.credentials || 'reauthenticate';
 }
 
 async function runCodexBrowserLogin({ prompt }) {

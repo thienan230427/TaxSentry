@@ -30,6 +30,7 @@ const {
   CODEX_LOGIN_URL,
   CODEX_RECOMMENDED_MODELS,
   fetchCodexModelIds,
+  openCodexLoginPage,
   redactCodexAuthSummary,
 } = codexAuth;
 
@@ -86,6 +87,28 @@ assert.deepEqual(
   'Codex model fetch should prioritize current recommended Codex IDs while preserving available models',
 );
 
+const browserCalls = [];
+const browserOpened = openCodexLoginPage(CODEX_LOGIN_URL, {
+  platform: 'win32',
+  runner: (command, args) => {
+    browserCalls.push([command, args]);
+    if (command === 'msedge') throw new Error('msedge missing');
+    return true;
+  },
+});
+
+assert.equal(browserOpened, true, 'Codex login should fall back across browser launchers');
+assert.deepEqual(
+  browserCalls[0],
+  ['msedge', ['--inprivate', CODEX_LOGIN_URL]],
+  'Codex login should try a private browser window first',
+);
+assert.deepEqual(
+  browserCalls[1],
+  ['chrome', ['--incognito', CODEX_LOGIN_URL]],
+  'Codex login should fall back to another private browser launcher',
+);
+
 const { runAuthCodex } = await freshImport('src/commands/auth-codex.js');
 const openedUrls = [];
 let loadAuthCalls = 0;
@@ -103,6 +126,8 @@ const promptQueue = [
   { openLogin: true },
   { continue: '' },
   { selection: '1' },
+  { enabled: true },
+  { botToken: 'BOT-123', adminChatId: '999' },
 ];
 const originalLog = console.log;
 console.log = () => {};
@@ -137,6 +162,11 @@ try {
   const configText = readFileSync(join(SHARED_HOME, '.taxsentry', 'config', 'config.json'), 'utf8');
   assert.ok(configText.includes('"kind": "codex_oauth"'), 'auth codex should persist Codex OAuth provider kind');
   assert.ok(configText.includes('"model": "gpt-5.5"'), 'auth codex should persist the selected Codex model');
+  assert.equal(result.config.integrations.telegram.enabled, true, 'auth codex should allow Telegram setup immediately after OAuth');
+  assert.equal(result.config.integrations.telegram.botToken, 'BOT-123', 'auth codex should persist Telegram bot token');
+  assert.equal(result.config.integrations.telegram.adminChatId, '999', 'auth codex should persist Telegram admin chat ID');
+  assert.ok(readFileSync(join(SHARED_HOME, '.taxsentry', 'taxsentry-core', '.env'), 'utf8').includes('TELEGRAM_BOT_TOKEN="BOT-123"'), 'auth codex should write Telegram secret to env');
+  assert.ok(readFileSync(join(SHARED_HOME, '.taxsentry', 'taxsentry-core', '.env'), 'utf8').includes('ADMIN_CHAT_ID="999"'), 'auth codex should write Telegram admin chat ID to env');
 
   mkdirSync(join(SHARED_HOME, '.codex'), { recursive: true });
   writeFileSync(join(SHARED_HOME, '.codex', 'auth.json'), JSON.stringify({

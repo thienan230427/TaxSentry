@@ -105,6 +105,9 @@ export function applyServiceCommand(serviceName = 'telegram_bot') {
       console.log(chalk.yellow('   Gợi ý: hãy mở terminal với quyền phù hợp rồi chạy lại `taxsentry service apply`.'));
     }
   }
+  if (!result.ok) {
+    process.exitCode = 1;
+  }
   console.log();
 }
 
@@ -118,6 +121,9 @@ export function startServiceCommand(serviceName = 'telegram_bot') {
   console.log(chalk.dim(`   Tên đăng ký: ${result.appliedName}`));
   if (result.detail) {
     console.log(chalk.dim(`   Chi tiết: ${result.detail}`));
+  }
+  if (!result.ok) {
+    process.exitCode = 1;
   }
   console.log();
 }
@@ -133,6 +139,9 @@ export function stopServiceCommand(serviceName = 'telegram_bot') {
   if (result.detail) {
     console.log(chalk.dim(`   Chi tiết: ${result.detail}`));
   }
+  if (!result.ok) {
+    process.exitCode = 1;
+  }
   console.log();
 }
 
@@ -146,6 +155,9 @@ export function restartServiceCommand(serviceName = 'telegram_bot') {
   console.log(chalk.dim(`   Tên đăng ký: ${result.appliedName}`));
   if (result.detail) {
     console.log(chalk.dim(`   Chi tiết: ${result.detail}`));
+  }
+  if (!result.ok) {
+    process.exitCode = 1;
   }
   console.log();
 }
@@ -167,6 +179,12 @@ export function removeServiceCommand(serviceName = 'telegram_bot', purgeArtifact
   if (purgeArtifacts) {
     const purge = uninstallServiceArtifacts(serviceName);
     console.log(chalk.dim(`   Xóa artifact local: ${purge.removed ? 'Thành công' : 'Chưa xác nhận'}`));
+    if (!purge.removed) {
+      process.exitCode = 1;
+    }
+  }
+  if (!result.ok) {
+    process.exitCode = 1;
   }
   console.log();
 }

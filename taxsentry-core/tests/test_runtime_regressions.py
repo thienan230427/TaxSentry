@@ -41,6 +41,21 @@ def test_python_cli_dispatches_to_tui_and_status(monkeypatch):
     assert calls['status'] == 1
 
 
+def test_run_status_does_not_bootstrap_memory(monkeypatch):
+    from types import SimpleNamespace
+
+    from taxsentry import app
+
+    monkeypatch.setattr(app, 'TaxSentryRuntimeService', lambda: SimpleNamespace(
+        settings={},
+        status_text=lambda: 'status ok',
+    ))
+    monkeypatch.setattr(app, 'from_settings', lambda settings: object())
+    monkeypatch.setattr(app, 'health_check', lambda provider: (True, 'healthy'))
+
+    assert app.run_status() == 0
+
+
 def test_email_poller_marks_specific_email_ids(tmp_path):
     from taxsentry.core.email_poller import TaxSentryEmailPoller
 

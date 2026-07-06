@@ -16,6 +16,10 @@ function buildPythonEnv(extra = {}) {
 export function runPythonModule(args, { cwd = CORE_DIR, env = {}, background = false } = {}) {
   ensureDirectories();
   const python = getPythonPath();
+  if (!existsSync(python)) {
+    console.error('TaxSentry runtime not found. Run `taxsentry setup` first.');
+    return null;
+  }
   const commandArgs = ['-m', 'taxsentry', ...args];
   if (!background) {
     const result = spawn(python, commandArgs, {
@@ -41,17 +45,21 @@ export function runPythonModule(args, { cwd = CORE_DIR, env = {}, background = f
 
 export function startForeground(args = ['tui'], options = {}) {
   const python = getPythonPath();
+  if (!existsSync(python)) {
+    console.error('TaxSentry runtime not found. Run `taxsentry setup` first.');
+    return 1;
+  }
   const commandArgs = ['-m', 'taxsentry', ...args];
   const result = spawnSync(python, commandArgs, {
     cwd: options.cwd || CORE_DIR,
     env: buildPythonEnv(options.env || {}),
     stdio: 'inherit',
   });
-  return result.status ?? 0;
+  return typeof result.status === 'number' ? result.status : 1;
 }
 
 export function startBackground(args = ['tui'], options = {}) {
-  runPythonModule(args, { ...options, background: true });
+  return runPythonModule(args, { ...options, background: true });
 }
 
 export function stopBackground() {

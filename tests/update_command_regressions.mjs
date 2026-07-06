@@ -81,6 +81,36 @@ const resolvedNpmCliPath = updateModule.resolveNpmCliPath();
 assert.ok(typeof resolvedNpmCliPath === 'string' && resolvedNpmCliPath.length > 0, 'resolveNpmCliPath should find an npm CLI path on this machine');
 assert.ok(resolvedNpmCliPath.endsWith('npm-cli.js'), 'resolveNpmCliPath should point to npm-cli.js');
 
+const brokenHome = mkdtempSync(join(tmpdir(), 'taxsentry-launcher-'));
+process.env.HOME = brokenHome;
+process.env.USERPROFILE = brokenHome;
+process.env.HOMEDRIVE = '';
+process.env.HOMEPATH = brokenHome;
+process.env.TAXSENTRY_HOME = join(brokenHome, '.taxsentry');
+process.env.TAXSENTRY_CONFIG_FILE = join(brokenHome, '.taxsentry', 'config', 'config.json');
+process.env.TAXSENTRY_MEMORY_DB = join(brokenHome, '.taxsentry', 'memory', 'memory.db');
+process.env.TAXSENTRY_SESSION_FILE = join(brokenHome, '.taxsentry', 'memory', 'sessions.jsonl');
+process.env.TAXSENTRY_CORE_DIR = join(brokenHome, '.taxsentry', 'taxsentry-core');
+process.env.TAXSENTRY_ENV_FILE = join(brokenHome, '.taxsentry', 'taxsentry-core', '.env');
+
+const launcher = await freshImport('src/launcher.js');
+assert.equal(
+  launcher.startForeground(['status']),
+  1,
+  'startForeground should return a non-zero exit code when Python cannot be spawned',
+);
+assert.equal(
+  launcher.startBackground(['tui']),
+  null,
+  'startBackground should return null when Python cannot be spawned',
+);
+
+const upModule = await freshImport('src/commands/up.js');
+process.exitCode = 0;
+await upModule.default();
+assert.equal(process.exitCode, 1, 'up should set a non-zero exit code when the runtime is missing');
+process.exitCode = 0;
+
 const envText = readFileSync(join(SHARED_HOME, '.taxsentry', 'taxsentry-core', '.env'), 'utf8');
 assert.ok(envText.includes('TAXSENTRY_PROVIDER_KIND="lmstudio"'), 'update should preserve provider env values');
 

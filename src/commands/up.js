@@ -6,5 +6,8 @@ export default async function upCommand() {
   if (!isConfigured()) {
     await runSetup({ resetExisting: true });
   }
-  startBackground(['tui']);
+  const child = startBackground(['tui']);
+  if (!child) {
+    process.exitCode = 1;
+  }
 }

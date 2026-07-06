@@ -412,9 +412,10 @@ export function removeAppliedService(serviceName) {
   if (profile.artifactType === 'systemd') {
     const disable = runCommand('systemctl', ['--user', 'disable', '--now', appliedName]);
     const reload = runCommand('systemctl', ['--user', 'daemon-reload']);
+    const hadTargetPath = Boolean(targetPath && existsSync(targetPath));
     if (targetPath && existsSync(targetPath)) rmSync(targetPath, { force: true });
     return {
-      ok: disable.status === 0 || !existsSync(targetPath),
+      ok: disable.status === 0 || !hadTargetPath,
       action: 'remove',
       detail: [disable.stdout || disable.stderr, reload.stdout || reload.stderr].filter(Boolean).join(' | '),
       appliedName,
@@ -423,9 +424,10 @@ export function removeAppliedService(serviceName) {
   }
 
   const unload = runCommand('launchctl', ['unload', targetPath]);
+  const hadTargetPath = Boolean(targetPath && existsSync(targetPath));
   if (targetPath && existsSync(targetPath)) rmSync(targetPath, { force: true });
   return {
-    ok: unload.status === 0 || !existsSync(targetPath),
+    ok: unload.status === 0 || !hadTargetPath,
     action: 'remove',
     detail: unload.stdout || unload.stderr || unload.error || '',
     appliedName,
