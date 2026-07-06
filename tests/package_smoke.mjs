@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 function packTarball() {
   const npmCli = process.env.npm_execpath;
   assert.ok(npmCli, 'npm_execpath must be set when running under npm');
+  mkdirSync(join(process.cwd(), 'scratch'), { recursive: true });
   const npmCacheDir = mkdtempSync(join(process.cwd(), 'scratch', 'npm-cache-'));
   const output = execFileSync(process.execPath, [npmCli, 'pack', '--ignore-scripts', '--json', '--silent'], {
     cwd: process.cwd(),

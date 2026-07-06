@@ -106,12 +106,14 @@ try {
 }
 
 try {
-  cp.execFileSync('node', [join(process.cwd(), 'bin', 'taxsentry.js'), 'service', 'stop'], {
-    encoding: 'utf8',
+  const serviceCommands = await freshImport('src/commands/service.js');
+  process.exitCode = 0;
+  serviceCommands.stopServiceCommand(serviceName, {
+    stopAppliedService: () => ({ ok: false, detail: 'permission denied', appliedName: 'fake-service' }),
   });
-  assert.fail('service stop should exit non-zero when the OS stop command fails');
-} catch (error) {
-  assert.notEqual(error.status, 0, 'service stop should surface a failure exit code');
+  assert.equal(process.exitCode, 1, 'service stop should surface a failure exit code');
+} finally {
+  process.exitCode = 0;
 }
 
 rmSync(SHARED_HOME, { recursive: true, force: true });

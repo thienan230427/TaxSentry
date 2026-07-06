@@ -128,8 +128,9 @@ export function startServiceCommand(serviceName = 'telegram_bot') {
   console.log();
 }
 
-export function stopServiceCommand(serviceName = 'telegram_bot') {
-  const result = stopAppliedService(serviceName);
+export function stopServiceCommand(serviceName = 'telegram_bot', deps = {}) {
+  const stop = deps.stopAppliedService ?? stopAppliedService;
+  const result = stop(serviceName);
   if (result.ok) {
     success(`Đã yêu cầu OS stop service cho ${getServiceLabel(serviceName)}.`);
   } else {
