@@ -43,6 +43,7 @@ def test_policy_gate_and_response_composer_redact_sensitive_values():
     gate = PolicyGate()
     decision = gate.evaluate('API key: sk-test-12345 và password=secret123')
     assert decision.risk_level == 'high'
+    assert decision.allowed is False
     assert '[REDACTED]' in decision.redacted_text
 
     composer = ResponseComposer(policy_gate=gate)

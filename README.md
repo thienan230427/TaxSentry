@@ -1,172 +1,185 @@
 # TaxSentry
 
-TaxSentry is a provider-first local AI agent for tax and finance workflows.
-It gives you a guided setup wizard, a terminal agent cockpit, persistent local memory, session tracing, provider switching, and service tooling for background automation.
+TaxSentry is a provider-first, local-first AI agent for tax and finance workflows.
+It combines a guided setup wizard, a terminal cockpit, persistent local memory, session tracing, report replay, provider switching, and background service tooling for automation.
 
-Current npm package: `taxsentry@1.1.4`
+Current version: `1.1.6`
 
 Repository: `https://github.com/thienan230427/TaxSentry`
 
-## What TaxSentry Does
+## Overview
 
-TaxSentry is designed to help you operate a local-first tax assistant from the terminal.
+TaxSentry is built for teams that want a local assistant for accounting, tax review, and operational follow-up without giving up control of the runtime.
 
-| Area | What it provides |
+The project has two layers:
+
+- a Node.js CLI that handles onboarding, TUI launch, service management, and user-facing workflows
+- a Python core that performs provider access, memory, session tracking, parsing, analysis, PDF generation, email delivery, Telegram delivery, and automation
+
+## What TaxSentry Can Do
+
+| Area | Capability |
 | --- | --- |
-| Agent runtime | Central `AgentKernel`, router, planner, tool registry, session state |
-| Chat cockpit | Interactive TUI with slash commands and provider-aware context |
-| Memory | SQLite-backed local memory, recall, and `/remember` support |
-| Providers | LM Studio, Codex OAuth, OpenAI-compatible endpoints |
-| Workflow tools | Audit execution, report history, jobs, traces, dashboard |
-| Service mode | Background Telegram bot service artifact management |
-| Release safety | Node regression tests, Python tests, lint, cross-platform GitHub Actions |
+| Setup | Guided first-run wizard, provider selection, memory settings, Telegram setup |
+| Chat cockpit | Interactive terminal UI with slash commands and provider-aware context |
+| Providers | LM Studio, Codex OAuth, and any OpenAI-compatible endpoint |
+| Memory | Persistent SQLite-backed memory with remember, recall, and forget support |
+| Sessions | Session log, event trace, replay bundle, and timeline storage |
+| Jobs | Job lifecycle tracking, retry metadata, and failure status propagation |
+| Finance parsing | Flexible Excel parsing, payroll extraction, canonical metric mapping |
+| Analysis | AI audit engine that reads parsed data plus Vietnamese tax knowledge |
+| Reports | Markdown report generation, PDF export, and report history |
+| Delivery | SMTP email delivery and Telegram bot delivery |
+| Automation | Inbox polling, attachment download, parse -> audit -> PDF -> send flow |
+| Service mode | Platform-specific service artifact generation and OS service controls |
+| Release safety | Node regression tests, Python tests, linting, and packaging smoke checks |
 
-## Quick Start
+## Key Features
 
-### 1. Install from npm
+### 1. Provider-first setup
 
-```bash
-npm install -g taxsentry
-```
+Choose the provider that matches your environment:
 
-Check that the CLI is available:
+- LM Studio for local model serving
+- Codex OAuth for the logged-in ChatGPT/Codex account
+- OpenAI-compatible providers such as OpenRouter or custom gateways
 
-```bash
-taxsentry --help
-```
+The onboarding flow writes runtime config, `.env`, and local state files automatically.
 
-### 2. Run first-time setup
+### 2. Terminal cockpit
 
-```bash
-taxsentry setup
-```
+Launch the cockpit with `taxsentry start` to get:
 
-The setup wizard lets you choose:
+- a focused chat surface
+- slash commands for operational tasks
+- live provider state and session context
+- quick access to memory, jobs, reports, and replay data
 
-- agent name, persona, and language
-- model provider
-- model name
-- memory settings
-- optional Telegram channel setup
+### 3. Persistent memory
 
-### 3. Start the agent cockpit
+TaxSentry stores facts in SQLite and supports:
 
-```bash
-taxsentry start
-```
+- saving preferences and project facts
+- recalling relevant memory by keyword and accent-insensitive matching
+- forgetting stored facts
+- compact memory summaries in the TUI and copilot prompts
 
-Inside the cockpit, try:
+### 4. Session tracing and replay
 
-```text
-/help
-/status
-/memory
-/remember This project should verify provider health before release.
-/mode analysis
-/audit
-/exit
-```
+The runtime records:
 
-### 4. Check system status
+- session starts and ends
+- user and assistant messages
+- tool execution
+- job events
+- report provenance and trace metadata
 
-```bash
-taxsentry status
-taxsentry doctor
-```
+That data powers:
 
-### 5. Open the dashboard
+- `taxsentry replay`
+- the dashboard
+- evidence previews
+- report provenance in email and Telegram
 
-```bash
-taxsentry dashboard
-```
+### 5. Excel and finance analysis
 
-## Provider Setup
+The Python core can parse workbooks with:
 
-TaxSentry is provider-first. You choose the model backend during setup or later with `taxsentry reconfigure`.
+- income statement-like sheets
+- payroll sheets
+- tax summary sheets
+- assumptions sheets
+- generic tabular sheets
 
-### Option A: LM Studio
+It extracts canonical metrics such as:
 
-Use this when you want a local model server.
+- revenue
+- gross profit
+- total OPEX
+- net income
+- total income
+- personal income tax
+- social insurance
+- net pay
 
-1. Open LM Studio.
-2. Start the local OpenAI-compatible server.
-3. Use this base URL:
+### 6. AI audit generation
 
-```text
-http://localhost:1234/v1
-```
+The audit engine:
 
-4. Run:
+- compacts parsed finance data
+- loads the Vietnamese tax knowledge base
+- sends a structured prompt to the selected provider
+- writes the generated report to `audit_report.md`
 
-```bash
-taxsentry setup
-```
+### 7. PDF, email, and Telegram delivery
 
-Recommended fields:
+TaxSentry can:
 
-| Field | Value |
+- render Markdown reports to PDF
+- email the report as an attachment
+- send the report and evidence preview to Telegram
+- preserve trace metadata on outbound artifacts
+
+### 8. Automation loop
+
+The automation workflow can:
+
+- poll an inbox
+- download allowed attachments
+- parse Excel or PDF inputs
+- run the audit engine
+- generate PDF output
+- send email and Telegram notifications
+- mark emails as processed only after successful completion
+
+### 9. Service mode
+
+The service command set can generate and manage OS service artifacts for a Telegram bot runtime across supported platforms.
+
+## CLI Commands
+
+### Main commands
+
+| Command | Description |
 | --- | --- |
-| Provider | LM Studio |
-| Base URL | `http://localhost:1234/v1` |
-| API key | blank or local placeholder |
-| Model | any model exposed by LM Studio |
-
-### Option B: Codex OAuth
-
-Use this when you want to sign in with the same ChatGPT/Codex account used by Codex CLI.
-
-```bash
-taxsentry auth codex
-```
-
-TaxSentry opens the Codex login page at `https://chatgpt.com/auth/login?next=%2Fcodex%2Fcloud`, waits for you to choose the target account, then reads the refreshed Codex OAuth profile from `~/.codex/auth.json`.
-
-After login, choose one of the Codex model IDs shown in the model picker. TaxSentry fetches available models from OpenAI when the token allows it, and falls back to current Codex IDs such as `gpt-5.5`, `gpt-5.4`, and `gpt-5.4-mini`.
-
-### Option C: Custom OpenAI-Compatible Endpoint
-
-Use this for OpenAI-compatible providers such as OpenRouter, local gateways, or custom model servers.
-
-During setup, choose:
-
-```text
-Custom endpoint (OpenAI-compatible)
-```
-
-Provide:
-
-| Field | Example |
-| --- | --- |
-| Base URL | `https://api.openai.com/v1` |
-| API key | your provider key |
-| Model | `gpt-4.1-mini`, `gpt-4.1`, or your gateway model |
-
-## Main Commands
-
-| Command | Purpose |
-| --- | --- |
-| `taxsentry setup` | Run first-time setup |
-| `taxsentry setup --reset` | Reset and configure from scratch |
-| `taxsentry start` | Open the interactive TUI |
-| `taxsentry status` | Show current configuration and provider health |
-| `taxsentry doctor` | Check runtime health |
-| `taxsentry dashboard` | Open operational dashboard |
+| `taxsentry setup` | Run the provider-first setup wizard |
+| `taxsentry setup --reset` | Reconfigure from scratch |
+| `taxsentry start` | Open the interactive terminal cockpit |
+| `taxsentry status` | Show saved configuration and provider health |
+| `taxsentry doctor` | Run a runtime health report |
+| `taxsentry dashboard` | Open the read-only operational dashboard |
 | `taxsentry jobs` | Show recent jobs |
 | `taxsentry replay [sessionId]` | Replay a session trace |
 | `taxsentry reconfigure` | Re-run onboarding without wiping secrets |
-| `taxsentry reset-profile` | Fully reset local profile and onboarding state |
-| `taxsentry auth codex` | Link config to Codex OAuth |
+| `taxsentry reset-profile` | Reset local profile and onboarding state |
+| `taxsentry auth codex` | Link the current config to Codex OAuth |
 | `taxsentry update` | Refresh runtime config |
-| `taxsentry update --self` | Self-update installed npm package |
-| `taxsentry up` | Start background agent service mode |
-| `taxsentry stop` | Stop background agent service mode |
-| `taxsentry config` | Print saved configuration |
+| `taxsentry update --self` | Self-update the installed npm package |
+| `taxsentry update --config-only` | Refresh config without self-update |
+| `taxsentry up` | Start the background agent in service mode |
+| `taxsentry stop` | Stop the background agent |
+| `taxsentry config` | Print the saved configuration |
 
-## Agent Slash Commands
+### Service subcommands
 
-Use these inside `taxsentry start`.
+| Command | Description |
+| --- | --- |
+| `taxsentry service` | Show service status |
+| `taxsentry service status` | Show artifact and registration status |
+| `taxsentry service install` | Generate platform-specific service artifacts |
+| `taxsentry service apply` | Apply the service artifact to the host OS |
+| `taxsentry service start` | Start the registered OS service |
+| `taxsentry service stop` | Stop the registered OS service |
+| `taxsentry service restart` | Restart the registered OS service |
+| `taxsentry service remove` | Remove the service registration |
+| `taxsentry service remove --purge-artifacts` | Remove registration and delete local artifacts |
+| `taxsentry service logs -n 100` | Show recent service logs |
 
-| Slash command | Purpose |
+## Slash Commands in the Cockpit
+
+Use these inside `taxsentry start`:
+
+| Slash command | Description |
 | --- | --- |
 | `/help` | Show cockpit commands |
 | `/status` | Show current agent status |
@@ -174,84 +187,57 @@ Use these inside `taxsentry start`.
 | `/remember <text>` | Save a fact or preference |
 | `/mode chat` | Switch to chat mode |
 | `/mode analysis` | Switch to analysis mode |
-| `/mode execute` | Switch to execution mode |
+| `/mode execute` | Switch to execute mode |
 | `/mode review` | Switch to review mode |
+| `/mode setup` | Switch to setup mode |
 | `/provider` | Change provider |
-| `/audit` | Run audit workflow |
-| `/tools` | Show tool catalog |
-| `/trace` | Show session trace |
+| `/audit` | Run the tax audit workflow |
+| `/tools` | Show available tools |
+| `/trace` | Show the current trace bundle |
 | `/jobs` | Show recent jobs |
 | `/replay [session_id]` | Replay a session |
-| `/dashboard` | Open dashboard |
+| `/dashboard` | Open the dashboard |
 | `/exit` | Exit the cockpit |
 
-## Background Service Commands
+## Runtime Architecture
 
-TaxSentry includes service helpers for background Telegram bot operation.
+### Node layer
 
-```bash
-taxsentry service status
-taxsentry service install
-taxsentry service apply
-taxsentry service start
-taxsentry service stop
-taxsentry service restart
-taxsentry service logs -n 100
-taxsentry service remove
-taxsentry service remove --purge-artifacts
-```
+The Node.js entrypoint is `bin/taxsentry.js`.
 
-Typical flow:
+It wires together:
 
-```bash
-taxsentry service install
-taxsentry service apply
-taxsentry service start
-taxsentry service status
-```
+- command registration
+- onboarding
+- config display
+- Codex OAuth linking
+- update and self-update flow
+- service artifact management
+- foreground and background runtime launchers
 
-If you only want foreground/local use, you do not need service mode. Use:
+### Python core
 
-```bash
-taxsentry start
-```
+The Python runtime lives under `taxsentry-core/src/taxsentry`.
 
-## Update Commands
+Main modules include:
 
-Refresh runtime config:
+- `agent/` for kernel, planner, request/response models, and tool registry
+- `runtime/` for routing, policy, composition, session tracking, and service facade
+- `database/` for SQLite-backed memory, session, artifact, and report storage
+- `core/` for Excel parsing, PDF generation, email, Telegram, automation, and audit engine
+- `ui/` for the TUI and dashboard
+- `bot/` for the Telegram bot runtime
 
-```bash
-taxsentry update
-```
-
-Refresh config only:
-
-```bash
-taxsentry update --config-only
-```
-
-Self-update from npm:
-
-```bash
-taxsentry update --self
-```
-
-Self-update with a specific package spec:
-
-```bash
-taxsentry update --self --package-spec taxsentry@1.1.4
-```
-
-## Local Development
+## Setup
 
 ### Requirements
 
 - Node.js `>=24`
-- Python `>=3.11`
+- Python `>=3.10`
 - npm
 - Git
 
-### Clone and install
+### Install from source
 
 ```bash
 git clone https://github.com/thienan230427/TaxSentry.git
@@ -259,236 +245,130 @@ cd TaxSentry
 npm install
 ```
 
-### Run the CLI from source
+### Install Python dependencies
 
 ```bash
-node bin/taxsentry.js --help
-node bin/taxsentry.js setup
-node bin/taxsentry.js start
-```
-
-Or use npm scripts:
-
-```bash
-npm run start
-```
-
-### Python core setup
-
-Create and activate a virtual environment:
-
-```bash
-python -m venv .venv
-```
-
-Windows PowerShell:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-macOS/Linux:
-
-```bash
-source .venv/bin/activate
-```
-
-Install Python dependencies:
-
-```bash
+cd taxsentry-core
 python -m pip install --upgrade pip
-python -m pip install -r taxsentry-core/requirements.txt
+python -m pip install -r requirements.txt
 python -m pip install pytest
 ```
 
-Run Python tests:
+### Run the setup wizard
+
+```bash
+taxsentry setup
+```
+
+### Start the cockpit
+
+```bash
+taxsentry start
+```
+
+## Configuration
+
+TaxSentry stores local runtime data under the configured TaxSentry home directory.
+
+Default paths are derived from `TAXSENTRY_HOME` and related environment variables.
+
+### Important environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `TAXSENTRY_HOME` | Root directory for local state |
+| `TAXSENTRY_CONFIG_FILE` | JSON config path |
+| `TAXSENTRY_MEMORY_DB` | SQLite memory DB path |
+| `TAXSENTRY_SESSION_FILE` | Session file path |
+| `TAXSENTRY_AGENT_NAME` | Agent display name |
+| `TAXSENTRY_AGENT_PERSONA` | Agent persona |
+| `TAXSENTRY_LANGUAGE` | Default language |
+| `TAXSENTRY_PROVIDER_KIND` | Provider kind |
+| `TAXSENTRY_PROVIDER_URL` | OpenAI-compatible base URL |
+| `TAXSENTRY_PROVIDER_MODEL` | Provider model name |
+| `TAXSENTRY_AI_AUTH_MODE` | Auth mode |
+| `TAXSENTRY_PROVIDER_API_KEY` | Provider API key |
+| `TAXSENTRY_MEMORY_ENABLED` | Enable memory |
+| `TAXSENTRY_LLM_PLANNER_ENABLED` | Enable LLM planner |
+| `TELEGRAM_ENABLED` | Enable Telegram integration |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
+| `ADMIN_CHAT_ID` | Telegram admin chat ID |
+
+### Provider notes
+
+- LM Studio uses the local OpenAI-compatible endpoint, usually `http://localhost:1234/v1`
+- Codex OAuth reads the profile from `~/.codex/auth.json`
+- Custom providers should expose an OpenAI-compatible API
+
+## Automation Pipeline
+
+1. Poll inbox for allowed senders
+2. Download allowed Excel/PDF/image attachments
+3. Build evidence context and trace metadata
+4. Parse workbook or PDF
+5. Store parsed data and report logs in SQLite
+6. Run AI audit against parsed data and Vietnamese tax knowledge
+7. Generate Markdown and PDF reports
+8. Send email and Telegram notifications
+9. Mark the email as processed only after success
+
+## Local Data and Artifacts
+
+TaxSentry creates local state such as:
+
+- configuration JSON
+- `.env`
+- SQLite memory database
+- session store
+- report log database
+- parsed JSON exports
+- evidence context
+- generated PDFs
+- service artifacts
+
+These are runtime files and should not be committed.
+
+## Development
+
+### Run the Python core directly
 
 ```bash
 cd taxsentry-core
-PYTHONPATH=src python -m pytest tests
+python -m taxsentry
+python -m taxsentry.tui
+python -m taxsentry.bot.telegram_bot
 ```
 
-Windows PowerShell equivalent:
-
-```powershell
-cd taxsentry-core
-$env:PYTHONPATH = "src"
-python -m pytest tests
-```
-
-## Validation Before Shipping
-
-Run these from the repository root:
+### Run tests
 
 ```bash
 npm test
-npm run lint
 ```
-
-Run Python tests:
 
 ```bash
 cd taxsentry-core
-PYTHONPATH=src python -m pytest tests
+python -m pytest tests
 ```
 
-Run a package dry run:
+On Windows, if pytest hits a temp-path permission issue, run:
+
+```bash
+python -m pytest --basetemp=D:\TaxSentry\tmp-pytest tests
+```
+
+### Lint
+
+```bash
+npm run lint
+```
+
+### Package smoke test
 
 ```bash
 npm pack --dry-run
 ```
 
-Check GitHub Actions after pushing:
-
-```bash
-gh run list --repo thienan230427/TaxSentry --limit 5
-```
-
-## Project Layout
-
-```text
-TaxSentry/
-  bin/
-    taxsentry.js              # Node CLI entrypoint
-  src/
-    commands/                 # CLI command handlers
-    utils/                    # Node helpers
-    config.js                 # Node-side config/env handling
-    onboarding.js             # Setup wizard
-  taxsentry-core/
-    src/taxsentry/
-      agent/                  # Agent kernel, planner, state, tool registry
-      runtime/                # Router, session, memory facade, policy, prompt
-      database/               # SQLite stores
-      ui/                     # TUI/dashboard
-      core/                   # Parsing, audit, reports, automation
-      bot/                    # Telegram bot runtime
-      providers.py            # Provider client setup
-      config.py               # Python-side config
-    tests/                    # Python regression tests
-  tests/                      # Node regression and package tests
-  .github/workflows/          # Cross-platform CI
-```
-
-## Runtime Files
-
-TaxSentry stores local runtime data under the local TaxSentry home directory.
-
-Typical state includes:
-
-- config JSON
-- generated `.env`
-- SQLite memory database
-- session traces
-- job logs
-- generated service artifacts
-
-These files are local runtime state and should not be committed.
-
-## Environment Variables
-
-The setup wizard writes these for the Python runtime:
-
-```text
-TAXSENTRY_AGENT_NAME=TaxSentry
-TAXSENTRY_AGENT_PERSONA=warm, precise, and practical
-TAXSENTRY_LANGUAGE=vi
-TAXSENTRY_MEMORY_ENABLED=true
-TAXSENTRY_PROVIDER_KIND=lmstudio
-TAXSENTRY_PROVIDER_URL=http://localhost:1234/v1
-TAXSENTRY_PROVIDER_MODEL=google/gemma-4-e4b
-TAXSENTRY_AI_AUTH_MODE=lmstudio
-TAXSENTRY_PROVIDER_API_KEY=
-TAXSENTRY_LLM_PLANNER_ENABLED=false
-TELEGRAM_ENABLED=false
-TELEGRAM_BOT_TOKEN=
-ADMIN_CHAT_ID=
-```
-
-Use `taxsentry config` to inspect the saved configuration.
-
-## Troubleshooting
-
-### `taxsentry` command not found
-
-Install globally:
-
-```bash
-npm install -g taxsentry
-```
-
-Or run from source:
-
-```bash
-node bin/taxsentry.js --help
-```
-
-### Provider is not reachable
-
-Check status:
-
-```bash
-taxsentry status
-taxsentry doctor
-```
-
-For LM Studio, make sure the local server is running at:
-
-```text
-http://localhost:1234/v1
-```
-
-### Codex OAuth is not available
-
-Run:
-
-```bash
-taxsentry auth codex
-```
-
-The command opens the Codex login page, waits for sign-in, then updates the provider and model in the local config.
-
-### Service mode does not start
-
-Check generated artifacts and logs:
-
-```bash
-taxsentry service status
-taxsentry service logs -n 100
-```
-
-Regenerate service files:
-
-```bash
-taxsentry service install
-taxsentry service apply
-```
-
-### `npm publish` fails because the version already exists
-
-npm versions are immutable. Bump first:
-
-```bash
-npm version patch
-git push origin main --follow-tags
-npm publish
-```
-
-### npm login required
-
-Check current npm login:
-
-```bash
-npm whoami
-```
-
-If it fails:
-
-```bash
-npm login
-```
-
-## Publishing
+## Release
 
 Before publishing:
 
@@ -516,23 +396,85 @@ npm publish
 
 Notes:
 
-- `prepublishOnly` runs `npm test` and `npm run lint`.
-- `prepack` runs package smoke tests.
-- Do not publish a version that already exists on npm.
+- `prepublishOnly` runs tests and lint
+- `prepack` runs the packaging smoke test
+- do not publish a version that already exists on npm
 
-## Current CI Status
+## Troubleshooting
 
-The main branch is validated by GitHub Actions on:
+### `taxsentry` command not found
+
+Install globally:
+
+```bash
+npm install -g taxsentry
+```
+
+Or run from source:
+
+```bash
+node bin/taxsentry.js --help
+```
+
+### Provider is unreachable
+
+Check:
+
+```bash
+taxsentry status
+taxsentry doctor
+```
+
+### Codex OAuth is not available
+
+Run:
+
+```bash
+taxsentry auth codex
+```
+
+### Service mode does not start
+
+Check status and logs:
+
+```bash
+taxsentry service status
+taxsentry service logs -n 100
+```
+
+Regenerate artifacts:
+
+```bash
+taxsentry service install
+taxsentry service apply
+```
+
+## Project Layout
+
+```text
+TaxSentry/
+  bin/                     # Node CLI entrypoints
+  src/                     # Node CLI commands and helpers
+  taxsentry-core/
+    src/taxsentry/
+      agent/               # Kernel, planner, request/response, tool registry
+      runtime/             # Routing, policy, sessions, service facade
+      database/            # SQLite stores and artifact metadata
+      core/                # Excel, PDF, email, Telegram, automation, audit
+      ui/                  # TUI and dashboard
+      bot/                 # Telegram bot runtime
+    tests/                 # Python regression and architecture tests
+  tests/                   # Node regression and packaging tests
+  docs/                    # Design notes and work logs
+```
+
+## Current CI
+
+Main branch validation is expected on:
 
 - `windows-latest / python-3.11 / node-24`
 - `ubuntu-latest / python-3.11 / node-24`
 - `macos-latest / python-3.11 / node-24`
-
-Expected gate before release:
-
-```text
-Cross-platform validation: success
-```
 
 ## License
 

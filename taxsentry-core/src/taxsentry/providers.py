@@ -52,10 +52,12 @@ def build_client(spec: ProviderConfig) -> OpenAI:
     if spec.auth_mode == "codex_oauth":
         return OpenAI(api_key=load_codex_token(), base_url="https://api.openai.com/v1")
 
-    api_key = spec.api_key or "lmstudio"
-    base_url = spec.base_url or "http://localhost:1234/v1"
+    base_url = (spec.base_url or "").strip()
     if spec.kind == "custom" and not base_url:
         raise ProviderError("Custom provider requires a base URL.")
+
+    api_key = spec.api_key or "lmstudio"
+    base_url = base_url or "http://localhost:1234/v1"
     return OpenAI(api_key=api_key, base_url=base_url)
 
 

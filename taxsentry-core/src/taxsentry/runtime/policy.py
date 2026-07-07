@@ -45,7 +45,7 @@ class PolicyGate:
             if not reason:
                 reason = "Sensitive keywords detected."
 
-        allowed = risk_level != "high" or bool(redacted_text)
+        allowed = risk_level != "high"
         return PolicyDecision(
             allowed=allowed,
             risk_level=risk_level,

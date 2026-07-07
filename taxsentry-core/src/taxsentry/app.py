@@ -8,6 +8,7 @@ from rich.table import Table
 from .ui.hermes_shell import HermesShell
 from .ui.dashboard import TaxSentryDashboard
 from .config import describe_config, load_config
+from .memory import bootstrap_memory
 from .providers import from_settings, health_check
 from .runtime.service import TaxSentryRuntimeService
 

@@ -56,6 +56,27 @@ def test_run_status_does_not_bootstrap_memory(monkeypatch):
     assert app.run_status() == 0
 
 
+def test_memory_commands_bootstrap_memory(monkeypatch):
+    from taxsentry import app
+
+    calls = {"list": 0, "add": 0}
+
+    class FakeMemory:
+        def recent_facts(self, limit=20):
+            calls["list"] += 1
+            return [{"kind": "preference", "text": "keep it simple", "source": "cli"}]
+
+        def remember_fact(self, text, source="cli"):
+            calls["add"] += 1
+            return None
+
+    monkeypatch.setattr(app, "bootstrap_memory", lambda settings: FakeMemory())
+
+    assert app.run_memory_list() == 0
+    assert app.run_memory_add("keep it simple") == 0
+    assert calls == {"list": 1, "add": 1}
+
+
 def test_email_poller_marks_specific_email_ids(tmp_path):
     from taxsentry.core.email_poller import TaxSentryEmailPoller
 
@@ -71,6 +92,47 @@ def test_email_poller_marks_specific_email_ids(tmp_path):
     assert 'email-a' not in poller._pending_email_ids
     assert 'email-b' in poller._pending_email_ids
     assert poller.processed_file.exists()
+
+
+def test_email_poller_builds_nested_or_criteria():
+    from taxsentry.core.email_poller import TaxSentryEmailPoller
+
+    poller = TaxSentryEmailPoller()
+    criteria = poller._build_sender_search_criteria([
+        'b@example.com',
+        'a@example.com',
+        'c@example.com',
+    ])
+
+    assert criteria == (
+        'OR',
+        'FROM',
+        '"a@example.com"',
+        'OR',
+        'FROM',
+        '"b@example.com"',
+        'FROM',
+        '"c@example.com"',
+    )
+
+
+def test_custom_provider_requires_explicit_base_url():
+    from taxsentry.providers import ProviderConfig, ProviderError, build_client
+
+    spec = ProviderConfig(
+        kind='custom',
+        base_url='',
+        model='gpt-4.1-mini',
+        api_key='',
+        auth_mode='api_key',
+    )
+
+    try:
+        build_client(spec)
+    except ProviderError as exc:
+        assert 'base URL' in str(exc)
+    else:
+        raise AssertionError('Expected ProviderError for blank custom base_url')
 
 
 def test_automation_marks_only_successful_email_ids(tmp_path, monkeypatch):

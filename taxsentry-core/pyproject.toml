@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taxsentry-agent"
-version = "1.1.2"
+version = "1.1.6"
 description = "TaxSentry local agent runtime with provider-first setup, persistent memory, and a friendly TUI"
 readme = "README.md"
 requires-python = ">=3.10"

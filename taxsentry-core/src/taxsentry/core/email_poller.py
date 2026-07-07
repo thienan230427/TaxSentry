@@ -61,18 +61,6 @@ class TaxSentryEmailPoller:
         except Exception:
             pass
 
-        # Thử tìm trong config.json
-        try:
-            config_path = Path.home() / ".taxsentry" / "config" / "config.json"
-            if config_path.exists():
-                with open(config_path, encoding="utf-8") as f:
-                    cfg = json.load(f)
-                pwd_from_cfg = cfg.get("values", {}).get("email", {}).get("appPassword", "")
-                if pwd_from_cfg:
-                    return pwd_from_cfg
-        except Exception:
-            pass
-
         return pwd
 
     def _load_allowed_report_senders(self) -> set[str]:
@@ -115,17 +103,15 @@ class TaxSentryEmailPoller:
             return "[chưa cấu hình]"
         return ", ".join(sorted(self.allowed_report_senders))
 
-    def _build_sender_search_criteria(self) -> tuple[str, ...]:
-        senders = sorted(self.allowed_report_senders)
+    def _build_sender_search_criteria(self, senders: list[str] | None = None) -> tuple[str, ...]:
+        senders = sorted(senders or self.allowed_report_senders)
         if not senders:
             return ("ALL",)
         if len(senders) == 1:
             return ("FROM", f'"{senders[0]}"')
-
-        criteria: list[str] = ["OR"] * (len(senders) - 1)
-        for sender in senders:
-            criteria.extend(["FROM", f'"{sender}"'])
-        return tuple(criteria)
+        if len(senders) == 2:
+            return ("OR", "FROM", f'"{senders[0]}"', "FROM", f'"{senders[1]}"')
+        return ("OR", "FROM", f'"{senders[0]}"', *self._build_sender_search_criteria(senders[1:]))
 
     def _remove_processed_id(self, email_id: str) -> None:
         if email_id in self.processed_ids:
