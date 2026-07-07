@@ -1,6 +1,6 @@
 {
   "name": "taxsentry",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "type": "module",
   "description": "TaxSentry is a provider-first local AI agent with a friendly setup wizard, persistent memory, and cross-platform TUI.",
   "bin": {
