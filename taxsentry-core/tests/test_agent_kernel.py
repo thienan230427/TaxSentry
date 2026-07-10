@@ -395,12 +395,11 @@ def test_hermes_shell_smoke_builds_layout(monkeypatch):
     shell = hermes_module.HermesShell(settings={"agent": {"name": "TaxSentry"}})
     frame = shell._build_frame(last_result="Đã phân tích xong", initial=False)
 
-    assert "TaxSentry TUI" in frame.header.renderable.plain
-    assert "progress=2/2" in frame.center.renderable.plain
-    assert "Conversation stream" in frame.center.renderable.plain
-    assert "Suggestions:" in frame.footer.renderable.plain
-    assert frame.center is not None
-    assert frame.right is not None
+    assert "TaxSentry" in frame.header.renderable.plain
+    assert "progress=2/2" in frame.body.renderable.plain
+    assert "Chat" in frame.body.renderable.plain
+    assert "Sếp > type a message or / command" in frame.footer.renderable.plain
+    assert frame.body is not None
 
 
 def test_hermes_shell_uses_dummy_prompt_output_in_ci(monkeypatch):
