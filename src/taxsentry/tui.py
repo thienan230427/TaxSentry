@@ -5,6 +5,7 @@ import asyncio
 import getpass
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,9 +29,13 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="taxsentry", description="TaxSentry v2 — AI Agent cho Giám đốc")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("chat")
+    sub.add_parser("start")
+    sub.add_parser("gateway")
+    sub.add_parser("update")
     sub.add_parser("setup")
     sub.add_parser("status")
-    sub.add_parser("doctor")
+    doctor_parser = sub.add_parser("doctor")
+    doctor_parser.add_argument("--fix", action="store_true")
     sub.add_parser("jobs")
     report = sub.add_parser("report")
     report.add_argument("--send", action="store_true")
@@ -47,15 +52,22 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.command in {None, "chat"}:
+    if args.command in {None, "chat", "start"}:
         return asyncio.run(Cockpit().run())
+    if args.command == "gateway":
+        from .bot.telegram_bot import main as run_gateway
+
+        run_gateway()
+        return 0
+    if args.command == "update":
+        return update()
     if args.command == "setup":
         return setup()
     if args.command == "status":
         console.print(describe_config(load_config()))
         return 0
     if args.command == "doctor":
-        return doctor()
+        return doctor(fix=args.fix)
     if args.command == "jobs":
         return jobs()
     if args.command == "report":
@@ -129,12 +141,17 @@ def auth(provider: str, device_code: bool = False) -> int:
     return 0
 
 
-def doctor() -> int:
+def doctor(*, fix: bool = False) -> int:
     settings, failed = load_config(), False
+    if fix:
+        save_config(settings)
     checks = []
     ok, detail = health_check(from_settings(settings))
     checks.append(("Provider", ok, detail))
     tesseract = shutil.which("tesseract")
+    if fix and not tesseract:
+        _install_tesseract()
+        tesseract = shutil.which("tesseract")
     checks.append(("Tesseract", bool(tesseract), tesseract or _tesseract_hint()))
     oauth_file = Path(settings["gmail"].get("oauth_client_file", ""))
     checks.append(("Gmail OAuth client", oauth_file.is_file(), str(oauth_file) if oauth_file else "not configured"))
@@ -145,6 +162,31 @@ def doctor() -> int:
         failed |= not good
     console.print(table)
     return int(failed)
+
+
+def _install_tesseract() -> None:
+    command = (
+        ["winget", "install", "--id", "UB-Mannheim.TesseractOCR", "--exact", "--accept-package-agreements", "--accept-source-agreements"]
+        if sys.platform == "win32"
+        else (["brew", "install", "tesseract", "tesseract-lang"] if sys.platform == "darwin" else ["sudo", "apt-get", "install", "-y", "tesseract-ocr", "tesseract-ocr-vie"])
+    )
+    try:
+        subprocess.run(command, check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        console.print(f"[yellow]Không thể tự cài Tesseract: {exc}\nHãy chạy: {_tesseract_hint()}[/]")
+
+
+def update() -> int:
+    uv = shutil.which("uv")
+    if not uv:
+        console.print("[red]Không tìm thấy uv. Cài uv trước khi cập nhật TaxSentry.[/]")
+        return 1
+    result = subprocess.run([uv, "tool", "upgrade", "taxsentry-agent"], check=False)
+    if result.returncode:
+        console.print("[red]Cập nhật thất bại. Kiểm tra nguồn cài đặt và kết nối mạng.[/]")
+        return result.returncode
+    console.print("[green]✓ TaxSentry đã được cập nhật.[/]")
+    return 0
 
 
 def _tesseract_hint() -> str:

@@ -34,6 +34,10 @@ taxsentry auth status
 
 ```powershell
 taxsentry                 # terminal cockpit
+taxsentry start           # khởi động terminal cockpit
+taxsentry gateway         # kết nối Telegram foreground
+taxsentry doctor --fix    # phát hiện và sửa lỗi cài đặt có thể tự động sửa
+taxsentry update          # cập nhật bản uv tool đã cài
 taxsentry worker run      # quét Gmail mỗi 60 giây
 taxsentry worker run --once
 taxsentry jobs
