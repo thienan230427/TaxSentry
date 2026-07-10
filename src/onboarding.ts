@@ -1,17 +1,19 @@
 import chalk from 'chalk';
-import boxen from 'boxen';
 import inquirer from 'inquirer';
 
 import {
   CODEX_API_BASE_URL,
-  CODEX_LOGIN_URL,
   CODEX_RECOMMENDED_MODELS,
+  CODEX_DEVICE_LOGIN_URL,
   loadCodexAuth,
   openCodexLoginPage,
   orderCodexModelIds,
   redactCodexAuthSummary,
-} from './utils/codex-auth.js';
-import { describeConfig, getEmptyConfig, loadConfig, saveConfig, setValue, writeEnvFile } from './config.js';
+  pollCodexDeviceAuth,
+  requestCodexDeviceCode,
+} from './utils/codex-auth.ts';
+import { describeConfig, getEmptyConfig, loadConfig, saveConfig, setValue, writeEnvFile } from './config.ts';
+import { BLUE_THEME, oceanFrame } from './utils/terminal-theme.ts';
 
 const MODEL_PICKER_LIMIT = 24;
 const MODEL_FETCH_TIMEOUT_MS = 2500;
@@ -38,29 +40,32 @@ const API_KEY_PRESETS = {
   },
 };
 
-const SETUP_ACCENT = chalk.hex('#f0a27a');
+const SETUP_ACCENT = BLUE_THEME.accent;
+const SETUP_PRIMARY = BLUE_THEME.primary;
 
 function banner() {
-  const text = [
-    chalk.bold.cyan('TaxSentry Setup Wizard'),
-    chalk.dim('Provider-first setup with local memory, OAuth, and terminal chat.'),
-    '',
-    chalk.white('Use the arrow keys to move through each setup step.'),
-  ].join('\n');
-  return boxen(text, { padding: 1, borderStyle: 'single', borderColor: 'gray' });
+  return oceanFrame(
+    'TaxSentry Setup Wizard',
+    [
+      chalk.dim('Provider-first setup with local memory, OAuth, and terminal chat.'),
+      chalk.white('Use the arrow keys to move through each setup step.'),
+      chalk.hex('#67e8f9')('Ocean theme: blue controls, softer cards, sharper contrast.'),
+    ],
+    { subtitle: 'Blue terminal onboarding' },
+  );
 }
 
 function printWizardStep(title, lines = []) {
   console.log('');
-  console.log(`${chalk.cyan('◇')}  ${SETUP_ACCENT.bold(title)}`);
+  console.log(`${SETUP_PRIMARY('◇')}  ${SETUP_ACCENT.bold(title)}`);
   for (const line of lines) {
-    console.log(`${chalk.cyan('│')}  ${line}`);
+    console.log(`${SETUP_PRIMARY('│')}  ${line}`);
   }
 }
 
 function radioLine(label, detail = '', { selected = false, muted = false } = {}) {
-  const marker = selected ? chalk.green('●') : chalk.gray('○');
-  const labelColor = selected ? chalk.bold.white : muted ? chalk.dim : chalk.gray;
+  const marker = selected ? chalk.hex('#22d3ee')('●') : chalk.hex('#64748b')('○');
+  const labelColor = selected ? chalk.bold.white : muted ? chalk.dim : chalk.hex('#cbd5e1');
   const suffix = detail ? chalk.dim(` ${detail}`) : '';
   return `${marker} ${labelColor(label)}${suffix}`;
 }
@@ -82,7 +87,7 @@ function providerChoices(config) {
       value: 'lmstudio',
     },
     {
-      name: radioLine('OpenAI Codex OAuth', '(choose Gmail account in browser)', { selected: active === 'codex_oauth' }),
+      name: radioLine('OpenAI Codex OAuth', '(sign in and enter code in browser)', { selected: active === 'codex_oauth' }),
       value: 'codex_oauth',
     },
     {
@@ -109,10 +114,11 @@ function printProviderMenuPreview(config) {
   printWizardStep('Model/auth provider', choices.map((choice) => choice.name));
 }
 
-function printCodexOAuthPanel(auth = null) {
+function printCodexOAuthPanel(auth = null, deviceCode = null) {
   const lines = [
-    chalk.white(`Login URL: ${CODEX_LOGIN_URL}`),
-    chalk.dim('Open the link, choose the target Gmail account, then return here.'),
+    chalk.white(`Login URL: ${deviceCode?.verificationUrl || CODEX_DEVICE_LOGIN_URL}`),
+    deviceCode?.userCode ? chalk.white(`One-time code: ${deviceCode.userCode}`) : chalk.dim('Requesting a one-time code...'),
+    chalk.dim('Open the link, sign in, enter the code, and the terminal will continue automatically.'),
   ];
 
   if (auth) {
@@ -122,17 +128,6 @@ function printCodexOAuthPanel(auth = null) {
   }
 
   printWizardStep('Codex OAuth account', lines);
-}
-
-function codexAuthFingerprint(auth = null) {
-  if (!auth) return '';
-  return [
-    auth.accountId || '',
-    auth.accountEmail || '',
-    auth.lastRefresh || '',
-    auth.accessToken ? 'access' : '',
-    auth.refreshToken ? 'refresh' : '',
-  ].join('|');
 }
 
 async function chooseCodexCredentialMode({ prompt, auth }) {
@@ -154,7 +149,14 @@ async function chooseCodexCredentialMode({ prompt, auth }) {
   return answer.credentials || 'reauthenticate';
 }
 
-async function runCodexBrowserLogin({ prompt }) {
+async function runCodexBrowserLogin({
+  prompt,
+  fetchImpl = globalThis.fetch,
+  requestDeviceCode = requestCodexDeviceCode,
+  pollDeviceAuth = pollCodexDeviceAuth,
+}) {
+  const deviceCode = await requestDeviceCode({ fetchImpl });
+  printCodexOAuthPanel(null, deviceCode);
   const linkChoice = await promptText([
     {
       type: 'confirm',
@@ -164,21 +166,20 @@ async function runCodexBrowserLogin({ prompt }) {
     },
   ], prompt);
   if (linkChoice.openLogin) {
-    const opened = openCodexLoginPage(CODEX_LOGIN_URL);
+    const opened = openCodexLoginPage(deviceCode.verificationUrl || CODEX_DEVICE_LOGIN_URL);
     console.log(opened
       ? chalk.green('Opened the Codex login page in your browser.')
-      : chalk.yellow(`Could not auto-open a browser. Open this URL manually: ${CODEX_LOGIN_URL}`));
+      : chalk.yellow(`Could not auto-open a browser. Open this URL manually: ${deviceCode.verificationUrl || CODEX_DEVICE_LOGIN_URL}`));
   } else {
-    console.log(chalk.yellow(`Open this URL manually: ${CODEX_LOGIN_URL}`));
+    console.log(chalk.yellow(`Open this URL manually: ${deviceCode.verificationUrl || CODEX_DEVICE_LOGIN_URL}`));
   }
-  await promptText([
-    {
-      type: 'input',
-      name: 'continue',
-      message: 'Press Enter after you finish selecting the Gmail account and signing in',
-      default: '',
-    },
-  ], prompt);
+  console.log(chalk.dim('Waiting for Codex to finish the one-time code login...'));
+  return pollDeviceAuth({
+    fetchImpl,
+    deviceAuthId: deviceCode.deviceAuthId,
+    userCode: deviceCode.userCode,
+    intervalMs: deviceCode.intervalMs,
+  });
 }
 
 function promptText(questions, prompt) {
@@ -495,24 +496,18 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
       codexAuth = null;
     }
     printCodexOAuthPanel(codexAuth);
-    const previousAuthFingerprint = codexAuthFingerprint(codexAuth);
     const credentialMode = await chooseCodexCredentialMode({ prompt, auth: codexAuth });
     if (credentialMode === 'cancel') {
       console.log(chalk.yellow('Codex OAuth setup cancelled; keeping the current provider configuration.'));
     } else {
       if (credentialMode === 'reauthenticate') {
-        await runCodexBrowserLogin({ prompt });
+        await runCodexBrowserLogin({
+          prompt,
+        });
         try {
           codexAuth = loadCodexAuth();
         } catch (error) {
           console.log(chalk.yellow(`Codex OAuth check: ${String(error.message || error)}`));
-        }
-        if (previousAuthFingerprint && codexAuthFingerprint(codexAuth) === previousAuthFingerprint) {
-          console.log(chalk.yellow([
-            'Codex OAuth profile did not change after browser login.',
-            'If Chrome opened the Codex home page instead of account selection, it is reusing the current ChatGPT session.',
-            'To switch accounts, sign out from ChatGPT/Codex in the browser or use another browser profile, then run this step again.',
-          ].join(' ')));
         }
       }
       if (codexAuth) {
@@ -632,7 +627,14 @@ export async function runOnboarding({ resetExisting = false, prompt = inquirer.p
   saveConfig(config);
   writeEnvFile(config);
 
-  console.log('\n' + boxen(describeConfig(config), { padding: 1, borderStyle: 'round', borderColor: 'green' }));
-  console.log(chalk.green.bold(`\nSetup complete — ${chooseProviderSummary(config.provider)} is ready.`));
+  console.log(
+    '\n' +
+      oceanFrame(
+        'Setup complete',
+        [describeConfig(config), '', chalk.hex('#67e8f9')(`Ready — ${chooseProviderSummary(config.provider)} is active.`)],
+        { subtitle: 'Configuration saved and synced' },
+      ),
+  );
   return config;
 }
+

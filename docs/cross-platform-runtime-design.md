@@ -12,7 +12,7 @@ Make TaxSentry run from a single codebase across Windows, Linux, and macOS witho
 1. No hardcoded absolute paths.
 2. One source of truth for runtime paths and venv discovery.
 3. OS-specific behavior isolated behind helper layers.
-4. CLI launcher stays Node-based, analysis core stays Python-based.
+4. CLI launcher stays TypeScript-on-Node-based, analysis core stays Python-based.
 5. Config and data stay user-editable; no platform values hardcoded in business logic.
 
 ## Runtime Architecture
@@ -27,7 +27,7 @@ Make TaxSentry run from a single codebase across Windows, Linux, and macOS witho
 
 ### 2) Cross-platform bootstrap layer
 
-Node launcher responsibilities:
+TypeScript launcher responsibilities:
 - detect project-local Python venv
 - construct `PYTHONPATH` with `path.delimiter`
 - spawn Python modules with the correct cwd
@@ -60,7 +60,7 @@ TaxSentry should keep OS-sensitive logic behind adapters/helpers:
 - Replaced duplicated Windows-first venv bootstrap logic in:
   - `taxsentry/__main__.py`
   - `taxsentry/bot/telegram_bot.py`
-- Updated Node launcher to build `PYTHONPATH` using `path.delimiter` instead of Windows-only `;`.
+- Updated TypeScript launcher to build `PYTHONPATH` using `path.delimiter` instead of Windows-only `;`.
 - Removed hardcoded parser sample output/input paths in `excel_parser.py`; now uses config path constants.
 - Updated PDF generator to resolve Unicode-capable fonts from Windows/macOS/Linux candidates instead of assuming only `C:/Windows/Fonts`.
 - Removed hardcoded PDF demo output path; now uses `DOWNLOAD_DIR`.
@@ -130,3 +130,4 @@ For production:
 
 For founder laptop usage:
 - macOS should be treated as a first-class supported workstation, especially for setup/status/report-generation flows.
+

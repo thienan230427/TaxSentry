@@ -4,14 +4,14 @@ import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import chalk from 'chalk';
 
-import { runSetup } from '../src/commands/setup.js';
-import startCommand from '../src/commands/start.js';
-import statusCommand from '../src/commands/status.js';
-import doctorCommand from '../src/commands/doctor.js';
-import dashboardCommand from '../src/commands/dashboard.js';
-import jobsCommand from '../src/commands/jobs.js';
-import reconfigureCommand from '../src/commands/reconfigure.js';
-import resetProfileCommand from '../src/commands/reset-profile.js';
+import { runSetup } from '../src/commands/setup.ts';
+import startCommand from '../src/commands/start.ts';
+import statusCommand from '../src/commands/status.ts';
+import doctorCommand from '../src/commands/doctor.ts';
+import dashboardCommand from '../src/commands/dashboard.ts';
+import jobsCommand from '../src/commands/jobs.ts';
+import reconfigureCommand from '../src/commands/reconfigure.ts';
+import resetProfileCommand from '../src/commands/reset-profile.ts';
 import {
   applyServiceCommand,
   installServiceCommand,
@@ -21,13 +21,13 @@ import {
   showServiceStatus,
   startServiceCommand,
   stopServiceCommand,
-} from '../src/commands/service.js';
-import authCodexCommand from '../src/commands/auth-codex.js';
-import updateCommand from '../src/commands/update.js';
-import upCommand from '../src/commands/up.js';
-import stopCommand from '../src/commands/stop.js';
-import replayCommand from '../src/commands/replay.js';
-import { loadConfig, describeConfig } from '../src/config.js';
+} from '../src/commands/service.ts';
+import authCodexCommand from '../src/commands/auth-codex.ts';
+import updateCommand from '../src/commands/update.ts';
+import upCommand from '../src/commands/up.ts';
+import stopCommand from '../src/commands/stop.ts';
+import replayCommand from '../src/commands/replay.ts';
+import { loadConfig, describeConfig } from '../src/config.ts';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
@@ -220,7 +220,7 @@ program
   .description('Print the current saved configuration')
   .action(() => {
     const config = loadConfig();
-    console.log(chalk.bold.cyan('TaxSentry config'));
+    console.log(chalk.bold.hex('#38bdf8')('TaxSentry config'));
     console.log(describeConfig(config));
   });
 
@@ -228,3 +228,4 @@ program.parseAsync(process.argv).catch((error) => {
   console.error(chalk.red(error.stack || error.message || String(error)));
   process.exit(1);
 });
+

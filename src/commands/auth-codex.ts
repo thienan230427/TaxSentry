@@ -1,22 +1,25 @@
 import chalk from 'chalk';
-import boxen from 'boxen';
 import inquirer from 'inquirer';
 
 import {
   CODEX_API_BASE_URL,
-  CODEX_LOGIN_URL,
+  CODEX_DEVICE_LOGIN_URL,
   loadCodexAuth,
   openCodexLoginPage,
   redactCodexAuthSummary,
-} from '../utils/codex-auth.js';
-import { loadConfig, saveConfig, setValue, writeEnvFile } from '../config.js';
-import { promptForModel } from '../onboarding.js';
+  pollCodexDeviceAuth,
+  requestCodexDeviceCode,
+} from '../utils/codex-auth.ts';
+import { loadConfig, saveConfig, setValue, writeEnvFile } from '../config.ts';
+import { promptForModel } from '../onboarding.ts';
+import { oceanFrame } from '../utils/terminal-theme.ts';
 
-function printCodexLoginInstructions(auth = null) {
+function printCodexLoginInstructions(auth = null, deviceCode = null) {
   const lines = [
-    chalk.bold.cyan('Codex OAuth account'),
-    chalk.white(`Login URL: ${CODEX_LOGIN_URL}`),
-    chalk.dim('Open the link, choose the target Gmail account, then return here.'),
+    chalk.bold.hex('#38bdf8')('Codex OAuth account'),
+    chalk.white(`Login URL: ${deviceCode?.verificationUrl || CODEX_DEVICE_LOGIN_URL}`),
+    deviceCode?.userCode ? chalk.white(`One-time code: ${deviceCode.userCode}`) : chalk.dim('Requesting a one-time code...'),
+    chalk.dim('Open the link, sign in, enter the code, then let the terminal continue automatically.'),
   ];
 
   if (auth) {
@@ -25,7 +28,7 @@ function printCodexLoginInstructions(auth = null) {
     lines.push(chalk.dim(`Account ID: ${summary.accountId || 'n/a'} | Last refresh: ${summary.lastRefresh || 'n/a'}`));
   }
 
-  console.log(boxen(lines.join('\n'), { padding: 1, borderStyle: 'round', borderColor: 'cyan' }));
+  console.log(oceanFrame('Codex OAuth account', lines, { subtitle: 'Blue login card', borderColor: 'blue' }));
 }
 
 async function promptText(questions, prompt) {
@@ -95,6 +98,8 @@ export async function runAuthCodex({
   prompt = inquirer.prompt.bind(inquirer),
   loadAuth = loadCodexAuth,
   openLoginPage = openCodexLoginPage,
+  requestDeviceCode = requestCodexDeviceCode,
+  pollDeviceAuth = pollCodexDeviceAuth,
   fetchImpl = globalThis.fetch,
 } = {}) {
   let auth = null;
@@ -113,6 +118,8 @@ export async function runAuthCodex({
 
   if (credentialsChoice === 'reauthenticate') {
     console.log(chalk.dim('\nStarting a fresh OpenAI Codex login...\n'));
+    const deviceCode = await requestDeviceCode({ fetchImpl });
+    printCodexLoginInstructions(auth, deviceCode);
     const linkChoice = await promptText([
       {
         type: 'confirm',
@@ -123,23 +130,21 @@ export async function runAuthCodex({
     ], prompt);
 
     if (linkChoice.openLogin) {
-      const opened = openLoginPage(CODEX_LOGIN_URL);
+      const opened = openLoginPage(deviceCode.verificationUrl || CODEX_DEVICE_LOGIN_URL);
       console.log(opened
         ? chalk.green('Opened the Codex login page in your browser.')
-        : chalk.yellow(`Could not auto-open a browser. Open this URL manually: ${CODEX_LOGIN_URL}`));
+        : chalk.yellow(`Could not auto-open a browser. Open this URL manually: ${deviceCode.verificationUrl || CODEX_DEVICE_LOGIN_URL}`));
     } else {
-      console.log(chalk.yellow(`Open this URL manually: ${CODEX_LOGIN_URL}`));
+      console.log(chalk.yellow(`Open this URL manually: ${deviceCode.verificationUrl || CODEX_DEVICE_LOGIN_URL}`));
     }
 
-    await promptText([
-      {
-        type: 'input',
-        name: 'continue',
-        message: 'Press Enter after you finish selecting the Gmail account and signing in',
-        default: '',
-      },
-    ], prompt);
-    auth = loadAuth();
+    console.log(chalk.dim('Waiting for Codex to finish the one-time code login...'));
+    auth = await pollDeviceAuth({
+      fetchImpl,
+      deviceAuthId: deviceCode.deviceAuthId,
+      userCode: deviceCode.userCode,
+      intervalMs: deviceCode.intervalMs,
+    });
   }
 
   if (!auth) auth = loadAuth();
@@ -163,19 +168,25 @@ export async function runAuthCodex({
   saveConfig(config);
   writeEnvFile(config);
 
-  console.log(boxen([
-    chalk.bold.cyan('Codex OAuth linked'),
-    chalk.white(`Login URL: ${CODEX_LOGIN_URL}`),
-    chalk.white(`Model: ${model}`),
-    chalk.green(`Account: ${JSON.stringify(redactCodexAuthSummary(auth))}`),
-  ].join('\n'), { padding: 1, borderStyle: 'round', borderColor: 'green' }));
+  console.log(oceanFrame(
+    'Codex OAuth linked',
+    [
+      chalk.white(`Login URL: ${CODEX_DEVICE_LOGIN_URL}`),
+      chalk.white(`Model: ${model}`),
+      chalk.hex('#67e8f9')(`Account: ${JSON.stringify(redactCodexAuthSummary(auth))}`),
+    ],
+    { subtitle: 'Provider linked successfully', borderColor: 'blue' },
+  ));
 
   if (await configureTelegramAfterAuth({ config, prompt })) {
-    console.log(boxen([
-      chalk.bold.cyan('Telegram configured'),
-      chalk.white(`Bot token: ${config.integrations.telegram.botToken ? 'set' : 'missing'}`),
-      chalk.white(`Admin chat ID: ${config.integrations.telegram.adminChatId || 'missing'}`),
-    ].join('\n'), { padding: 1, borderStyle: 'round', borderColor: 'green' }));
+    console.log(oceanFrame(
+      'Telegram configured',
+      [
+        chalk.white(`Bot token: ${config.integrations.telegram.botToken ? 'set' : 'missing'}`),
+        chalk.white(`Admin chat ID: ${config.integrations.telegram.adminChatId || 'missing'}`),
+      ],
+      { subtitle: 'Chat delivery ready', borderColor: 'blue' },
+    ));
   }
 
   return { skipped: false, auth, model, config };
@@ -186,10 +197,11 @@ export default async function authCodexCommand(deps = {}) {
     await runAuthCodex(deps);
   } catch (error) {
     console.error(chalk.red(error.message || String(error)));
-    console.log(chalk.yellow(`Open the Codex login page here: ${CODEX_LOGIN_URL}`));
-    if (openCodexLoginPage(CODEX_LOGIN_URL)) {
+    console.log(chalk.yellow(`Open the Codex login page here: ${CODEX_DEVICE_LOGIN_URL}`));
+    if (openCodexLoginPage(CODEX_DEVICE_LOGIN_URL)) {
       console.log(chalk.green('Opened the login page in your browser.'));
     }
     process.exitCode = 1;
   }
 }
+

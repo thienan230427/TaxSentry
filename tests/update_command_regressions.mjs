@@ -26,8 +26,8 @@ function freshImport(relPath) {
 
 applySharedHome();
 
-const { getEmptyConfig, saveConfig, writeEnvFile } = await freshImport('src/config.js');
-const updateModule = await freshImport('src/commands/update.js');
+const { getEmptyConfig, saveConfig, writeEnvFile } = await freshImport('src/config.ts');
+const updateModule = await freshImport('src/commands/update.ts');
 
 const seedConfig = getEmptyConfig();
 seedConfig.agent.name = 'TaxSentry';
@@ -93,7 +93,7 @@ process.env.TAXSENTRY_SESSION_FILE = join(brokenHome, '.taxsentry', 'memory', 's
 process.env.TAXSENTRY_CORE_DIR = join(brokenHome, '.taxsentry', 'taxsentry-core');
 process.env.TAXSENTRY_ENV_FILE = join(brokenHome, '.taxsentry', 'taxsentry-core', '.env');
 
-const launcher = await freshImport('src/launcher.js');
+const launcher = await freshImport('src/launcher.ts');
 assert.equal(
   launcher.startForeground(['status']),
   1,
@@ -105,7 +105,7 @@ assert.equal(
   'startBackground should return null when Python cannot be spawned',
 );
 
-const upModule = await freshImport('src/commands/up.js');
+const upModule = await freshImport('src/commands/up.ts');
 process.exitCode = 0;
 await upModule.default();
 assert.equal(process.exitCode, 1, 'up should set a non-zero exit code when the runtime is missing');
@@ -115,3 +115,4 @@ const envText = readFileSync(join(SHARED_HOME, '.taxsentry', 'taxsentry-core', '
 assert.ok(envText.includes('TAXSENTRY_PROVIDER_KIND="lmstudio"'), 'update should preserve provider env values');
 
 rmSync(SHARED_HOME, { recursive: true, force: true });
+

@@ -4,17 +4,17 @@
   "type": "module",
   "description": "TaxSentry is a provider-first local AI agent with a friendly setup wizard, persistent memory, and cross-platform TUI.",
   "bin": {
-    "taxsentry": "bin/taxsentry.js",
-    "ts": "bin/taxsentry.js"
+    "taxsentry": "bin/taxsentry.ts",
+    "ts": "bin/taxsentry.ts"
   },
   "scripts": {
-    "start": "node bin/taxsentry.js start",
-    "dev": "node bin/taxsentry.js start",
+    "start": "node bin/taxsentry.ts start",
+    "dev": "node bin/taxsentry.ts start",
     "test": "node tests/cli_surface_regressions.mjs && node tests/service_platform_matrix.mjs && node tests/service_apply_smoke.mjs && node tests/privacy_runtime_regressions.mjs && node tests/codex_oauth_regressions.mjs && node tests/update_command_regressions.mjs && node tests/package_smoke.mjs",
     "pack:smoke": "node tests/package_smoke.mjs",
     "prepack": "npm run pack:smoke",
     "prepublishOnly": "npm run test && npm run lint",
-    "lint": "eslint src bin tests"
+    "lint": "node scripts/check-syntax.mjs"
   },
   "keywords": [
     "ai-agent",
@@ -69,3 +69,5 @@
     "access": "public"
   }
 }
+
+

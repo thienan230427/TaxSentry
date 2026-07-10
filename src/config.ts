@@ -8,7 +8,7 @@ import {
   SESSION_FILE,
   TAXSENTRY_HOME,
   ensureDirectories,
-} from "./utils/paths.js";
+} from "./utils/paths.ts";
 
 const DEFAULT_CONFIG = {
   version: "1.1.2",
@@ -49,7 +49,7 @@ const DEFAULT_CONFIG = {
     },
   },
   ui: {
-    theme: "midnight",
+    theme: "ocean",
     showBanner: true,
   },
   extraEnv: {},
@@ -317,3 +317,4 @@ export function describeConfig(config) {
     `Memory DB: ${MEMORY_DB_FILE}`,
   ].join("\n");
 }
+

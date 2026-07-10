@@ -3,7 +3,7 @@
 TaxSentry is a provider-first, local-first AI agent for tax and finance workflows.
 It combines a guided setup wizard, a terminal cockpit, persistent local memory, session tracing, report replay, provider switching, and background service tooling for automation.
 
-Current version: `1.1.6`
+Current version: `1.1.7`
 
 Repository: `https://github.com/thienan230427/TaxSentry`
 
@@ -13,7 +13,7 @@ TaxSentry is built for teams that want a local assistant for accounting, tax rev
 
 The project has two layers:
 
-- a Node.js CLI that handles onboarding, TUI launch, service management, and user-facing workflows
+- a TypeScript CLI that handles onboarding, TUI launch, service management, and user-facing workflows
 - a Python core that performs provider access, memory, session tracking, parsing, analysis, PDF generation, email delivery, Telegram delivery, and automation
 
 ## What TaxSentry Can Do
@@ -203,7 +203,7 @@ Use these inside `taxsentry start`:
 
 ### Node layer
 
-The Node.js entrypoint is `bin/taxsentry.js`.
+The TypeScript entrypoint is `bin/taxsentry.ts`.
 
 It wires together:
 
@@ -413,7 +413,7 @@ npm install -g taxsentry
 Or run from source:
 
 ```bash
-node bin/taxsentry.js --help
+node bin/taxsentry.ts --help
 ```
 
 ### Provider is unreachable
@@ -479,3 +479,5 @@ Main branch validation is expected on:
 ## License
 
 MIT
+
+

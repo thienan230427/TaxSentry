@@ -108,25 +108,25 @@ export function getInstallInstructions() {
 
   if (isWindows) {
     instructions.push(
-      chalk.bold('   Windows (chọn 1 trong 3):'),
-      chalk.yellow('   • winget install Python.Python.3.12'),
-      chalk.yellow('   • Tải từ: https://www.python.org/downloads/windows/'),
-      chalk.yellow('   • Microsoft Store: tìm "Python 3.12"'),
+      chalk.bold.hex('#38bdf8')('   Windows (chọn 1 trong 3):'),
+      chalk.hex('#93c5fd')('   • winget install Python.Python.3.12'),
+      chalk.hex('#93c5fd')('   • Tải từ: https://www.python.org/downloads/windows/'),
+      chalk.hex('#93c5fd')('   • Microsoft Store: tìm "Python 3.12"'),
       '',
       chalk.dim('   ⚠️ Quan trọng: Tick vào "Add python.exe to PATH" khi cài đặt!'),
     );
   } else if (isMac) {
     instructions.push(
-      chalk.bold('   macOS (chọn 1 trong 2):'),
-      chalk.yellow('   • brew install python@3.12'),
-      chalk.yellow('   • Tải từ: https://www.python.org/downloads/macos/'),
+      chalk.bold.hex('#38bdf8')('   macOS (chọn 1 trong 2):'),
+      chalk.hex('#93c5fd')('   • brew install python@3.12'),
+      chalk.hex('#93c5fd')('   • Tải từ: https://www.python.org/downloads/macos/'),
     );
   } else {
     instructions.push(
-      chalk.bold('   Linux:'),
-      chalk.yellow('   • Ubuntu/Debian: sudo apt install python3.12'),
-      chalk.yellow('   • Fedora: sudo dnf install python3.12'),
-      chalk.yellow('   • Arch: sudo pacman -S python'),
+      chalk.bold.hex('#38bdf8')('   Linux:'),
+      chalk.hex('#93c5fd')('   • Ubuntu/Debian: sudo apt install python3.12'),
+      chalk.hex('#93c5fd')('   • Fedora: sudo dnf install python3.12'),
+      chalk.hex('#93c5fd')('   • Arch: sudo pacman -S python'),
     );
   }
 
@@ -138,9 +138,9 @@ export function getInstallInstructions() {
  */
 export function printDetectionResult(result) {
   if (result.found) {
-    console.log(chalk.green(`   ✅ Tìm thấy Python ${result.version.major}.${result.version.minor}.${result.version.patch}`));
+    console.log(chalk.hex('#22d3ee')(`   ✅ Tìm thấy Python ${result.version.major}.${result.version.minor}.${result.version.patch}`));
     console.log(chalk.dim(`      → Command: ${result.command}`));
   } else {
-    console.log(chalk.red('   ❌ Không tìm thấy Python 3.10+ trên hệ thống!'));
+    console.log(chalk.hex('#fb7185')('   ❌ Không tìm thấy Python 3.10+ trên hệ thống!'));
   }
 }

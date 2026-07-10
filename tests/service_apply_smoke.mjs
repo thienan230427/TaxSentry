@@ -27,8 +27,8 @@ function freshImport(relPath) {
 
 applySharedHome();
 
-const configMod = await freshImport('src/config.js');
-const artifactsMod = await freshImport('src/utils/service-artifacts.js');
+const configMod = await freshImport('src/config.ts');
+const artifactsMod = await freshImport('src/utils/service-artifacts.ts');
 
 const cfg = configMod.getEmptyConfig();
 cfg.integrations.telegram.adminChatId = '7150649527';
@@ -89,7 +89,7 @@ try {
   process.env.TAXSENTRY_CORE_DIR = join(linuxHome, '.taxsentry', 'taxsentry-core');
   process.env.TAXSENTRY_ENV_FILE = join(linuxHome, '.taxsentry', 'taxsentry-core', '.env');
 
-  const linuxArtifacts = await freshImport('src/utils/service-artifacts.js');
+  const linuxArtifacts = await freshImport('src/utils/service-artifacts.ts');
   linuxArtifacts.installServiceArtifacts(serviceName, '7150649527');
   const linuxTargetPath = linuxArtifacts.getAppliedServiceTargetPath(serviceName);
   mkdirSync(dirname(linuxTargetPath), { recursive: true });
@@ -106,7 +106,7 @@ try {
 }
 
 try {
-  const serviceCommands = await freshImport('src/commands/service.js');
+  const serviceCommands = await freshImport('src/commands/service.ts');
   process.exitCode = 0;
   serviceCommands.stopServiceCommand(serviceName, {
     stopAppliedService: () => ({ ok: false, detail: 'permission denied', appliedName: 'fake-service' }),
@@ -117,3 +117,4 @@ try {
 }
 
 rmSync(SHARED_HOME, { recursive: true, force: true });
+

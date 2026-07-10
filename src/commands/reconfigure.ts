@@ -4,9 +4,10 @@
  */
 
 import chalk from 'chalk';
-import { isConfigured } from '../config.js';
-import { runOnboarding } from '../onboarding.js';
-import { info, success, warn, error } from '../utils/logger.js';
+import { isConfigured } from '../config.ts';
+import { runOnboarding } from '../onboarding.ts';
+import { info, success, warn, error } from '../utils/logger.ts';
+import { oceanFrame } from '../utils/terminal-theme.ts';
 
 export async function runReconfigure(deps = {}) {
   const isConfiguredFn = deps.isConfigured ?? isConfigured;
@@ -28,6 +29,7 @@ export async function runReconfigure(deps = {}) {
 }
 
 export default async function reconfigureCommand(deps = {}) {
-  console.log(chalk.dim('\n🛠️ Chế độ reconfigure: giữ nguyên logic hiện có, chỉ hỏi lại các trường cần chỉnh sửa.\n'));
+  console.log(oceanFrame('Reconfigure', [chalk.dim('Giữ nguyên logic hiện có, chỉ hỏi lại các trường cần chỉnh sửa.')], { subtitle: 'Blue maintenance mode' }));
   await runReconfigure(deps);
 }
+

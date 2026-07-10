@@ -12,6 +12,8 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
+from .theme import ACCENT, BOX, BOX_SOFT, MUTED, PRIMARY, SECONDARY, SUCCESS, WARN, blue_panel, section_title, status_strip
+
 try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -61,9 +63,7 @@ MODE_HINTS = {
 @dataclass
 class HermesFrame:
     header: Panel
-    left: Panel
-    center: Panel
-    right: Panel
+    body: Panel
     footer: Panel
 
 
@@ -211,58 +211,57 @@ class HermesShell:
         layout = Layout()
         layout.split_column(
             Layout(frame.header, size=5),
-            Layout(frame.center, ratio=1),
-            Layout(frame.footer, size=5),
+            Layout(name="main", ratio=1),
+            Layout(frame.footer, size=4),
         )
+        layout["main"].update(frame.body)
         console.print(layout)
 
     def _build_frame(self, *, last_result: str, initial: bool) -> HermesFrame:
         snapshot = self.kernel.snapshot()
         header = self._build_header_panel(snapshot)
-        left = self._build_left_rail(snapshot)
-        center = self._build_center_panel(snapshot, last_result=last_result, initial=initial)
-        right = self._build_right_rail(snapshot)
+        body = self._build_center_panel(snapshot, last_result=last_result, initial=initial)
         footer = self._build_footer_panel(snapshot)
-        return HermesFrame(header=header, left=left, center=center, right=right, footer=footer)
+        return HermesFrame(header=header, body=body, footer=footer)
 
     def _build_provider_picker_panel(self, presets: list[ProviderPreset]) -> Panel:
         table = Table.grid(expand=True)
         table.add_column()
         header = Text()
-        header.append("Select provider:\n", style="bold yellow")
-        header.append("Select by number, Enter to confirm.\n\n", style="dim")
+        header.append("Select provider:\n", style=f"bold {PRIMARY}")
+        header.append("Select by number, Enter to confirm.\n\n", style=f"dim {MUTED}")
         for index, preset in enumerate(presets, start=1):
             active = preset.key == self.kernel.state.provider_key
             marker = "(o)" if not active else "(•)"
-            color = "green" if active else ("white" if preset.available else "red")
+            color = SUCCESS if active else ("white" if preset.available else WARN)
             badge = f" <{preset.badge}>" if preset.badge else ""
             availability = "" if preset.available else " [unavailable]"
             header.append(f"{marker} {index}. {preset.label}{badge} ({preset.description}){availability}\n", style=color)
         table.add_row(header)
-        return Panel(table, border_style="yellow", title="Provider Select")
+        return blue_panel(table, title="Provider Select", subtitle="Routing", border_style=PRIMARY, box_style=BOX)
 
     def _build_header_panel(self, snapshot: dict[str, Any]) -> Panel:
         provider = snapshot["provider"]
         provider_health = snapshot["provider_health"]
         state = snapshot["state"]
         title = Text()
-        title.append("TaxSentry TUI", style="bold white")
+        title.append("TaxSentry", style=f"bold {PRIMARY}")
         title.append("  ")
         title.append(
             f"{get_value(self.settings, 'agent.name', 'TaxSentry')}",
-            style="cyan",
+            style=f"bold {SECONDARY}",
         )
         title.append("\n")
-        title.append(f"mode={state.mode.value}", style="magenta")
-        title.append(" | ")
-        title.append(f"provider={snapshot['provider_label']}", style="green")
-        title.append(" | ")
-        title.append(f"model={provider.model}", style="yellow")
-        title.append(" | ")
-        title.append(f"health={'OK' if provider_health[0] else 'FAIL'}", style="bold green" if provider_health[0] else "bold red")
-        title.append(" | ")
-        title.append(f"session={state.session_id[:8]}", style="dim")
-        return Panel(title, border_style="cyan", style="bold white on black", box=box.SQUARE)
+        title.append_text(
+            status_strip(
+                [
+                    ("mode", state.mode.value, f"bold {ACCENT}"),
+                    ("provider", snapshot["provider_label"], f"bold {SECONDARY}"),
+                    ("health", "OK" if provider_health[0] else "FAIL", f"bold {SUCCESS}" if provider_health[0] else f"bold {WARN}"),
+                ],
+            ),
+        )
+        return blue_panel(title, border_style=PRIMARY, box_style=BOX, padding=(0, 2))
 
     def _build_left_rail(self, snapshot: dict[str, Any]) -> Panel:
         presets = self.kernel.available_provider_presets()
@@ -270,16 +269,17 @@ class HermesShell:
         table.add_column()
 
         provider_block = Text()
-        provider_block.append("Providers\n", style="bold yellow")
+        provider_block.append("Mission Deck\n", style=f"bold {PRIMARY}")
+        provider_block.append("Providers\n", style=f"bold {SECONDARY}")
         for index, preset in enumerate(presets, start=1):
             active = preset.key == self.kernel.state.provider_key
             marker = "▶" if active else "•"
-            color = "green" if active else ("white" if preset.available else "red")
+            color = SUCCESS if active else ("white" if preset.available else WARN)
             provider_block.append(f"{marker} {index}. {preset.label}\n", style=color)
-            provider_block.append(f"    {preset.description}\n", style="dim")
+            provider_block.append(f"    {preset.description}\n", style=f"dim {MUTED}")
 
         actions = Text()
-        actions.append("\nActions\n", style="bold yellow")
+        actions.append("\nActions\n", style=f"bold {SECONDARY}")
         for line in [
             "/help, /status, /memory",
             "/remember <text>",
@@ -294,142 +294,44 @@ class HermesShell:
             actions.append(f"• {line}\n", style="white")
 
         sessions = Text()
-        sessions.append("\nRecent sessions\n", style="bold yellow")
+        sessions.append("\nRecent sessions\n", style=f"bold {SECONDARY}")
         session = snapshot["session"]
         sessions.append(f"• Current: {session.session_id[:8]} ({session.mode})\n", style="white")
-        sessions.append(f"• Started: {session.started_at}\n", style="dim")
-        sessions.append(f"• Turns: {len(session.messages)}\n", style="dim")
+        sessions.append(f"• Started: {session.started_at}\n", style=f"dim {MUTED}")
+        sessions.append(f"• Turns: {len(session.messages)}\n", style=f"dim {MUTED}")
 
         table.add_row(provider_block)
         table.add_row(actions)
         table.add_row(sessions)
-        return Panel(table, title="Left Rail", border_style="cyan", box=box.ROUNDED)
+        return blue_panel(table, title="Left Rail", subtitle="Providers and quick actions", border_style=PRIMARY, box_style=BOX)
 
     def _build_center_panel(self, snapshot: dict[str, Any], *, last_result: str, initial: bool) -> Panel:
         state = snapshot["state"]
         active_plan = snapshot.get("active_plan") or "No active plan"
-        toolchain = snapshot.get("toolchain") or []
-        turn_plan = getattr(self._last_turn, "plan", "") if self._last_turn is not None else ""
-        turn_toolchain = getattr(self._last_turn, "toolchain", []) if self._last_turn is not None else []
         body = Text()
-        body.append("Conversation stream\n", style="bold #f0a27a")
-        body.append(f"gateway connected | {self._last_frame_note}\n", style="dim")
-        body.append(f"plan={active_plan} | progress={state.last_progress or '-'}\n", style="dim")
-        body.append(f"tools={', '.join(toolchain) if toolchain else '-'}\n\n", style="dim")
-        if turn_plan:
-            body.append(f"Turn plan: {turn_plan}\n", style="dim")
-        if turn_toolchain:
-            body.append(f"Turn tools: {', '.join(turn_toolchain)}\n", style="dim")
+        body.append("Chat\n", style=f"bold {PRIMARY}")
+        body.append(f"gateway connected | {self._last_frame_note}\n", style=f"dim {MUTED}")
+        body.append(f"plan={active_plan} | progress={state.last_progress or '-'}\n\n", style=f"dim {MUTED}")
 
         if initial:
-            body.append("Ready for the first request.\n", style="white")
-            body.append("Type / then Tab to open slash command suggestions.\n", style="cyan")
-            body.append("\n")
-            body.append("Suggested flow:\n", style="bold white")
-            for command in self._command_hints():
-                body.append(f"  {command}\n", style="white")
+            body.append("Ready.\n", style="white")
         elif last_result:
             if state.last_user_input:
-                body.append("Sếp\n", style="bold cyan")
-                body.append(f" {state.last_user_input} \n\n", style="white on grey23")
-            body.append("TaxSentry\n", style="bold green")
+                body.append("Sếp\n", style=f"bold {SECONDARY}")
+                body.append(f" {state.last_user_input} \n\n", style="white on grey19")
+            body.append("TaxSentry\n", style=f"bold {PRIMARY}")
             body.append(last_result[:1200], style="white")
-            if self._last_turn is not None:
-                hints = getattr(self._last_turn, "hints", []) or []
-                confidence = getattr(self._last_turn, "response", None)
-                if hints:
-                    body.append(f"\nHints: {', '.join(hints)}\n", style="dim")
-                if confidence is not None:
-                    body.append(
-                        f"Route confidence: {getattr(confidence, 'confidence', 0.0):.2f}\n",
-                        style="dim",
-                    )
         else:
-            body.append("Waiting for the next action.\n", style="dim")
+            body.append("Waiting.\n", style=f"dim {MUTED}")
 
-        return Panel(body, title="Chat", border_style="grey39", box=box.SQUARE)
-
-    def _build_right_rail(self, snapshot: dict[str, Any]) -> Panel:
-        memory_facts = snapshot["memory_facts"]
-        recent_reports = snapshot["recent_reports"]
-        recent_jobs = snapshot.get("recent_jobs") or []
-        evidence_context = snapshot["evidence_context"]
-        recent_events = snapshot.get("recent_events") or []
-        recent_sessions = snapshot.get("recent_sessions") or []
-
-        body = Text()
-        body.append("Right Rail\n", style="bold yellow")
-        body.append("Memory snippets\n", style="bold cyan")
-        if memory_facts:
-            for item in memory_facts[:4]:
-                body.append(f"• {item.get('summary') or item.get('text')}\n", style="white")
-        else:
-            body.append("• No memory facts yet\n", style="dim")
-
-        body.append("\nRecent reports\n", style="bold cyan")
-        if recent_reports:
-            for row in recent_reports[:3]:
-                body.append(f"• {row.get('file_name')} | {row.get('tax_risk_status')}\n", style="white")
-        else:
-            body.append("• No reports yet\n", style="dim")
-
-        body.append("\nRecent jobs\n", style="bold cyan")
-        if recent_jobs:
-            for job in recent_jobs[:3]:
-                body.append(
-                    f"• {job.get('job_id', 'n/a')[:8]} | {job.get('job_type', 'n/a')} | {job.get('state', 'n/a')}\n",
-                    style="white",
-                )
-        else:
-            body.append("• No jobs yet\n", style="dim")
-
-        body.append("\nRecent sessions\n", style="bold cyan")
-        if recent_sessions:
-            for session in recent_sessions[:3]:
-                body.append(
-                    f"• {session.get('session_id', 'n/a')[:8]} | {session.get('mode', 'n/a')} | {session.get('outcome') or 'open'}\n",
-                    style="white",
-                )
-        else:
-            body.append("• No sessions yet\n", style="dim")
-
-        body.append("\nTrace preview\n", style="bold cyan")
-        if evidence_context:
-            body.append(f"• {evidence_context.get('source_file', 'n/a')}\n", style="white")
-            body.append(f"• session={evidence_context.get('session_id', 'n/a')}\n", style="dim")
-            body.append(f"• trace={evidence_context.get('trace_id', 'n/a')}\n", style="dim")
-        elif snapshot.get("trace_replay"):
-            for line in snapshot["trace_replay"].splitlines()[:6]:
-                body.append(f"• {line}\n", style="white")
-        else:
-            body.append("• No evidence context yet\n", style="dim")
-
-        body.append("\nTool timeline\n", style="bold cyan")
-        if recent_events:
-            for event in recent_events[-5:]:
-                status = getattr(event, "status", "info")
-                symbol = "●"
-                color = "green" if status == "success" else ("red" if status == "error" else "yellow")
-                title = getattr(event, "title", "event")
-                detail = getattr(event, "detail", "")
-                body.append(f"{symbol} {title}\n", style=color)
-                if detail:
-                    body.append(f"  {detail[:80]}\n", style="dim")
-        else:
-            body.append("• No events yet\n", style="dim")
-
-        return Panel(body, title="Right Rail", border_style="magenta", box=box.ROUNDED)
+        return blue_panel(body, title="Chat", subtitle="Live stream", border_style=PRIMARY, box_style=BOX_SOFT)
 
     def _build_footer_panel(self, snapshot: dict[str, Any]) -> Panel:
         state = snapshot["state"]
         footer = Text()
-        footer.append("Sếp > ", style="bold cyan")
-        footer.append("type a message or / command", style="white on grey23")
-        footer.append("\n")
-        footer.append("Suggestions: ", style="bold #f0a27a")
-        footer.append("  ".join(self._command_hints()), style="white")
-        footer.append(f"\nmode={state.mode.value} | provider={snapshot['provider_label']} | Tab opens completions", style="dim")
-        return Panel(footer, border_style="cyan", box=box.SQUARE)
+        footer.append("Sếp > type a message or / command", style=f"bold {SECONDARY}")
+        footer.append(f"\nmode={state.mode.value} | provider={snapshot['provider_label']}", style=f"dim {MUTED}")
+        return blue_panel(footer, border_style=PRIMARY, box_style=BOX_SOFT)
 
     @staticmethod
     def _parse_mode(value: str) -> AgentMode:

@@ -11,6 +11,7 @@ from rich.table import Table
 from rich.text import Text
 
 from taxsentry.runtime.service import TaxSentryRuntimeService
+from .theme import ACCENT, BOX, BOX_SOFT, MUTED, PRIMARY, SECONDARY, SUCCESS, WARN, blue_panel, section_title, status_strip
 
 console = Console()
 
@@ -46,15 +47,11 @@ class TaxSentryDashboard:
         console.clear()
         layout = Layout()
         layout.split_column(
-            Layout(self._header_panel(snapshot), size=7),
+            Layout(self._header_panel(snapshot), size=5),
             Layout(name="body", ratio=1),
             Layout(self._footer_panel(snapshot), size=4),
         )
-        layout["body"].split_row(
-            Layout(self._jobs_panel(snapshot), ratio=4),
-            Layout(self._center_panel(snapshot), ratio=5),
-            Layout(self._sessions_panel(snapshot), ratio=4),
-        )
+        layout["body"].update(self._body_panel(snapshot))
         console.print(layout)
 
     def _snapshot(self) -> DashboardSnapshot:
@@ -71,23 +68,39 @@ class TaxSentryDashboard:
     def _header_panel(self, snapshot: DashboardSnapshot) -> Panel:
         ok, message = snapshot.provider_health
         text = Text()
-        text.append("TaxSentry Dashboard\n", style="bold white")
-        text.append(
-            f"Provider health: {'OK' if ok else 'FAIL'} — {message}\n",
-            style="green" if ok else "red",
+        text.append("TaxSentry Ocean Dashboard\n", style=f"bold {PRIMARY}")
+        text.append("Read-only status view.\n", style=f"dim {MUTED}")
+        text.append("\n")
+        text.append_text(
+            status_strip(
+                [
+                    ("provider", "healthy" if ok else "degraded", f"bold {SUCCESS}" if ok else f"bold {WARN}"),
+                    ("jobs", str(len(snapshot.recent_jobs)), f"bold {SECONDARY}"),
+                    ("sessions", str(len(snapshot.recent_sessions)), f"bold {ACCENT}"),
+                    ("reports", str(len(snapshot.recent_reports)), "white"),
+                ],
+            ),
         )
-        text.append(
-            f"Recent jobs: {len(snapshot.recent_jobs)} | Recent sessions: {len(snapshot.recent_sessions)} | Recent reports: {len(snapshot.recent_reports)}",
-            style="cyan",
-        )
-        return Panel(text, border_style="deep_sky_blue1", style="bold white on black")
+        text.append(f"\n{message}", style=f"dim {MUTED}" if ok else f"bold {WARN}")
+        return blue_panel(text, title="Operational Snapshot", subtitle="Stacked layout", border_style=PRIMARY, box_style=BOX)
 
-    def _jobs_panel(self, snapshot: DashboardSnapshot) -> Panel:
-        table = Table(title="Recent Jobs", box=box.ROUNDED, expand=True)
-        table.add_column("Job", style="cyan", no_wrap=True)
-        table.add_column("State", style="green")
+    def _body_panel(self, snapshot: DashboardSnapshot) -> Panel:
+        grid = Table.grid(expand=True)
+        grid.add_column()
+        grid.add_row(section_title("Jobs", "Latest execution trail"))
+        grid.add_row(self._jobs_table(snapshot))
+        grid.add_row(section_title("Trace", "Replay"))
+        grid.add_row(self._trace_block(snapshot))
+        grid.add_row(section_title("Sessions", "Recent history"))
+        grid.add_row(self._sessions_table(snapshot))
+        return blue_panel(grid, border_style=PRIMARY, box_style=BOX_SOFT)
+
+    def _jobs_table(self, snapshot: DashboardSnapshot) -> Table:
+        table = Table(title="Recent Jobs", box=BOX, expand=True)
+        table.add_column("Job", style=SECONDARY, no_wrap=True)
+        table.add_column("State", style=SUCCESS)
         table.add_column("Type", style="white")
-        table.add_column("Source", style="magenta")
+        table.add_column("Source", style=ACCENT)
         for job in snapshot.recent_jobs[:8]:
             table.add_row(
                 str(job.job_id)[:10],
@@ -97,34 +110,32 @@ class TaxSentryDashboard:
             )
         if not snapshot.recent_jobs:
             table.add_row("-", "empty", "-", "-")
-        return Panel(table, border_style="cyan", title="Jobs")
+        return table
 
-    def _center_panel(self, snapshot: DashboardSnapshot) -> Panel:
+    def _trace_block(self, snapshot: DashboardSnapshot) -> Text:
         body = Text()
-        body.append("Trace / Replay\n", style="bold yellow")
         if snapshot.trace_replay:
-            body.append(snapshot.trace_replay[:2500], style="white")
+            body.append(snapshot.trace_replay[:1200], style="white")
         else:
-            body.append("No replay data available yet.\n", style="dim")
+            body.append("No replay data available yet.\n", style=f"dim {MUTED}")
 
-        body.append("\n\nRecent reports\n", style="bold cyan")
+        body.append("\nRecent reports\n", style=f"bold {SECONDARY}")
         if snapshot.recent_reports:
-            for report in snapshot.recent_reports[:4]:
+            for report in snapshot.recent_reports[:3]:
                 body.append(
                     f"• {report.get('file_name', 'n/a')} | {report.get('tax_risk_status', 'n/a')} | {report.get('status', 'n/a')}\n",
                     style="white",
                 )
         else:
-            body.append("• No reports yet\n", style="dim")
+            body.append("• No reports yet\n", style=f"dim {MUTED}")
+        return body
 
-        return Panel(body, title="Trace Center", border_style="green", box=box.ROUNDED)
-
-    def _sessions_panel(self, snapshot: DashboardSnapshot) -> Panel:
-        table = Table(title="Recent Sessions", box=box.ROUNDED, expand=True)
-        table.add_column("Session", style="cyan", no_wrap=True)
+    def _sessions_table(self, snapshot: DashboardSnapshot) -> Table:
+        table = Table(title="Recent Sessions", box=BOX, expand=True)
+        table.add_column("Session", style=SECONDARY, no_wrap=True)
         table.add_column("Mode", style="white")
-        table.add_column("Outcome", style="green")
-        table.add_column("Started", style="magenta")
+        table.add_column("Outcome", style=SUCCESS)
+        table.add_column("Started", style=ACCENT)
         for session in snapshot.recent_sessions[:8]:
             table.add_row(
                 str(session.get("session_id", "-"))[:10],
@@ -134,14 +145,14 @@ class TaxSentryDashboard:
             )
         if not snapshot.recent_sessions:
             table.add_row("-", "empty", "-", "-")
-        return Panel(table, border_style="magenta", title="Sessions")
+        return table
 
     def _footer_panel(self, snapshot: DashboardSnapshot) -> Panel:
         footer = Text()
-        footer.append("Refresh: Enter  |  Exit: q", style="bold yellow")
+        footer.append("Refresh: Enter  |  q: exit", style=f"bold {PRIMARY}")
         footer.append(
             f"\nLatest event count: {len(snapshot.events)} | Replay available: {'yes' if snapshot.trace_replay else 'no'}",
-            style="dim",
+            style=f"dim {MUTED}",
         )
-        return Panel(footer, border_style="deep_sky_blue1", box=box.ROUNDED)
+        return blue_panel(footer, title="Live Footer", subtitle="Status", border_style=PRIMARY, box_style=BOX)
 

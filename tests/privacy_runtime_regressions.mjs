@@ -26,7 +26,7 @@ function freshImport(relPath) {
 applySharedHome();
 
 async function testConfigRoundTrip() {
-  const configMod = await freshImport('src/config.js');
+  const configMod = await freshImport('src/config.ts');
   const { getEmptyConfig, setValue, saveConfig, writeEnvFile, loadConfig } = configMod;
 
   const cfg = getEmptyConfig();
@@ -74,7 +74,7 @@ async function testConfigRoundTrip() {
 }
 
 async function testOnboardingWritesFriendlyProviderConfig() {
-  const onboarding = await freshImport('src/onboarding.js');
+  const onboarding = await freshImport('src/onboarding.ts');
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: false, async json() { return {}; } });
   const originalLog = console.log;
@@ -119,7 +119,7 @@ async function testOnboardingWritesFriendlyProviderConfig() {
 }
 
 async function testOnboardingCanPickModelFromList() {
-  const onboarding = await freshImport('src/onboarding.js');
+  const onboarding = await freshImport('src/onboarding.ts');
   const originalFetch = globalThis.fetch;
   const fetchedUrls = [];
   globalThis.fetch = async (url) => {
@@ -171,7 +171,7 @@ async function testOnboardingCanPickModelFromList() {
 }
 
 async function testOnboardingSearchesModelListByKeyword() {
-  const onboarding = await freshImport('src/onboarding.js');
+  const onboarding = await freshImport('src/onboarding.ts');
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
     ok: true,
@@ -208,8 +208,8 @@ async function testOnboardingSearchesModelListByKeyword() {
 }
 
 async function testOnboardingPrefersRememberedModelOnReconfigure() {
-  const configMod = await freshImport('src/config.js');
-  const onboarding = await freshImport('src/onboarding.js');
+  const configMod = await freshImport('src/config.ts');
+  const onboarding = await freshImport('src/onboarding.ts');
   const { getEmptyConfig, saveConfig, writeEnvFile } = configMod;
 
   const seeded = getEmptyConfig();
@@ -257,3 +257,4 @@ await testOnboardingCanPickModelFromList();
 await testOnboardingSearchesModelListByKeyword();
 await testOnboardingPrefersRememberedModelOnReconfigure();
 rmSync(SHARED_HOME, { recursive: true, force: true });
+

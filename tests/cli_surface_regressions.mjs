@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
-const CLI = join(process.cwd(), 'bin', 'taxsentry.js');
+const CLI = join(process.cwd(), 'bin', 'taxsentry.ts');
 
 function runHelp(args = []) {
   return execFileSync('node', [CLI, ...args, '--help'], { encoding: 'utf8' });
@@ -47,3 +47,4 @@ assert.match(resetProfileHelp, /reset the local profile/i, 'reset-profile help s
 
 const authHelp = runHelp(['auth']);
 assert.match(authHelp, /codex/i, 'auth help should expose the Codex subcommand');
+

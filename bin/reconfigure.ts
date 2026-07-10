@@ -11,9 +11,10 @@ import {
   saveConfig,
   writeEnvFile,
   isConfigured,
-} from '../src/config.js';
+} from '../src/config.ts';
 
-import { ENV_FILE, CORE_DIR, CONFIG_FILE } from '../src/utils/paths.js';
+import { ENV_FILE, CORE_DIR, CONFIG_FILE } from '../src/utils/paths.ts';
+import { oceanFrame } from '../src/utils/terminal-theme.ts';
 
 const logo = `
   _____             ____                _
@@ -25,11 +26,7 @@ const logo = `
 `;
 
 console.log(logo);
-console.log('╭─────────────────────────────────────────────╮');
-console.log('│ 🔄 TaxSentry Reconfigure Tool               │');
-console.log('│ Đọc config cũ + Regenerate .env + Verify    │');
-console.log('╰─────────────────────────────────────────────╯');
-console.log();
+console.log(oceanFrame('TaxSentry Reconfigure Tool', ['Đọc config cũ + Regenerate .env + Verify'], { subtitle: 'Blue maintenance mode' }));
 
 // === 1. Load existing config ===
 if (!existsSync(CONFIG_FILE)) {
@@ -102,7 +99,7 @@ if (existsSync(ENV_FILE)) {
   console.log();
 }
 
-// === 6. Verify .env từ config.js perspective ===
+// === 6. Verify .env từ config.ts perspective ===
 console.log('🔍 Verification:');
 console.log(`   Config file: ${CONFIG_FILE}`);
 console.log(`   Env file:    ${ENV_FILE}`);
@@ -120,7 +117,7 @@ if (existsSync(processedFile)) {
   console.log('   🧹 Cleared processed_ids.json (email sẽ re-scan)');
 }
 
-// === 8. Sync config.js schema fields into installed config.json ===
+// === 8. Sync config.ts schema fields into installed config.json ===
 // đảm bảo accountantEmail + directorEmail có value mặc định nếu chưa có
 const groups = ['director', 'telegram', 'mysql', 'email'];
 for (const gid of groups) {
@@ -135,3 +132,5 @@ console.log();
 console.log('   🚀 Bước tiếp: chạy "taxsentry start" để mở TUI tương tác');
 console.log('   📝 Hoặc "taxsentry config" để xem/thay đổi cấu hình');
 console.log('═══════════════════════════════════════════════');
+
+

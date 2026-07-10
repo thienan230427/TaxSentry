@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import chalk from 'chalk';
 
-import { loadConfig, saveConfig, writeEnvFile } from '../config.js';
+import { loadConfig, saveConfig, writeEnvFile } from '../config.ts';
 
 export function refreshRuntimeConfig({ load = loadConfig, save = saveConfig, writeEnv = writeEnvFile } = {}) {
   const config = load();
@@ -77,3 +77,4 @@ export default async function updateCommand(options = {}) {
   );
   return config;
 }
+

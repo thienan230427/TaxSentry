@@ -4,7 +4,7 @@
  */
 
 import chalk from 'chalk';
-import { isConfigured, loadConfig, getValue } from '../config.js';
+import { isConfigured, loadConfig, getValue } from '../config.ts';
 import {
   applyServiceDefinition,
   getAppliedServiceStatus,
@@ -16,9 +16,10 @@ import {
   startAppliedService,
   stopAppliedService,
   uninstallServiceArtifacts,
-} from '../utils/service-artifacts.js';
-import { getAppliedServiceName, getServiceAdapter, getServiceLabel } from '../utils/service-manager.js';
-import { info, success, warn } from '../utils/logger.js';
+} from '../utils/service-artifacts.ts';
+import { getAppliedServiceName, getServiceAdapter, getServiceLabel } from '../utils/service-manager.ts';
+import { info, success, warn } from '../utils/logger.ts';
+import { oceanFrame } from '../utils/terminal-theme.ts';
 
 function resolveAdminChatId() {
   if (!isConfigured()) return '';
@@ -30,29 +31,29 @@ export function showServiceStatus(serviceName = 'telegram_bot') {
   const adapter = getServiceAdapter(serviceName);
   const preview = getServiceArtifactPreview(serviceName);
   const applied = getAppliedServiceStatus(serviceName);
-
-  console.log(chalk.bold.cyan(`\n🧩 Service Definition: ${getServiceLabel(serviceName)}\n`));
-  console.log(chalk.dim(`   Adapter: ${adapter.runtimeMode}`));
-  console.log(chalk.dim(`   Supervisor đề xuất: ${adapter.recommendedSupervisor}`));
-  console.log(chalk.dim(`   Scope: ${adapter.installScope}`));
-  console.log(chalk.dim(`   Artifact chính: ${preview.artifactPath}`));
-  console.log(chalk.dim(`   Đã tạo artifact: ${preview.artifactExists ? 'Có' : 'Chưa'}`));
+  const lines = [
+    chalk.white(`Adapter: ${adapter.runtimeMode}`),
+    chalk.white(`Supervisor đề xuất: ${adapter.recommendedSupervisor}`),
+    chalk.white(`Scope: ${adapter.installScope}`),
+    chalk.white(`Artifact chính: ${preview.artifactPath}`),
+    chalk.white(`Đã tạo artifact: ${preview.artifactExists ? 'Có' : 'Chưa'}`),
+  ];
   if (preview.supportScriptPath) {
-    console.log(chalk.dim(`   Script hỗ trợ: ${preview.supportScriptPath}`));
-    console.log(chalk.dim(`   Đã tạo script hỗ trợ: ${preview.supportScriptExists ? 'Có' : 'Chưa'}`));
+    lines.push(chalk.white(`Script hỗ trợ: ${preview.supportScriptPath}`));
+    lines.push(chalk.white(`Đã tạo script hỗ trợ: ${preview.supportScriptExists ? 'Có' : 'Chưa'}`));
   }
   if (preview.appliedTargetPath) {
-    console.log(chalk.dim(`   Target OS file: ${preview.appliedTargetPath}`));
-    console.log(chalk.dim(`   Target OS file tồn tại: ${preview.appliedTargetExists ? 'Có' : 'Chưa'}`));
+    lines.push(chalk.white(`Target OS file: ${preview.appliedTargetPath}`));
+    lines.push(chalk.white(`Target OS file tồn tại: ${preview.appliedTargetExists ? 'Có' : 'Chưa'}`));
   }
-  console.log(chalk.dim(`   Tên đăng ký trên OS: ${getAppliedServiceName(serviceName)}`));
-  console.log(chalk.dim(`   Đã apply vào OS: ${applied.registered ? 'Có' : 'Chưa'}`));
-  console.log(chalk.dim(`   Trạng thái OS hiện tại: ${applied.active ? 'Active/Registered' : 'Chưa active'}`));
+  lines.push(chalk.hex('#67e8f9')(`Tên đăng ký trên OS: ${getAppliedServiceName(serviceName)}`));
+  lines.push(chalk.hex('#67e8f9')(`Đã apply vào OS: ${applied.registered ? 'Có' : 'Chưa'}`));
+  lines.push(chalk.hex('#67e8f9')(`Trạng thái OS hiện tại: ${applied.active ? 'Active/Registered' : 'Chưa active'}`));
   if (applied.detail) {
-    console.log(chalk.dim(`   Chi tiết OS: ${applied.detail}`));
+    lines.push(chalk.hex('#93c5fd')(`Chi tiết OS: ${applied.detail}`));
   }
-  console.log(chalk.dim(`   Ghi chú: ${adapter.notes}`));
-  console.log();
+  lines.push(chalk.dim(`Ghi chú: ${adapter.notes}`));
+  console.log('\n' + oceanFrame(`Service Definition: ${getServiceLabel(serviceName)}`, lines, { subtitle: 'Platform adapter view', borderColor: 'blue' }));
 }
 
 export function installServiceCommand(serviceName = 'telegram_bot') {
@@ -211,3 +212,4 @@ export function showServiceLogsCommand(serviceName = 'telegram_bot', lines = 40)
   }
   console.log();
 }
+

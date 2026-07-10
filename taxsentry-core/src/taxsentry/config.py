@@ -60,7 +60,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         },
     },
     "ui": {
-        "theme": "midnight",
+        "theme": "ocean",
         "show_banner": True,
     },
     "extra_env": {},

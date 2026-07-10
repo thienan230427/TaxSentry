@@ -6,7 +6,7 @@ import {
   getPlatformServiceProfile,
   getServiceModuleArgs,
   getServiceProfileForPlatform,
-} from '../src/utils/service-manager.js';
+} from '../src/utils/service-manager.ts';
 
 const cases = [
   {
@@ -58,3 +58,4 @@ for (const testCase of cases) {
 }
 
 assert.equal(getPlatformServiceProfile().installScope, 'per-user', 'current platform should also be per-user scoped');
+

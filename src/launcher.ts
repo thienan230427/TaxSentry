@@ -2,7 +2,7 @@ import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSyn
 import { spawn, spawnSync } from 'child_process';
 import { join } from 'path';
 
-import { LOG_FILE, PID_FILE, CORE_DIR, getPythonPath, ensureDirectories } from './utils/paths.js';
+import { LOG_FILE, PID_FILE, CORE_DIR, getPythonPath, ensureDirectories } from './utils/paths.ts';
 
 function buildPythonEnv(extra = {}) {
   const env = { ...process.env, ...extra };
@@ -77,3 +77,4 @@ export function stopBackground() {
   unlinkSync(PID_FILE);
   return true;
 }
+

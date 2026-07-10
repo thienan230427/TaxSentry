@@ -1,6 +1,6 @@
-import { isConfigured } from '../utils/paths.js';
-import { runSetup } from './setup.js';
-import { startBackground } from '../launcher.js';
+import { isConfigured } from '../utils/paths.ts';
+import { runSetup } from './setup.ts';
+import { startBackground } from '../launcher.ts';
 
 export default async function upCommand() {
   if (!isConfigured()) {
@@ -11,3 +11,4 @@ export default async function upCommand() {
     process.exitCode = 1;
   }
 }
+

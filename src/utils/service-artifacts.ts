@@ -7,8 +7,8 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { spawnSync } from 'child_process';
-import { CORE_DIR, LOGS_DIR, RUN_DIR, SERVICES_DIR, ensureDirectories, getPythonPath } from './paths.js';
-import { getAppliedServiceName, getInstallHintLines, getPlatformServiceProfile, getServiceAdapter, getServiceLabel, getServiceModuleArgs } from './service-manager.js';
+import { CORE_DIR, LOGS_DIR, RUN_DIR, SERVICES_DIR, ensureDirectories, getPythonPath } from './paths.ts';
+import { getAppliedServiceName, getInstallHintLines, getPlatformServiceProfile, getServiceAdapter, getServiceLabel, getServiceModuleArgs } from './service-manager.ts';
 
 function xmlEscape(value) {
   return String(value)
@@ -453,3 +453,4 @@ export function readServiceLog(serviceName, lines = 40) {
     lines: tail,
   };
 }
+

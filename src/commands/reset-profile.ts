@@ -5,11 +5,12 @@
 
 import inquirer from 'inquirer';
 import chalk from 'chalk';
-import { detectPython, printDetectionResult, getInstallInstructions } from '../utils/python-detector.js';
-import { runInstallation } from '../installer.js';
-import { runOnboarding } from '../onboarding.js';
-import { isConfigured } from '../config.js';
-import { info, success, error, warn } from '../utils/logger.js';
+import { detectPython, printDetectionResult, getInstallInstructions } from '../utils/python-detector.ts';
+import { runInstallation } from '../installer.ts';
+import { runOnboarding } from '../onboarding.ts';
+import { isConfigured } from '../config.ts';
+import { info, success, error, warn } from '../utils/logger.ts';
+import { oceanFrame } from '../utils/terminal-theme.ts';
 
 export async function runResetProfile(deps = {}) {
   const prompt = deps.prompt ?? inquirer.prompt.bind(inquirer);
@@ -58,6 +59,7 @@ export async function runResetProfile(deps = {}) {
 }
 
 export default async function resetProfileCommand(deps = {}) {
-  console.log(chalk.dim('\n🧹 Chế độ reset profile: xóa profile cũ và chạy onboarding từ đầu.\n'));
+  console.log(oceanFrame('Reset profile', [chalk.dim('Xóa profile cũ và chạy onboarding từ đầu.')], { subtitle: 'Blue recovery mode' }));
   await runResetProfile(deps);
 }
+

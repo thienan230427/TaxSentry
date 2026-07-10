@@ -11,7 +11,7 @@ import {
   ensureDirectories,
   getPipPath,
   getPythonPath,
-} from "./utils/paths.js";
+} from "./utils/paths.ts";
 
 function copyCoreSource() {
   if (!existsSync(BUNDLED_CORE_DIR)) {
@@ -55,9 +55,10 @@ function installDependencies() {
 export async function runInstallation(pythonCommand = "python") {
   ensureDirectories();
   copyCoreSource();
-  console.log(chalk.cyan("Creating or reusing the TaxSentry venv..."));
+  console.log(chalk.hex("#38bdf8")("Creating or reusing the TaxSentry venv..."));
   createVenv(pythonCommand);
-  console.log(chalk.cyan("Installing Python dependencies..."));
+  console.log(chalk.hex("#67e8f9")("Installing Python dependencies..."));
   installDependencies();
   return { pythonPath: getPythonPath() };
 }
+

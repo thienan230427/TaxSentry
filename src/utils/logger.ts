@@ -4,8 +4,9 @@
  */
 
 import chalk from 'chalk';
-import boxen from 'boxen';
 import figlet from 'figlet';
+
+import { BLUE_THEME, oceanFrame } from './terminal-theme.ts';
 
 // Prefix constants
 const PREFIX = '🛡️ TaxSentry';
@@ -20,20 +21,11 @@ const INFO_PREFIX = 'ℹ️';
 export function printBanner() {
   console.log();
   console.log(
-    chalk.cyan(
+    BLUE_THEME.primary(
       figlet.textSync('TaxSentry', { horizontalLayout: 'fitted' })
     )
   );
-  console.log(
-    chalk.cyan.bold(
-      boxen('On-premise AI Audit Agent 🛡️', {
-        padding: 0.5,
-        margin: { top: 0, bottom: 1 },
-        borderColor: 'cyan',
-        borderStyle: 'round',
-      })
-    )
-  );
+  console.log(oceanFrame('Blue terminal cockpit', ['On-premise AI audit agent', 'Local-first. Memory-aware. Terminal-native.'], { subtitle: 'A calmer, sharper blue workspace' }));
 }
 
 /**
@@ -41,8 +33,8 @@ export function printBanner() {
  */
 export function printStep(phase, description) {
   console.log();
-  console.log(chalk.bold.blue(`${PREFIX} Phase ${phase}`));
-  console.log(chalk.blue(`→ ${description}`));
+  console.log(chalk.bold.hex('#38bdf8')(`${PREFIX} Phase ${phase}`));
+  console.log(chalk.hex('#67e8f9')(`→ ${description}`));
   console.log();
 }
 
@@ -50,21 +42,21 @@ export function printStep(phase, description) {
  * Log an informational message.
  */
 export function info(message) {
-  console.log(chalk.cyan(`${INFO_PREFIX} ${message}`));
+  console.log(chalk.hex('#67e8f9')(`${INFO_PREFIX} ${message}`));
 }
 
 /**
  * Log a success message.
  */
 export function success(message) {
-  console.log(chalk.green(`${SUCCESS_PREFIX} ${message}`));
+  console.log(chalk.hex('#22d3ee')(`${SUCCESS_PREFIX} ${message}`));
 }
 
 /**
  * Log a warning message.
  */
 export function warn(message) {
-  console.log(chalk.yellow(`${WARN_PREFIX} ${message}`));
+  console.log(chalk.hex('#93c5fd')(`${WARN_PREFIX} ${message}`));
 }
 
 /**
@@ -87,26 +79,19 @@ export function debug(message, verbose = false) {
  * Print a section divider.
  */
 export function divider() {
-  console.log(chalk.gray('─'.repeat(60)));
+  console.log(chalk.hex('#1d4ed8')('─'.repeat(60)));
 }
 
 /**
  * Print a boxed welcome message.
  */
 export function welcomeBox(directorName = 'Giám đốc') {
-  const msg = chalk.bold.cyan(
-    `🛡️ Chào mừng ${directorName} đến với hệ thống TaxSentry Agent!\n` +
-    `Hệ thống AI giám sát kinh doanh & thuế tự động, bảo mật.\n` +
-    `📁 Config: ~/.taxsentry/config.json`
-  );
-  console.log(
-    boxen(msg, {
-      padding: 1,
-      margin: { top: 1, bottom: 1 },
-      borderColor: 'cyan',
-      borderStyle: 'round',
-      title: 'TaxSentry AI Agent',
-      titleAlignment: 'center',
-    })
-  );
+  console.log(oceanFrame(
+    `Chào mừng ${directorName} đến với TaxSentry`,
+    [
+      chalk.white('Hệ thống AI giám sát kinh doanh & thuế tự động, bảo mật.'),
+      chalk.hex('#67e8f9')('📁 Config: ~/.taxsentry/config.json'),
+    ],
+    { subtitle: 'Blue cockpit mode' },
+  ));
 }

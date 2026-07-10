@@ -4,8 +4,8 @@
  * Dùng schema dynamic — không hardcode bất kỳ field name nào.
  */
 
-import { loadConfig, saveConfig, writeEnvFile, addField, renameField, removeField, addGroup, setEnvMapping, getValue, setValue, flattenValues } from '../config.js';
-import { info, success, error, warn } from '../utils/logger.js';
+import { loadConfig, saveConfig, writeEnvFile, addField, renameField, removeField, addGroup, setEnvMapping, getValue, setValue, flattenValues } from '../config.ts';
+import { info, success, error, warn } from '../utils/logger.ts';
 import chalk from 'chalk';
 
 function maskExtraEnvValue(key, value) {
@@ -19,14 +19,14 @@ function maskExtraEnvValue(key, value) {
 export function displayConfig() {
   const config = loadConfig();
 
-  console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════════════╗'));
-  console.log(chalk.bold.cyan('║       🛡️  TAXSENTRY CONFIGURATION            ║'));
-  console.log(chalk.bold.cyan('╚═══════════════════════════════════════════════╝'));
+  console.log(chalk.bold.hex('#38bdf8')('\n╔═══════════════════════════════════════════════╗'));
+  console.log(chalk.bold.hex('#38bdf8')('║       🛡️  TAXSENTRY CONFIGURATION            ║'));
+  console.log(chalk.bold.hex('#38bdf8')('╚═══════════════════════════════════════════════╝'));
   console.log(chalk.dim(`Version: ${config.version}\n`));
 
   for (const group of config.schema.groups) {
-    console.log(chalk.bold(`📁 ${group.label} [${group.id}]`));
-    console.log(chalk.gray('─'.repeat(50)));
+    console.log(chalk.bold.hex('#67e8f9')(`📁 ${group.label} [${group.id}]`));
+    console.log(chalk.hex('#1d4ed8')('─'.repeat(50)));
 
     for (const field of group.fields) {
       const val = getValue(config, group.id, field.key);
@@ -38,8 +38,8 @@ export function displayConfig() {
         displayVal = val !== undefined && val !== '' && val !== null ? String(val) : '(trống)';
       }
 
-      const required = field.required ? chalk.red(' *') : '';
-      console.log(`  ${chalk.cyan(field.label)}${required}`);
+      const required = field.required ? chalk.hex('#fb7185')(' *') : '';
+      console.log(`  ${chalk.hex('#38bdf8')(field.label)}${required}`);
       console.log(`  ${chalk.dim(`    key: ${chalk.white(group.id)}.${chalk.white(field.key)}`)}`);
       console.log(`    → ${displayVal}`);
 
@@ -55,7 +55,7 @@ export function displayConfig() {
 
   // Extra env
   if (config.extraEnv && Object.keys(config.extraEnv).length > 0) {
-    console.log(chalk.bold('📎 Extra Environment Variables:'));
+    console.log(chalk.bold.hex('#67e8f9')('📎 Extra Environment Variables:'));
     for (const [k, v] of Object.entries(config.extraEnv)) {
       console.log(chalk.dim(`  ${k}=${maskExtraEnvValue(k, v)}`));
     }
@@ -63,7 +63,7 @@ export function displayConfig() {
   }
 
   // Available commands
-  console.log(chalk.gray('─'.repeat(50)));
+  console.log(chalk.hex('#1d4ed8')('─'.repeat(50)));
   console.log(chalk.dim('📝 Các lệnh quản lý config:'));
   console.log(chalk.dim('  taxsentry config set <groupId.fieldKey> <value>'));
   console.log(chalk.dim('  taxsentry config add-field <groupId> <key> <label> [type] [envVar]'));
@@ -200,3 +200,4 @@ export function generateEnvCommand() {
   writeEnvFile(config);
   success('Đã tạo lại file .env từ cấu hình hiện tại.');
 }
+

@@ -47,9 +47,9 @@ try {
 
   assertHas(names, 'package/package.json');
   assertHas(names, 'package/README.md');
-  assertHas(names, 'package/bin/taxsentry.js');
-  assertHas(names, 'package/src/config.js');
-  assertHas(names, 'package/src/onboarding.js');
+  assertHas(names, 'package/bin/taxsentry.ts');
+  assertHas(names, 'package/src/config.ts');
+  assertHas(names, 'package/src/onboarding.ts');
   assertHas(names, 'package/taxsentry-core/.env.example');
   assertHas(names, 'package/taxsentry-core/pyproject.toml');
   assertHas(names, 'package/taxsentry-core/requirements.txt');
@@ -69,9 +69,10 @@ try {
   assert.ok(env.includes('TAXSENTRY_PROVIDER_API_KEY='), '.env.example should include provider API key placeholder');
   assert.ok(env.includes('TAXSENTRY_MEMORY_DB='), '.env.example should include memory DB path');
 
-  await import('../src/commands/setup.js');
-  await import('../src/commands/start.js');
+  await import('../src/commands/setup.ts');
+  await import('../src/commands/start.ts');
 } finally {
   if (existsSync(tarballPath)) rmSync(tarballPath, { force: true });
   if (existsSync(cacheDir)) rmSync(cacheDir, { recursive: true, force: true });
 }
+

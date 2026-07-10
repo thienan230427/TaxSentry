@@ -25,13 +25,18 @@ function freshImport(relPath) {
 
 applySharedHome();
 
-const codexAuth = await freshImport('src/utils/codex-auth.js');
+const codexAuth = await freshImport('src/utils/codex-auth.ts');
 const {
   CODEX_LOGIN_URL,
+  CODEX_DEVICE_LOGIN_URL,
+  CODEX_DEVICE_TOKEN_URL,
+  CODEX_DEVICE_USERCODE_URL,
   CODEX_RECOMMENDED_MODELS,
   fetchCodexModelIds,
   openCodexLoginPage,
   redactCodexAuthSummary,
+  pollCodexDeviceAuth,
+  requestCodexDeviceCode,
 } = codexAuth;
 
 assert.equal(
@@ -109,7 +114,75 @@ assert.deepEqual(
   'Codex login should fall back to another private browser launcher',
 );
 
-const { runAuthCodex } = await freshImport('src/commands/auth-codex.js');
+const requestedDeviceCode = await requestCodexDeviceCode({
+  fetchImpl: async (url, options) => {
+    assert.equal(url, CODEX_DEVICE_USERCODE_URL, 'Codex device login should request the one-time code from the deviceauth endpoint');
+    assert.equal(options.method, 'POST', 'Codex device login should POST to request a device code');
+    return {
+      ok: true,
+      async json() {
+        return {
+          device_auth_id: 'deviceauth_123',
+          user_code: 'TAD7-ZGOH1',
+          interval: '5',
+          expires_at: '2026-07-07T15:58:55.506284+00:00',
+          verification_url: CODEX_DEVICE_LOGIN_URL,
+        };
+      },
+    };
+  },
+});
+
+assert.equal(requestedDeviceCode.deviceAuthId, 'deviceauth_123', 'Codex device login should expose the device auth id');
+assert.equal(requestedDeviceCode.userCode, 'TAD7-ZGOH1', 'Codex device login should expose the one-time code');
+assert.equal(requestedDeviceCode.verificationUrl, CODEX_DEVICE_LOGIN_URL, 'Codex device login should point to the browser verification page');
+
+const pollCalls = [];
+let pollCount = 0;
+const polledAuth = await pollCodexDeviceAuth({
+  fetchImpl: async (url, options) => {
+    pollCalls.push([url, JSON.parse(options.body)]);
+    assert.equal(url, CODEX_DEVICE_TOKEN_URL, 'Codex device login should poll the deviceauth token endpoint');
+    if (pollCount === 0) {
+      pollCount += 1;
+      return {
+        status: 403,
+        ok: false,
+        async json() {
+          return {
+            error: {
+              code: 'deviceauth_authorization_pending',
+              message: 'Device authorization is pending. Please try again.',
+            },
+          };
+        },
+      };
+    }
+    return {
+      ok: true,
+      async json() {
+        return {
+          access_token: 'token-device',
+          refresh_token: 'refresh-device',
+          account_id: 'abc123456789',
+          email: 'thienan@gmail.com',
+          name: 'Thiên Ân',
+        };
+      },
+    };
+  },
+  sleep: async () => {},
+  deviceAuthId: requestedDeviceCode.deviceAuthId,
+  userCode: requestedDeviceCode.userCode,
+  intervalMs: 0,
+  timeoutMs: 1000,
+});
+
+assert.equal(polledAuth.accessToken, 'token-device', 'Codex device login should normalize the returned access token');
+assert.equal(readFileSync(join(SHARED_HOME, '.codex', 'auth.json'), 'utf8').includes('token-device'), true, 'Codex device login should save the refreshed auth profile');
+assert.equal(pollCalls.length, 2, 'Codex device login should retry after the pending response');
+
+const { runAuthCodex } = await freshImport('src/commands/auth-codex.ts');
 const openedUrls = [];
 let loadAuthCalls = 0;
 const fakeAuth = {
@@ -124,7 +197,6 @@ const fakeAuth = {
 };
 const promptQueue = [
   { openLogin: true },
-  { continue: '' },
   { selection: '1' },
   { enabled: true },
   { botToken: 'BOT-123', adminChatId: '999' },
@@ -144,6 +216,13 @@ try {
       openedUrls.push(url);
       return true;
     },
+    requestDeviceCode: async () => ({
+      deviceAuthId: 'deviceauth_123',
+      userCode: 'TAD7-ZGOH1',
+      intervalMs: 0,
+      verificationUrl: CODEX_DEVICE_LOGIN_URL,
+    }),
+    pollDeviceAuth: async () => fakeAuth,
     fetchImpl: async () => ({
       ok: true,
       async json() {
@@ -158,7 +237,7 @@ try {
   });
 
   assert.equal(result.model, 'gpt-5.5', 'auth codex should save the selected current Codex model');
-  assert.deepEqual(openedUrls, [CODEX_LOGIN_URL], 'auth codex should open the ChatGPT Codex login page');
+  assert.deepEqual(openedUrls, [CODEX_DEVICE_LOGIN_URL], 'auth codex should open the Codex device login page');
   const configText = readFileSync(join(SHARED_HOME, '.taxsentry', 'config', 'config.json'), 'utf8');
   assert.ok(configText.includes('"kind": "codex_oauth"'), 'auth codex should persist Codex OAuth provider kind');
   assert.ok(configText.includes('"model": "gpt-5.5"'), 'auth codex should persist the selected Codex model');
@@ -181,7 +260,7 @@ try {
     last_refresh: '2026-07-01T00:00:00Z',
   }), 'utf8');
 
-  const onboarding = await freshImport('src/onboarding.js');
+  const onboarding = await freshImport('src/onboarding.ts');
   const onboardingPrompts = [
     { name: 'name', persona: 'warm, concise, and practical', language: 'vi' },
     { provider: 'codex_oauth' },
@@ -201,7 +280,7 @@ try {
     'onboarding should ask whether to reuse existing Codex credentials before choosing a current Codex model',
   );
 
-  const configModule = await freshImport('src/config.js');
+  const configModule = await freshImport('src/config.ts');
   const existingConfig = configModule.getEmptyConfig();
   existingConfig.configured = true;
   existingConfig.provider = {
@@ -240,3 +319,4 @@ try {
   console.log = originalLog;
   rmSync(SHARED_HOME, { recursive: true, force: true });
 }
+

@@ -7,6 +7,7 @@ from rich.table import Table
 
 from .ui.hermes_shell import HermesShell
 from .ui.dashboard import TaxSentryDashboard
+from .ui.theme import ACCENT, BOX, BOX_SOFT, MUTED, PRIMARY, SECONDARY, SUCCESS, WARN, blue_panel, status_strip
 from .config import describe_config, load_config
 from .memory import bootstrap_memory
 from .providers import from_settings, health_check
@@ -30,22 +31,31 @@ def run_status() -> int:
     settings = service.settings
     provider = from_settings(settings)
     ok, message = health_check(provider)
-    console.print(Panel(service.status_text(), title="TaxSentry status", border_style="green"))
+    status = service.status_text()
+    console.print(
+        blue_panel(
+            status,
+            title="TaxSentry status",
+            subtitle="Blue terminal health overview",
+            border_style=PRIMARY,
+            box_style=BOX,
+        )
+    )
     return 0 if ok else 1
 
 
 def run_jobs(limit: int = 10) -> int:
     service = TaxSentryRuntimeService()
     jobs = service.recent_jobs(limit=limit)
-    table = Table(title="Recent jobs")
-    table.add_column("Job ID", style="cyan")
+    table = Table(title="Recent jobs", box=BOX)
+    table.add_column("Job ID", style=SECONDARY)
     table.add_column("Type", style="white")
-    table.add_column("State", style="green")
-    table.add_column("Source", style="magenta")
-    table.add_column("Session", style="yellow")
-    table.add_column("Retry", style="blue")
+    table.add_column("State", style=SUCCESS)
+    table.add_column("Source", style=ACCENT)
+    table.add_column("Session", style=WARN)
+    table.add_column("Retry", style=PRIMARY)
     if not jobs:
-        console.print(Panel("No recent jobs yet.", title="Jobs", border_style="cyan"))
+        console.print(blue_panel("No recent jobs yet.", title="Jobs", subtitle="Nothing queued", border_style=PRIMARY, box_style=BOX_SOFT))
         return 0
     for job in jobs:
         table.add_row(
@@ -69,12 +79,12 @@ def run_replay(session_id: str | None = None) -> int:
             console.print(Panel("No session found to replay.", title="Replay", border_style="red"))
             return 1
 
-        table = Table(title="Recent sessions")
-        table.add_column("#", style="cyan", no_wrap=True)
+        table = Table(title="Recent sessions", box=BOX)
+        table.add_column("#", style=SECONDARY, no_wrap=True)
         table.add_column("Session", style="white")
-        table.add_column("Mode", style="green")
-        table.add_column("Outcome", style="magenta")
-        table.add_column("Started", style="yellow")
+        table.add_column("Mode", style=SUCCESS)
+        table.add_column("Outcome", style=ACCENT)
+        table.add_column("Started", style=WARN)
         for index, session in enumerate(recent_sessions, start=1):
             table.add_row(
                 str(index),
@@ -99,7 +109,7 @@ def run_replay(session_id: str | None = None) -> int:
         console.print(Panel(f"No replay data available for {target_session}.", title="Replay", border_style="red"))
         return 1
 
-    console.print(Panel(replay, title=f"Trace replay: {target_session}", border_style="cyan"))
+    console.print(blue_panel(replay, title=f"Trace replay: {target_session}", subtitle="Conversation replay", border_style=PRIMARY, box_style=BOX))
     return 0
 
 
@@ -107,7 +117,7 @@ def run_memory_list() -> int:
     settings = load_config()
     memory = bootstrap_memory(settings)
     facts = memory.recent_facts(limit=20)
-    table = Table(title="Memory facts")
+    table = Table(title="Memory facts", box=BOX)
     table.add_column("Kind")
     table.add_column("Text")
     table.add_column("Source")
@@ -121,7 +131,7 @@ def run_memory_add(text: str) -> int:
     settings = load_config()
     memory = bootstrap_memory(settings)
     memory.remember_fact(text, source="cli")
-    console.print(Panel(f"Saved memory: {text}", border_style="green"))
+    console.print(blue_panel(f"Saved memory: {text}", title="Memory saved", subtitle="Stored in local history", border_style=PRIMARY, box_style=BOX_SOFT))
     return 0
 
 
@@ -130,7 +140,7 @@ def run_doctor() -> int:
     settings = service.settings
     provider = from_settings(settings)
     ok, message = health_check(provider)
-    console.print(Panel("Doctor report", border_style="cyan"))
+    console.print(blue_panel("Doctor report", title="Doctor report", subtitle="Runtime health check", border_style=PRIMARY, box_style=BOX))
     console.print(describe_config(settings))
     console.print(f"Provider health: {'OK' if ok else 'FAIL'} — {message}")
     console.print(f"Recent jobs: {len(service.recent_jobs(limit=5))}")
