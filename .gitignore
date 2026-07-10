@@ -238,4 +238,5 @@ npm-debug.log
 .taxsentry/
 .codex-remote-attachments/
 .npm-cache/
+tmp-pytest*/
 
