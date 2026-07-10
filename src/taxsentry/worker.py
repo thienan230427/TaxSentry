@@ -34,7 +34,7 @@ def single_instance(path: Path = RUNTIME_DIR / "worker.lock"):
         file.close()
 
 
-async def run_worker(*, once: bool = False) -> int:
+async def run_worker(*, once: bool = False, gateway: bool = False) -> int:
     settings, stop = load_config(), asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -42,15 +42,26 @@ async def run_worker(*, once: bool = False) -> int:
             loop.add_signal_handler(sig, stop.set)
         except (NotImplementedError, RuntimeError):
             pass
-    workflow, console = TaxSentryWorkflow(settings), Console()
-    with single_instance():
-        while not stop.is_set():
-            completed = await workflow.run_once()
-            console.print(f"[cyan]TaxSentry worker:[/] hoàn tất {completed} báo cáo")
-            if once:
-                return 0
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=max(10, int(settings["worker"]["poll_seconds"])))
-            except asyncio.TimeoutError:
-                pass
+    workflow, console, gateway_task = TaxSentryWorkflow(settings), Console(), None
+    if gateway and settings.get("telegram", {}).get("enabled") and not once:
+        from .bot.telegram_bot import serve
+
+        gateway_task = asyncio.create_task(serve(stop))
+    try:
+        with single_instance():
+            while not stop.is_set():
+                if gateway_task and gateway_task.done():
+                    gateway_task.result()
+                completed = await workflow.run_once()
+                console.print(f"[cyan]TaxSentry worker:[/] hoàn tất {completed} báo cáo")
+                if once:
+                    return 0
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=max(10, int(settings["worker"]["poll_seconds"])))
+                except asyncio.TimeoutError:
+                    pass
+    finally:
+        stop.set()
+        if gateway_task:
+            await gateway_task
     return 0

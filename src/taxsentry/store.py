@@ -10,6 +10,18 @@ from typing import Any
 from .config import MEMORY_DB, ensure_directories
 
 STATES = ("queued", "fetching", "extracting", "analyzing", "needs_review", "rendering", "delivering", "completed", "failed")
+TRANSITIONS = {
+    "queued": {"fetching", "failed"},
+    "fetching": {"extracting", "failed"},
+    "extracting": {"analyzing", "needs_review", "failed"},
+    "analyzing": {"needs_review", "rendering", "failed"},
+    "needs_review": {"failed"},
+    "rendering": {"delivering", "failed"},
+    "delivering": {"completed", "failed"},
+    "completed": set(),
+    "failed": set(),
+}
+REQUEUEABLE = {"fetching", "extracting", "analyzing", "needs_review", "rendering", "delivering", "failed"}
 
 
 class JobStore:
@@ -66,16 +78,27 @@ class JobStore:
         return dict(row) if row else None
 
     def requeue(self, job_id: str, *, approved: bool = False) -> None:
+        job = self.get(job_id)
+        if not job or job["state"] not in REQUEUEABLE or (approved and job["state"] != "needs_review"):
+            raise ValueError("Only interrupted, failed, or needs-review jobs can be requeued")
         self.connection.execute("UPDATE jobs SET state='queued', retries=0, error='', updated_at=? WHERE id=?", (self.now(), job_id))
         self.event(job_id, "approved" if approved else "retry_requested", {})
         self.connection.commit()
 
     def is_approved(self, job_id: str) -> bool:
-        return self.connection.execute("SELECT 1 FROM events WHERE job_id=? AND kind='approved' LIMIT 1", (job_id,)).fetchone() is not None
+        row = self.connection.execute("SELECT kind FROM events WHERE job_id=? AND kind IN ('approved', 'approval_consumed') ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone()
+        return bool(row and row["kind"] == "approved")
+
+    def consume_approval(self, job_id: str) -> None:
+        self.event(job_id, "approval_consumed", {})
+        self.connection.commit()
 
     def transition(self, job_id: str, state: str, *, error: str = "", report_path: str = "") -> None:
         if state not in STATES:
             raise ValueError(f"Unknown job state: {state}")
+        current = self.get(job_id)
+        if not current or state not in TRANSITIONS[current["state"]]:
+            raise ValueError(f"Invalid job transition: {current['state'] if current else 'missing'} -> {state}")
         self.connection.execute("UPDATE jobs SET state=?, error=?, report_path=CASE WHEN ?='' THEN report_path ELSE ? END, updated_at=? WHERE id=?", (state, error, report_path, report_path, self.now(), job_id))
         self.event(job_id, "state", {"state": state, "error": error})
         self.connection.commit()
@@ -97,8 +120,12 @@ class JobStore:
         self.connection.execute("INSERT INTO deliveries VALUES (?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), job_id, channel, external_id, status, self.now()))
         self.connection.commit()
 
+    def delivered(self, job_id: str, channel: str) -> bool:
+        return self.connection.execute("SELECT 1 FROM deliveries WHERE job_id=? AND channel=? AND status='sent' LIMIT 1", (job_id, channel)).fetchone() is not None
+
     def event(self, job_id: str | None, kind: str, payload: dict[str, Any]) -> None:
         self.connection.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?)", (str(uuid.uuid4()), job_id, kind, json.dumps(payload, ensure_ascii=False), self.now()))
+        self.connection.commit()
 
     def recent_jobs(self, limit: int = 10) -> list[dict[str, Any]]:
         return [dict(row) for row in self.connection.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))]

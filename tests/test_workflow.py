@@ -38,7 +38,7 @@ class FakeGmail:
     def label(self, message_id, label): self.labels.append(label)
     def save(self, job_id, attachment, max_mb=25):
         path = self.root / attachment.name; path.write_bytes(attachment.data); return path
-    def send_report(self, to, subject, html, pdf_path):
+    def send_report(self, to, subject, html, pdf_path, **kwargs):
         self.outgoing.append((to, subject, pdf_path)); return "gmail-out-1"
 
 
@@ -83,5 +83,26 @@ def test_low_ocr_confidence_requires_review(monkeypatch, tmp_path):
 
     job = store.recent_jobs()[0]
     store.requeue(job["id"], approved=True)
+    assert asyncio.run(workflow.run_once()) == 1
+    assert store.get(job["id"])["state"] == "completed"
+    assert not store.is_approved(job["id"])
+
+
+def test_worker_recovers_interrupted_job(monkeypatch, tmp_path):
+    message = GmailMessage("m3", "accounting@example.com", "Recovery", [GmailAttachment("report.pdf", "application/pdf", b"%PDF-1.7")])
+    gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "state.db")
+    job = store.create_job(message.id, message.sender, message.subject)
+    store.transition(job["id"], "fetching")
+    store.transition(job["id"], "extracting")
+    store.transition(job["id"], "analyzing")
+    monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: Extraction("revenue 120", 0.95, "pdf-text"))
+
+    def fake_pdf(report, output):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"%PDF")
+        return output
+
+    monkeypatch.setattr("taxsentry.workflow.render_pdf", fake_pdf)
+    workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
     assert asyncio.run(workflow.run_once()) == 1
     assert store.get(job["id"])["state"] == "completed"

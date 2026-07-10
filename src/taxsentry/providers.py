@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import subprocess
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,7 +41,7 @@ def build_client(spec: ProviderConfig) -> OpenAI:
         raise ProviderError("Codex v2 uses the official app-server, not direct OAuth tokens.")
     if not spec.base_url.strip():
         raise ProviderError("LM Studio requires a base URL.")
-    return OpenAI(api_key=spec.api_key or "lm-studio", base_url=spec.base_url)
+    return OpenAI(api_key=spec.api_key or "lm-studio", base_url=spec.base_url, timeout=5, max_retries=0)
 
 
 def provider_label(spec: ProviderConfig) -> str:
@@ -49,8 +51,9 @@ def provider_label(spec: ProviderConfig) -> str:
 def health_check(spec: ProviderConfig) -> tuple[bool, str]:
     try:
         if spec.kind == "codex":
-            command = shutil.which("codex")
-            return (bool(command), command or "Codex CLI not found")
+            command = _codex_command()
+            result = subprocess.run([command, "--version"], capture_output=True, text=True, timeout=10, check=False)
+            return (result.returncode == 0, result.stdout.strip() or result.stderr.strip() or command)
         models = list(build_client(spec).models.list().data)
         return True, f"LM Studio reachable ({len(models)} model(s))"
     except Exception as exc:
@@ -65,7 +68,7 @@ def generate_chat(spec: ProviderConfig, messages: list[dict[str, str]], temperat
 class LMStudioProvider:
     def __init__(self, spec: ProviderConfig):
         self.spec = spec
-        self.client = AsyncOpenAI(api_key=spec.api_key or "lm-studio", base_url=spec.base_url)
+        self.client = AsyncOpenAI(api_key=spec.api_key or "lm-studio", base_url=spec.base_url, timeout=30, max_retries=0)
 
     async def stream_turn(self, messages: list[dict[str, str]], *, output_schema: dict[str, Any] | None = None) -> AsyncIterator[AgentEvent]:
         del output_schema  # LM Studio compatibility varies; schema is enforced by the workflow parser.
@@ -91,10 +94,11 @@ class CodexAppServerProvider:
         self._request_id = 0
 
     async def start(self) -> None:
-        command = shutil.which("codex")
-        if not command:
-            raise ProviderError("Codex CLI not found. Install Codex, then run `taxsentry auth codex`.")
-        self.process = await asyncio.create_subprocess_exec(command, "app-server", "--listen", "stdio://", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            command = _codex_command()
+            self.process = await asyncio.create_subprocess_exec(command, "app-server", "--listen", "stdio://", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        except (OSError, PermissionError) as exc:
+            raise ProviderError("Codex CLI không chạy được. Đặt CODEX_CLI_PATH tới codex.exe hợp lệ.") from exc
         await self._request("initialize", {"clientInfo": {"name": "taxsentry", "title": "TaxSentry", "version": "2.0.0"}, "capabilities": {"experimentalApi": False}})
         await self._notify("initialized", {})
 
@@ -150,7 +154,11 @@ class CodexAppServerProvider:
                 item = payload.get("item", {})
                 yield AgentEvent(EventType.TOOL_COMPLETED, name=str(item.get("type", "tool")), data=item)
             elif method == "turn/completed":
-                yield AgentEvent(EventType.TURN_COMPLETED, data=payload)
+                turn = payload.get("turn", {})
+                if turn.get("status") == "failed":
+                    yield AgentEvent(EventType.ERROR, text=str(turn.get("error", {}).get("message") or "Codex turn failed"), data=payload)
+                else:
+                    yield AgentEvent(EventType.TURN_COMPLETED, data=payload)
                 return
             elif method in {"turn/failed", "error"}:
                 yield AgentEvent(EventType.ERROR, text=str(payload.get("error") or payload))
@@ -184,3 +192,10 @@ class CodexAppServerProvider:
 def create_provider(settings: dict[str, Any]):
     spec = from_settings(settings)
     return CodexAppServerProvider(model=spec.model) if spec.kind == "codex" else LMStudioProvider(spec)
+
+
+def _codex_command() -> str:
+    command = os.getenv("CODEX_CLI_PATH") or shutil.which("codex")
+    if not command:
+        raise ProviderError("Codex CLI not found. Install Codex or set CODEX_CLI_PATH.")
+    return command

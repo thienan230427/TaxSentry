@@ -5,6 +5,7 @@ from pathlib import Path
 
 from taxsentry.config import load_config
 from taxsentry.events import EventType
+from taxsentry.gmail import GmailClient
 from taxsentry.providers import create_provider
 from taxsentry.secrets import get_secret
 from taxsentry.store import JobStore
@@ -49,10 +50,15 @@ def build_application():
         if not job:
             await update.message.reply_text("Không tìm thấy job.")
             return
-        if action == "cancel":
-            store.transition(job["id"], "failed", error="Cancelled by Director")
-        else:
-            store.requeue(job["id"], approved=action == "approve")
+        try:
+            if action == "cancel":
+                store.transition(job["id"], "failed", error="Cancelled by Director")
+                GmailClient(settings).label(job["gmail_message_id"], "TaxSentry/Failed")
+            else:
+                store.requeue(job["id"], approved=action == "approve")
+        except ValueError as exc:
+            await update.message.reply_text(str(exc))
+            return
         await update.message.reply_text(f"Đã {action} job {job['id'][:8]}.")
 
     async def retry(update, context):
@@ -83,6 +89,18 @@ def build_application():
 
 def main() -> None:
     build_application().run_polling()
+
+
+async def serve(stop) -> None:
+    app = build_application()
+    async with app:
+        await app.start()
+        await app.updater.start_polling()
+        try:
+            await stop.wait()
+        finally:
+            await app.updater.stop()
+            await app.stop()
 
 
 if __name__ == "__main__": main()

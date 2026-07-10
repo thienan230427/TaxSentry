@@ -14,12 +14,12 @@ def artifact() -> tuple[Path, str]:
     python, system = Path(sys.executable), platform.system()
     if system == "Windows":
         path = APP_HOME / "service" / f"{NAME}.cmd"
-        return path, f'@echo off\r\n"{python}" -m taxsentry worker run >> "{LOGS_DIR / "worker.log"}" 2>&1\r\n'
+        return path, f'@echo off\r\n"{python}" -m taxsentry worker run --gateway >> "{LOGS_DIR / "worker.log"}" 2>&1\r\n'
     if system == "Darwin":
         path = Path.home() / "Library" / "LaunchAgents" / "ai.taxsentry.worker.plist"
-        return path, f'''<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>ai.taxsentry.worker</string><key>ProgramArguments</key><array><string>{python}</string><string>-m</string><string>taxsentry</string><string>worker</string><string>run</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>'''
+        return path, f'''<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>ai.taxsentry.worker</string><key>ProgramArguments</key><array><string>{python}</string><string>-m</string><string>taxsentry</string><string>worker</string><string>run</string><string>--gateway</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>'''
     path = Path.home() / ".config" / "systemd" / "user" / f"{NAME}.service"
-    return path, f"[Unit]\nDescription=TaxSentry Worker\n[Service]\nExecStart={python} -m taxsentry worker run\nRestart=on-failure\n[Install]\nWantedBy=default.target\n"
+    return path, f"[Unit]\nDescription=TaxSentry Worker and Telegram Gateway\n[Service]\nExecStart={python} -m taxsentry worker run --gateway\nRestart=on-failure\n[Install]\nWantedBy=default.target\n"
 
 
 def service(action: str) -> str:

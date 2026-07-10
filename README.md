@@ -37,12 +37,12 @@ taxsentry                 # terminal cockpit
 taxsentry start           # khởi động terminal cockpit
 taxsentry gateway         # kết nối Telegram foreground
 taxsentry doctor --fix    # phát hiện và sửa lỗi cài đặt có thể tự động sửa
-taxsentry update          # cập nhật bản uv tool đã cài
+taxsentry update          # cài lại bản mới nhất từ GitHub bằng uv tool
 taxsentry worker run      # quét Gmail mỗi 60 giây
 taxsentry worker run --once
 taxsentry jobs
 taxsentry report
-taxsentry service install
+taxsentry service install  # service chạy cả worker và Telegram gateway
 taxsentry service start
 taxsentry service status
 ```
@@ -54,6 +54,8 @@ Worker chỉ nhận sender trong `gmail.trusted_senders`, kiểm tra MIME/đuôi
 `queued → fetching → extracting → analyzing → needs_review|rendering → delivering → completed|failed`
 
 Báo cáo OCR confidence thấp hoặc thiếu chỉ số cốt lõi được chuyển sang `needs_review` và không tự gửi. Retry tối đa ba lần với exponential backoff.
+
+Job dở dang được phục hồi sau khi worker khởi động lại. Email outbound dùng `Message-ID` ổn định để tránh gửi trùng; service native chạy chung worker và Telegram gateway.
 
 ## Phát triển
 

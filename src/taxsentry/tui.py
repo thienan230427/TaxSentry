@@ -4,22 +4,27 @@ import argparse
 import asyncio
 import getpass
 import json
+import os
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
+import keyring
 from rich.console import Console
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 
 from .cockpit import Cockpit
-from .config import backup_v1_profile, describe_config, load_config, save_config
+from .config import APP_HOME, backup_v1_profile, describe_config, ensure_directories, load_config, save_config
 from .gmail import GmailClient
 from .providers import CodexAppServerProvider, from_settings, health_check
-from .secrets import delete_secret, set_secret
+from .reporting import html_summary
+from .secrets import delete_secret, get_secret, set_secret
 from .service_control import service
 from .store import JobStore
+from .telegram import TelegramDirector
 from .worker import run_worker
 
 console = Console()
@@ -42,6 +47,7 @@ def _parser() -> argparse.ArgumentParser:
     worker = sub.add_parser("worker")
     worker.add_argument("action", choices=["run"])
     worker.add_argument("--once", action="store_true")
+    worker.add_argument("--gateway", action="store_true")
     auth = sub.add_parser("auth")
     auth.add_argument("provider", choices=["codex", "gmail", "telegram", "status", "logout"])
     auth.add_argument("--device-code", action="store_true")
@@ -73,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "report":
         return report(send=args.send)
     if args.command == "worker":
-        return asyncio.run(run_worker(once=args.once))
+        return asyncio.run(run_worker(once=args.once, gateway=args.gateway))
     if args.command == "auth":
         return auth(args.provider, args.device_code)
     if args.command == "service":
@@ -144,18 +150,37 @@ def auth(provider: str, device_code: bool = False) -> int:
 def doctor(*, fix: bool = False) -> int:
     settings, failed = load_config(), False
     if fix:
+        ensure_directories()
         save_config(settings)
     checks = []
     ok, detail = health_check(from_settings(settings))
     checks.append(("Provider", ok, detail))
     tesseract = shutil.which("tesseract")
-    if fix and not tesseract:
+    required_languages = set(settings["ocr"].get("languages", ["vie", "eng"]))
+    ocr_languages = _ocr_languages(tesseract) if tesseract else set()
+    if fix and (not tesseract or not required_languages <= ocr_languages):
         _install_tesseract()
         tesseract = shutil.which("tesseract")
-    checks.append(("Tesseract", bool(tesseract), tesseract or _tesseract_hint()))
-    oauth_file = Path(settings["gmail"].get("oauth_client_file", ""))
-    checks.append(("Gmail OAuth client", oauth_file.is_file(), str(oauth_file) if oauth_file else "not configured"))
+        ocr_languages = _ocr_languages(tesseract) if tesseract else set()
+    checks.append(("Tesseract", bool(tesseract) and required_languages <= ocr_languages, tesseract if required_languages <= ocr_languages else f"Thiếu {sorted(required_languages - ocr_languages)}; {_tesseract_hint()}"))
+    oauth_client = settings["gmail"].get("oauth_client_file", "")
+    oauth_file = Path(oauth_client) if oauth_client else None
+    checks.append(("Gmail OAuth client", bool(oauth_file and oauth_file.is_file()), str(oauth_file) if oauth_file else "not configured"))
+    gmail_account = settings["gmail"].get("account") or "default"
+    try:
+        gmail_token = get_secret(f"gmail:{gmail_account}")
+    except keyring.errors.KeyringError:
+        gmail_token = ""
+    checks.append(("Gmail token", bool(gmail_token), "stored in keyring" if gmail_token else "run `taxsentry auth gmail`"))
     checks.append(("Trusted senders", bool(settings["gmail"].get("trusted_senders")), str(settings["gmail"].get("trusted_senders", []))))
+    checks.append(("Director email", bool(settings["director"].get("email")), settings["director"].get("email") or "not configured"))
+    telegram_required = bool(settings.get("telegram", {}).get("enabled"))
+    try:
+        telegram_token = get_secret("telegram:bot-token") if telegram_required else "disabled"
+    except keyring.errors.KeyringError:
+        telegram_token = ""
+    checks.append(("Telegram", not telegram_required or bool(telegram_token), "configured" if telegram_token and telegram_required else str(telegram_token)))
+    checks.append(("Data directory", APP_HOME.is_dir() and os.access(APP_HOME, os.W_OK), str(APP_HOME)))
     table = Table("Check", "Status", "Detail")
     for name, good, message in checks:
         table.add_row(name, "OK" if good else "FAIL", str(message))
@@ -165,11 +190,16 @@ def doctor(*, fix: bool = False) -> int:
 
 
 def _install_tesseract() -> None:
-    command = (
-        ["winget", "install", "--id", "UB-Mannheim.TesseractOCR", "--exact", "--accept-package-agreements", "--accept-source-agreements"]
-        if sys.platform == "win32"
-        else (["brew", "install", "tesseract", "tesseract-lang"] if sys.platform == "darwin" else ["sudo", "apt-get", "install", "-y", "tesseract-ocr", "tesseract-ocr-vie"])
-    )
+    if sys.platform == "win32":
+        if shutil.which("winget"):
+            command = ["winget", "install", "--id", "UB-Mannheim.TesseractOCR", "--exact", "--accept-package-agreements", "--accept-source-agreements"]
+        elif shutil.which("choco"):
+            command = ["choco", "install", "tesseract", "--yes"]
+        else:
+            console.print("[yellow]Không tìm thấy winget hoặc Chocolatey.[/]")
+            return
+    else:
+        command = ["brew", "install", "tesseract", "tesseract-lang"] if sys.platform == "darwin" else ["sudo", "apt-get", "install", "-y", "tesseract-ocr", "tesseract-ocr-vie"]
     try:
         subprocess.run(command, check=True)
     except (OSError, subprocess.CalledProcessError) as exc:
@@ -181,7 +211,9 @@ def update() -> int:
     if not uv:
         console.print("[red]Không tìm thấy uv. Cài uv trước khi cập nhật TaxSentry.[/]")
         return 1
-    result = subprocess.run([uv, "tool", "upgrade", "taxsentry-agent"], check=False)
+    source = load_config().get("update", {}).get("source", "taxsentry-agent")
+    command = [uv, "tool", "install", "--force", source] if source.startswith(("git+", "https://")) else [uv, "tool", "upgrade", source]
+    result = subprocess.run(command, check=False)
     if result.returncode:
         console.print("[red]Cập nhật thất bại. Kiểm tra nguồn cài đặt và kết nối mạng.[/]")
         return result.returncode
@@ -190,9 +222,17 @@ def update() -> int:
 
 
 def _tesseract_hint() -> str:
-    if sys.platform == "win32": return "winget install UB-Mannheim.TesseractOCR"
+    if sys.platform == "win32": return "winget install UB-Mannheim.TesseractOCR (hoặc mở PowerShell Admin: choco install tesseract -y)"
     if sys.platform == "darwin": return "brew install tesseract tesseract-lang"
     return "sudo apt install tesseract-ocr tesseract-ocr-vie"
+
+
+def _ocr_languages(command: str) -> set[str]:
+    try:
+        output = subprocess.run([command, "--list-langs"], capture_output=True, text=True, timeout=10, check=False).stdout
+        return {line.strip() for line in output.splitlines()[1:] if line.strip()}
+    except OSError:
+        return set()
 
 
 def jobs() -> int:
@@ -204,7 +244,8 @@ def jobs() -> int:
 
 
 def report(*, send: bool = False) -> int:
-    latest = JobStore().latest_report()
+    store = JobStore()
+    latest = store.latest_report()
     if not latest:
         console.print("Chưa có báo cáo.")
         return 1
@@ -212,7 +253,18 @@ def report(*, send: bool = False) -> int:
     if send:
         if not Confirm.ask("Gửi lại báo cáo này cho Giám đốc?"):
             return 0
-        console.print("Dùng `/retry` trong workflow khi cần gửi lại đầy đủ; v2 không gửi thủ công nếu thiếu Gmail message context.")
+        settings = load_config()
+        pdf = Path(latest["pdf_path"])
+        director = settings["director"].get("email", "")
+        if not director or not pdf.is_file():
+            console.print("[red]Thiếu director.email hoặc file PDF báo cáo.[/]")
+            return 1
+        outgoing = GmailClient(settings).send_report(director, f"TaxSentry gửi lại: {latest['subject']}", html_summary(latest["payload"]), pdf, idempotency_key=f"{latest['job_id']}-manual-{uuid.uuid4()}")
+        store.delivery(latest["job_id"], "gmail", "sent", outgoing)
+        telegram_ids = asyncio.run(TelegramDirector(settings).notify(f"📄 Gửi lại: {latest['payload']['executive_summary']}", pdf))
+        for external_id in telegram_ids:
+            store.delivery(latest["job_id"], "telegram", "sent", external_id)
+        console.print("[green]✓ Đã gửi lại báo cáo.[/]")
     return 0
 
 

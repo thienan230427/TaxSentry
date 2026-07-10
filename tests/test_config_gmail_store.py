@@ -18,6 +18,7 @@ def test_store_deduplicates_gmail_messages_and_tracks_state(tmp_path):
     job = store.create_job("gmail-1", "accounting@example.com", "Báo cáo tháng")
     assert job and job["state"] == "queued"
     assert store.create_job("gmail-1", "accounting@example.com") is None
+    store.transition(job["id"], "fetching")
     store.transition(job["id"], "extracting")
     assert store.get(job["id"])["state"] == "extracting"
 

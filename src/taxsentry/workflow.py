@@ -33,25 +33,40 @@ class TaxSentryWorkflow:
             job = self.store.create_job(message.id, message.sender, message.subject)
             if not job:
                 job = self.store.by_message(message.id)
-                if not job or job["state"] != "queued":
+                if not job:
                     continue
+                if job["state"] == "completed":
+                    self.gmail.label(message.id, "TaxSentry/Completed")
+                    continue
+                if job["state"] not in {"queued", "fetching", "extracting", "analyzing", "rendering", "delivering"}:
+                    continue
+                if job["state"] != "queued":
+                    self.store.requeue(job["id"])
             if await self._with_retries(job["id"], message):
                 completed += 1
         return completed
 
     async def _with_retries(self, job_id: str, message: GmailMessage) -> bool:
         maximum = int(self.settings["worker"].get("max_retries", 3))
-        self.gmail.label(message.id, "TaxSentry/Processing")
         for attempt in range(maximum):
             try:
+                self.gmail.label(message.id, "TaxSentry/Processing")
                 return await self._process(job_id, message)
             except Exception as exc:
                 retries = self.store.increment_retry(job_id, str(exc))
                 if retries >= maximum:
                     self.store.transition(job_id, "failed", error=str(exc))
-                    self.gmail.label(message.id, "TaxSentry/Failed")
-                    await self.telegram.notify(f"❌ TaxSentry xử lý thất bại: {message.subject}\n{exc}")
+                    try:
+                        self.gmail.label(message.id, "TaxSentry/Failed")
+                    except Exception as label_exc:
+                        self.store.event(job_id, "label_pending", {"label": "TaxSentry/Failed", "error": str(label_exc)})
+                    try:
+                        await self.telegram.notify(f"❌ TaxSentry xử lý thất bại: {message.subject}\n{exc}")
+                    except Exception as telegram_exc:
+                        self.store.event(job_id, "notification_failed", {"channel": "telegram", "error": str(telegram_exc)})
                     return False
+                if self.store.get(job_id)["state"] != "queued":
+                    self.store.requeue(job_id)
                 await asyncio.sleep(2**attempt)
         return False
 
@@ -99,13 +114,20 @@ class TaxSentryWorkflow:
         director = self.settings["director"].get("email", "")
         if not director:
             raise ValueError("director.email is not configured")
-        outgoing = self.gmail.send_report(director, f"TaxSentry: {message.subject}", html_summary(report), pdf)
-        self.store.delivery(job_id, "gmail", "sent", outgoing)
-        telegram_ids = await self.telegram.notify(f"✅ {report['executive_summary']}\nTin cậy: {report['confidence']:.0%}", pdf)
-        for external_id in telegram_ids:
-            self.store.delivery(job_id, "telegram", "sent", external_id)
+        if not self.store.delivered(job_id, "gmail"):
+            outgoing = self.gmail.send_report(director, f"TaxSentry: {message.subject}", html_summary(report), pdf, idempotency_key=job_id)
+            self.store.delivery(job_id, "gmail", "sent", outgoing)
+        if not self.store.delivered(job_id, "telegram"):
+            telegram_ids = await self.telegram.notify(f"✅ {report['executive_summary']}\nTin cậy: {report['confidence']:.0%}", pdf)
+            for external_id in telegram_ids:
+                self.store.delivery(job_id, "telegram", "sent", external_id)
         self.store.transition(job_id, "completed", report_path=str(pdf))
-        self.gmail.label(message.id, "TaxSentry/Completed")
+        if approved:
+            self.store.consume_approval(job_id)
+        try:
+            self.gmail.label(message.id, "TaxSentry/Completed")
+        except Exception as exc:
+            self.store.event(job_id, "label_pending", {"label": "TaxSentry/Completed", "error": str(exc)})
         return True
 
     def latest_markdown(self) -> str:

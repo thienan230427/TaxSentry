@@ -3,9 +3,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import zipfile
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import parseaddr
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,13 @@ from .secrets import get_secret, set_secret
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 LABELS = ("TaxSentry/Processing", "TaxSentry/Completed", "TaxSentry/NeedsReview", "TaxSentry/Failed")
 ALLOWED_EXTENSIONS = {".xlsx", ".pdf", ".png", ".jpg", ".jpeg"}
+ALLOWED_MIME = {
+    ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream"},
+    ".pdf": {"application/pdf", "application/octet-stream"},
+    ".png": {"image/png", "application/octet-stream"},
+    ".jpg": {"image/jpeg", "application/octet-stream"},
+    ".jpeg": {"image/jpeg", "application/octet-stream"},
+}
 
 
 @dataclass(slots=True)
@@ -83,7 +92,7 @@ class GmailClient:
 
     def messages(self) -> list[GmailMessage]:
         self.authenticate()
-        refs = self.service.users().messages().list(userId="me", q='has:attachment -label:"TaxSentry/Completed" -label:"TaxSentry/Processing"').execute().get("messages", [])
+        refs = self.service.users().messages().list(userId="me", q='has:attachment -label:"TaxSentry/Completed"').execute().get("messages", [])
         return [self._message(ref["id"]) for ref in refs]
 
     def _message(self, message_id: str) -> GmailMessage:
@@ -103,6 +112,7 @@ class GmailClient:
         return GmailMessage(message_id, headers.get("from", ""), headers.get("subject", ""), attachments)
 
     def save(self, job_id: str, attachment: GmailAttachment, max_mb: int = 25) -> Path:
+        validate_attachment(attachment)
         if len(attachment.data) > max_mb * 1024 * 1024:
             raise ValueError(f"Attachment exceeds {max_mb} MB")
         folder = DOWNLOAD_DIR / job_id
@@ -117,10 +127,17 @@ class GmailClient:
         remove = [self.labels[name] for name in LABELS if name != label and name in self.labels]
         self.service.users().messages().modify(userId="me", id=message_id, body={"addLabelIds": [add], "removeLabelIds": remove}).execute()
 
-    def send_report(self, to: str, subject: str, html: str, pdf_path: Path) -> str:
+    def send_report(self, to: str, subject: str, html: str, pdf_path: Path, *, idempotency_key: str = "") -> str:
         self.authenticate()
+        message_id = f"<{idempotency_key}@taxsentry.local>" if idempotency_key else ""
+        if message_id:
+            existing = self.service.users().messages().list(userId="me", q=f"in:sent rfc822msgid:{message_id}", maxResults=1).execute().get("messages", [])
+            if existing:
+                return str(existing[0]["id"])
         message = EmailMessage()
         message["To"], message["Subject"] = to, subject
+        if message_id:
+            message["Message-ID"] = message_id
         message.set_content("Báo cáo TaxSentry được đính kèm.")
         message.add_alternative(html, subtype="html")
         message.add_attachment(pdf_path.read_bytes(), maintype="application", subtype="pdf", filename=pdf_path.name)
@@ -132,3 +149,26 @@ def _parts(payload: dict[str, Any]):
     for part in payload.get("parts", []):
         yield part
         yield from _parts(part)
+
+
+def validate_attachment(attachment: GmailAttachment) -> None:
+    suffix = Path(attachment.name).suffix.casefold()
+    mime = attachment.mime_type.split(";", 1)[0].strip().casefold()
+    if suffix not in ALLOWED_EXTENSIONS or mime not in ALLOWED_MIME[suffix]:
+        raise ValueError(f"Unsupported attachment type: {attachment.name} ({attachment.mime_type})")
+    valid = False
+    if suffix == ".xlsx":
+        try:
+            with zipfile.ZipFile(BytesIO(attachment.data)) as workbook:
+                names = set(workbook.namelist())
+                valid = {"[Content_Types].xml", "xl/workbook.xml"} <= names and sum(item.file_size for item in workbook.infolist()) <= 200 * 1024 * 1024
+        except zipfile.BadZipFile:
+            pass
+    elif suffix == ".pdf":
+        valid = b"%PDF-" in attachment.data[:1024]
+    elif suffix == ".png":
+        valid = attachment.data.startswith(b"\x89PNG\r\n\x1a\n")
+    else:
+        valid = attachment.data.startswith(b"\xff\xd8\xff")
+    if not valid:
+        raise ValueError(f"Attachment content does not match extension: {attachment.name}")
