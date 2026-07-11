@@ -1,0 +1,39 @@
+{
+  "name": "taxsentry",
+  "version": "2.0.0",
+  "description": "TypeScript launcher for the TaxSentry Python agent",
+  "type": "module",
+  "bin": {
+    "taxsentry": "dist/src/cli.js"
+  },
+  "files": [
+    "dist/src/",
+    "dist/vendor/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "prepack": "node scripts/prepack.mjs && npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "tax",
+    "finance",
+    "ai-agent",
+    "vietnam",
+    "cli"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thienan230427/TaxSentry.git"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}

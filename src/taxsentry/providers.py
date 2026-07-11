@@ -82,6 +82,9 @@ class LMStudioProvider:
         except Exception as exc:
             yield AgentEvent(EventType.ERROR, text=str(exc))
 
+    async def close(self) -> None:
+        await self.client.close()
+
 
 class CodexAppServerProvider:
     """Small JSONL client; Codex owns login, refresh, history and sandboxing."""

@@ -1,61 +1,154 @@
 # TaxSentry 2.0
 
-AI Agent Python-first cho Giám đốc: nhận báo cáo từ Gmail Kế toán trưởng, xác minh nguồn, đọc XLSX/PDF/ảnh scan, phân tích hiệu quả kinh doanh và rủi ro thuế, tạo PDF rồi gửi qua Gmail và Telegram.
+TaxSentry là AI agent Python-first cho Giám đốc và bộ phận tài chính: nhận báo cáo từ Gmail, kiểm tra nguồn gửi, đọc XLSX/PDF/ảnh scan, phân tích hiệu quả kinh doanh và rủi ro thuế, xuất PDF rồi phân phối qua Gmail và Telegram.
 
-Agent chỉ phân tích và khuyến nghị có căn cứ. Quyết định tài chính, khai thuế và điều hành luôn thuộc về Giám đốc.
+TaxSentry chỉ đưa ra phân tích, căn cứ và khuyến nghị. Quyết định tài chính, khai thuế và điều hành luôn thuộc về người có thẩm quyền.
+
+## Tính năng
+
+- Nhận email có tệp đính kèm từ Gmail API.
+- Chỉ xử lý sender nằm trong `gmail.trusted_senders`.
+- Hỗ trợ XLSX, PDF, PNG, JPG/JPEG.
+- Kiểm tra phần mở rộng, MIME type, magic bytes, kích thước và SHA-256.
+- Trích xuất dữ liệu bảng tính bằng parser tài chính dùng chung; OCR ảnh/PDF scan qua Tesseract.
+- Phân tích bằng LM Studio hoặc Codex App Server.
+- Chuẩn hóa kết quả về schema báo cáo JSON cố định.
+- Chuyển báo cáo confidence thấp sang `needs_review`.
+- Theo dõi trạng thái job, retry có giới hạn và phục hồi job dở dang sau khi worker khởi động lại.
+- Chống xử lý trùng theo Gmail message ID và chống gửi email trùng bằng `Message-ID` ổn định.
+- Xuất PDF, gửi Gmail và gửi Telegram tới chat ID đã cấu hình.
+- Terminal cockpit, Telegram gateway và native service cho Windows/macOS/Linux.
+- Secrets được lưu trong OS keyring; config không chứa refresh token hoặc bot token.
+
+## Luồng xử lý
+
+```text
+Gmail
+  → trusted sender + attachment validation
+  → queued
+  → fetching
+  → extracting
+  → analyzing
+  → needs_review hoặc rendering
+  → delivering
+  → completed / failed
+```
+
+Job lỗi được retry theo exponential backoff trong giới hạn cấu hình. Job cần duyệt phải được `/approve` từ Telegram trước khi xử lý tiếp.
+
+## Yêu cầu
+
+- Python 3.11, 3.12 hoặc 3.13.
+- [uv](https://docs.astral.sh/uv/).
+- Tesseract OCR và language packs `vie`, `eng` nếu cần đọc ảnh/PDF scan.
+- Gmail OAuth Desktop App nếu dùng Gmail.
+- LM Studio đang chạy tại `http://127.0.0.1:1234/v1`, hoặc Codex CLI đã đăng nhập nếu dùng Codex.
+- Telegram bot token nếu muốn gửi hoặc điều khiển qua Telegram.
 
 ## Cài đặt
 
-Yêu cầu Python 3.11–3.13, [uv](https://docs.astral.sh/uv/) và Tesseract với gói ngôn ngữ `vie`, `eng`.
+Cài bằng npm (khuyến nghị cho người dùng cuối):
 
 ```powershell
-uv tool install .
+npm install -g taxsentry
 taxsentry setup
 taxsentry doctor
 ```
 
-`setup` tạo profile sạch tại `~/.taxsentry`. Nếu phát hiện profile v1, TaxSentry đổi tên nó thành thư mục backup có timestamp, không xóa dữ liệu cũ.
+npm launcher cài Python wheel đi kèm vào `~/.taxsentry/runtime/venv`; config, database và báo cáo vẫn được giữ trong `~/.taxsentry` khi nâng cấp hoặc gỡ npm package.
 
-## Xác thực
+Cài trực tiếp Python package từ repository:
+
+```powershell
+uv tool install git+https://github.com/thienan230427/TaxSentry.git
+taxsentry setup
+taxsentry doctor
+```
+
+Trong lúc phát triển local:
+
+```powershell
+uv sync --extra dev
+uv run taxsentry setup
+```
+
+`taxsentry setup` tạo profile tại `~/.taxsentry`. Nếu phát hiện profile v1, TaxSentry đổi tên profile cũ thành thư mục backup có timestamp và không xóa dữ liệu.
+
+## Xác thực và cấu hình
 
 ```powershell
 taxsentry auth gmail
 taxsentry auth telegram
 taxsentry auth codex
 taxsentry auth status
+taxsentry doctor
 ```
 
-- Gmail dùng OAuth Desktop App nội bộ Google Workspace với scope `gmail.modify`.
-- Codex đăng nhập qua `codex app-server`; TaxSentry không đọc hoặc ghi token Codex.
-- Telegram bot token và Gmail refresh token nằm trong OS keyring, không nằm trong config.
-- LM Studio mặc định tại `http://127.0.0.1:1234/v1`; chọn provider/model trong `taxsentry setup`.
+- Gmail dùng OAuth scope `gmail.modify`; refresh token nằm trong OS keyring.
+- Telegram bot token nằm trong OS keyring, không ghi vào `config.json`.
+- Codex được kết nối qua official `codex app-server`; TaxSentry không tự quản lý OAuth token Codex.
+- LM Studio dùng OpenAI-compatible endpoint. Chọn provider và model trong `taxsentry setup`.
+- `taxsentry doctor --fix` có thể tạo thư mục runtime và thử cài Tesseract bằng package manager native của hệ điều hành.
+
+Các giá trị nghiệp vụ quan trọng gồm:
+
+```text
+gmail.account                 Gmail nhận báo cáo
+gmail.oauth_client_file       credentials.json của Gmail OAuth
+gmail.trusted_senders         allowlist email Kế toán trưởng
+director.email                email nhận PDF
+director.telegram_chat_ids    danh sách chat ID được phép
+provider.kind                 lmstudio hoặc codex
+provider.model                model phân tích
+worker.poll_seconds           chu kỳ quét Gmail
+worker.max_retries            số lần retry tối đa
+ocr.minimum_confidence        ngưỡng OCR, mặc định 70%
+report.minimum_confidence     ngưỡng report, mặc định 70%
+```
 
 ## Sử dụng
 
 ```powershell
-taxsentry                 # terminal cockpit
-taxsentry start           # khởi động terminal cockpit
-taxsentry gateway         # kết nối Telegram foreground
-taxsentry doctor --fix    # phát hiện và sửa lỗi cài đặt có thể tự động sửa
-taxsentry update          # cài lại bản mới nhất từ GitHub bằng uv tool
-taxsentry worker run      # quét Gmail mỗi 60 giây
-taxsentry worker run --once
-taxsentry jobs
-taxsentry report
-taxsentry service install  # service chạy cả worker và Telegram gateway
-taxsentry service start
-taxsentry service status
+taxsentry                       # terminal cockpit
+taxsentry start                 # cockpit
+taxsentry gateway               # Telegram gateway foreground
+taxsentry status                # tóm tắt cấu hình
+taxsentry doctor --fix          # kiểm tra và sửa phần cài đặt có thể tự động sửa
+taxsentry worker run            # worker liên tục
+taxsentry worker run --once     # chạy một chu kỳ rồi thoát
+taxsentry worker run --gateway  # worker kèm Telegram gateway
+taxsentry jobs                  # danh sách job gần đây
+taxsentry report                # xem report mới nhất
+taxsentry report --send         # xác nhận rồi gửi lại report mới nhất
+taxsentry update                # cập nhật từ source trong config
 ```
 
-Cockpit giữ transcript cuộn và hỗ trợ `/help`, `/status`, `/jobs`, `/latest`, `/report`, `/provider`, `/auth`, `/retry`, `/clear`, `/exit`.
+Trong cockpit có các lệnh `/help`, `/status`, `/jobs`, `/latest`, `/report`, `/provider`, `/auth`, `/retry`, `/clear` và `/exit`.
 
-Worker chỉ nhận sender trong `gmail.trusted_senders`, kiểm tra MIME/đuôi file/kích thước/SHA-256, chống trùng bằng Gmail message ID và điều khiển pipeline cố định:
+Native service:
 
-`queued → fetching → extracting → analyzing → needs_review|rendering → delivering → completed|failed`
+```powershell
+taxsentry service install
+taxsentry service start
+taxsentry service status
+taxsentry service logs
+taxsentry service stop
+taxsentry service remove
+```
 
-Báo cáo OCR confidence thấp hoặc thiếu chỉ số cốt lõi được chuyển sang `needs_review` và không tự gửi. Retry tối đa ba lần với exponential backoff.
+## Dữ liệu cục bộ
 
-Job dở dang được phục hồi sau khi worker khởi động lại. Email outbound dùng `Message-ID` ổn định để tránh gửi trùng; service native chạy chung worker và Telegram gateway.
+Mặc định tại `~/.taxsentry`:
+
+```text
+config.json       cấu hình không chứa secrets nhạy cảm
+taxsentry.db      SQLite jobs, reports, deliveries và events
+logs/             log runtime
+run/              worker lock và runtime files
+downloads/        tệp đính kèm và PDF đã tạo
+```
+
+Có thể đổi thư mục bằng biến môi trường `TAXSENTRY_HOME`; có thể đổi riêng config hoặc database bằng `TAXSENTRY_CONFIG_FILE` và `TAXSENTRY_MEMORY_DB`.
 
 ## Phát triển
 
@@ -65,15 +158,30 @@ uv lock --check
 uv run ruff check src tests
 uv run pytest -q
 uv build
+cd npm
+npm ci
+npm run typecheck
+npm test
+npm pack --dry-run
 ```
 
-CI chạy Python 3.12 trên Windows/macOS/Ubuntu và Python 3.11, 3.13 trên Ubuntu.
+Pytest có một test OCR ảnh thật sẽ tự skip nếu máy chưa cài Tesseract. Trên Windows sandbox, nếu thư mục temp mặc định bị hạn chế quyền, dùng:
 
-## Dữ liệu cục bộ
+```powershell
+uv run pytest -q --basetemp=D:\TaxSentry\tmp-pytest
+```
 
-- Config: `~/.taxsentry/config.json`
-- SQLite: `~/.taxsentry/taxsentry.db`
-- Log: `~/.taxsentry/logs`
-- Attachment: `~/.taxsentry/downloads`
+CI tại `.github/workflows/cross-platform.yml` kiểm tra Windows, macOS và Ubuntu với Python 3.11–3.13.
 
-TaxSentry v2 là ứng dụng nội bộ một Google Workspace, không cung cấp API public hoặc multi-tenant.
+## Bảo mật và giới hạn
+
+- Không commit `.env`, database, attachments, tokens hoặc credentials.
+- Allowlist sender là trust boundary bắt buộc; email ngoài allowlist bị bỏ qua và ghi event.
+- Tệp đính kèm không hợp lệ bị từ chối trước khi parse.
+- TaxSentry là ứng dụng nội bộ cho một Google Workspace, không phải public API và không phải hệ thống multi-tenant.
+- Kết quả AI cần được con người kiểm tra trước khi dùng cho quyết định tài chính hoặc hồ sơ thuế.
+- Nghiệm thu production vẫn cần kiểm tra OAuth Gmail, provider AI, Telegram và Tesseract trên máy triển khai thật.
+
+## Giấy phép
+
+Phát hành theo [MIT License](LICENSE).

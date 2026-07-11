@@ -233,6 +233,12 @@ test_config.mjs
 # Node.js
 node_modules/
 npm-debug.log
+!npm/dist/
+npm/dist/src/
+npm/dist/tests/
+!npm/dist/vendor/
+!npm/dist/vendor/*.whl
+npm/*.tgz
 
 # TaxSentry CLI Config
 .taxsentry/
