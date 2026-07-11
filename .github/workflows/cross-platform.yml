@@ -35,3 +35,26 @@ jobs:
       - run: uv run ruff check src tests
       - run: uv run pytest -q
       - run: uv build
+
+  npm:
+    name: npm launcher / node-24
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: npm/package-lock.json
+      - run: npm ci
+        working-directory: npm
+      - run: npm run typecheck
+        working-directory: npm
+      - run: npm test
+        working-directory: npm
+      - run: npm pack --dry-run
+        working-directory: npm

@@ -47,7 +47,17 @@ Job lỗi được retry theo exponential backoff trong giới hạn cấu hình
 
 ## Cài đặt
 
-Cài trực tiếp từ repository:
+Cài bằng npm (khuyến nghị cho người dùng cuối):
+
+```powershell
+npm install -g taxsentry
+taxsentry setup
+taxsentry doctor
+```
+
+npm launcher cài Python wheel đi kèm vào `~/.taxsentry/runtime/venv`; config, database và báo cáo vẫn được giữ trong `~/.taxsentry` khi nâng cấp hoặc gỡ npm package.
+
+Cài trực tiếp Python package từ repository:
 
 ```powershell
 uv tool install git+https://github.com/thienan230427/TaxSentry.git
@@ -148,6 +158,11 @@ uv lock --check
 uv run ruff check src tests
 uv run pytest -q
 uv build
+cd npm
+npm ci
+npm run typecheck
+npm test
+npm pack --dry-run
 ```
 
 Pytest có một test OCR ảnh thật sẽ tự skip nếu máy chưa cài Tesseract. Trên Windows sandbox, nếu thư mục temp mặc định bị hạn chế quyền, dùng:

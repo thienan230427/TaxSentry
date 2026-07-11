@@ -15,7 +15,7 @@ from .events import EventType
 from .providers import create_provider
 from .store import JobStore
 
-COMMANDS = ["/help", "/status", "/jobs", "/latest", "/report", "/provider", "/auth", "/retry", "/clear", "/exit"]
+COMMANDS = ["/help", "/status", "/jobs", "/latest", "/report", "/provider", "/auth", "/retry", "/approve", "/clear", "/exit"]
 SYSTEM = "Bạn là TaxSentry, trợ lý CFO và thuế Việt Nam. Xưng em, gọi người dùng là Sếp. Chỉ kết luận từ dữ liệu có thật, luôn nêu độ tin cậy và để Giám đốc quyết định cuối cùng."
 
 
@@ -30,42 +30,48 @@ class Cockpit:
 
     async def run(self) -> int:
         self._header()
-        while True:
-            try:
-                text = (await self.prompt.prompt_async(HTML('<ansicyan>Sếp</ansicyan> <ansiblue>›</ansiblue> '), bottom_toolbar=self._toolbar)).strip()
-            except (EOFError, KeyboardInterrupt):
-                return 0
-            if not text:
-                continue
-            if text in {"/exit", "/quit"}:
-                return 0
-            if text.startswith("/"):
-                self._command(text)
-                continue
-            self.history.append({"role": "user", "content": text})
-            self.console.print("[bold #38bdf8]TaxSentry ›[/] ", end="")
-            chunks: list[str] = []
-            async for event in self.provider.stream_turn(self.history):
-                if event.type == EventType.TEXT_DELTA:
-                    chunks.append(event.text)
-                    self.console.print(event.text, end="", markup=False, soft_wrap=True)
-                elif event.type == EventType.TOOL_STARTED:
-                    self.console.print(f"\n[dim]● {event.name}…[/]")
-                elif event.type == EventType.TOOL_COMPLETED:
-                    self.console.print(f"[green]✓ {event.name}[/]")
-                elif event.type == EventType.ERROR:
-                    self.console.print(f"\n[red]Lỗi: {event.text}[/]")
-            self.console.print()
-            if chunks:
-                self.history.append({"role": "assistant", "content": "".join(chunks)})
+        try:
+            while True:
+                try:
+                    text = (await self.prompt.prompt_async(HTML('<ansicyan>Sếp</ansicyan> <ansiblue>›</ansiblue> '), bottom_toolbar=self._toolbar)).strip()
+                except (EOFError, KeyboardInterrupt):
+                    return 0
+                if not text:
+                    continue
+                if text in {"/exit", "/quit"}:
+                    return 0
+                if text.startswith("/"):
+                    await self._command(text)
+                    continue
+                self.history.append({"role": "user", "content": text})
+                self.console.print("[bold #38bdf8]TaxSentry ›[/] ", end="")
+                chunks: list[str] = []
+                async for event in self.provider.stream_turn(self.history):
+                    if event.type == EventType.TEXT_DELTA:
+                        chunks.append(event.text)
+                        self.console.print(event.text, end="", markup=False, soft_wrap=True)
+                    elif event.type == EventType.TOOL_STARTED:
+                        self.console.print(f"\n[dim]● {event.name}…[/]")
+                    elif event.type == EventType.TOOL_COMPLETED:
+                        self.console.print(f"[green]✓ {event.name}[/]")
+                    elif event.type == EventType.ERROR:
+                        self.console.print(f"\n[red]Lỗi: {event.text}[/]")
+                self.console.print()
+                if chunks:
+                    self.history.append({"role": "assistant", "content": "".join(chunks)})
+        finally:
+            await self.provider.close()
 
     def _header(self) -> None:
-        self.console.print(Panel.fit("[bold #38bdf8]◆ TaxSentry v2[/]\n[dim]AI Agent cho Giám đốc · báo cáo thuế và hiệu quả kinh doanh[/]", border_style="#0ea5e9"))
+        provider = self.settings["provider"]
+        model = provider.get("model") or "mặc định"
+        self.console.print(Panel.fit(f"[bold #38bdf8]◆ TaxSentry v2[/]\n[dim]AI Agent cho Giám đốc · {provider['kind']} / {model}[/]", border_style="#0ea5e9"))
 
     def _toolbar(self):
-        return HTML(f'<ansicyan>{self.settings["provider"]["kind"]}</ansicyan>  <ansigray>/help · Ctrl+C ngắt</ansigray>')
+        configured = "ready" if self.settings.get("configured") else "setup required"
+        return HTML(f'<ansicyan>{self.settings["provider"]["kind"]}</ansicyan>  <ansigray>{configured} · /help · Ctrl+C thoát</ansigray>')
 
-    def _command(self, text: str) -> None:
+    async def _command(self, text: str) -> None:
         command, *args = text.split()
         if command == "/help":
             self.console.print("  ".join(COMMANDS))
@@ -87,17 +93,19 @@ class Cockpit:
             self.settings["provider"]["kind"] = selected
             self.settings["provider"]["auth_mode"] = selected
             save_config(self.settings)
+            await self.provider.close()
             self.provider = create_provider(self.settings)
             self.console.print(f"[green]Đã chuyển sang {selected}[/]")
         elif command == "/clear":
             self.history = self.history[:1]
             self.console.print("Đã xóa context hội thoại; transcript terminal được giữ nguyên.")
-        elif command == "/retry":
+        elif command in {"/retry", "/approve"}:
             job = self.store.resolve(args[0] if args else "")
-            if not job or job["state"] not in {"failed", "needs_review"}:
+            if not job or job["state"] not in ({"needs_review"} if command == "/approve" else {"failed", "needs_review"}):
                 self.console.print("Không tìm thấy job Failed/NeedsReview phù hợp.")
             else:
-                self.store.requeue(job["id"])
-                self.console.print(f"[green]✓ Đã xếp lại job {job['id'][:8]}.[/]")
+                approved = command == "/approve"
+                self.store.requeue(job["id"], approved=approved)
+                self.console.print(f"[green]✓ Đã {'duyệt' if approved else 'xếp lại'} job {job['id'][:8]}.[/]")
         else:
             self.console.print("Lệnh chưa hỗ trợ. Dùng /help.")
