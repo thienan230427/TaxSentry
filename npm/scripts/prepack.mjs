@@ -15,7 +15,10 @@ const vendor = join(root, "dist", "vendor");
 mkdirSync(vendor, { recursive: true });
 const build = mkdtempSync(join(tmpdir(), "taxsentry-wheel-"));
 try {
-  execFileSync("uv", ["build", "--wheel", repository, "--out-dir", build], { stdio: "inherit" });
+  execFileSync("uv", ["build", "--wheel", repository, "--out-dir", build], {
+    stdio: "inherit",
+    env: { ...process.env, UV_CACHE_DIR: join(tmpdir(), "taxsentry-uv-cache") },
+  });
   const wheels = readdirSync(build).filter((name) => name.endsWith(".whl"));
   if (wheels.length !== 1) throw new Error("uv build did not produce exactly one wheel");
   copyFileSync(join(build, wheels[0]), join(vendor, wheels[0]));

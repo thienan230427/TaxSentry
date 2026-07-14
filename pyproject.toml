@@ -4,17 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taxsentry-agent"
-version = "2.0.1"
+version = "2.0.3"
 description = "Python-first AI agent for Vietnamese business and tax reporting workflows"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = "MIT"
 authors = [{ name = "TaxSentry Team" }]
 dependencies = [
-  "google-api-python-client>=2.0", "google-auth>=2.0", "google-auth-oauthlib>=1.2",
   "keyring>=25.0", "openai>=1.0", "openpyxl>=3.1", "pdfplumber>=0.11",
   "pillow>=10.0", "prompt-toolkit>=3.0", "pymupdf>=1.24", "pytesseract>=0.3.13",
   "python-telegram-bot>=21.0", "reportlab>=4.0", "rich>=13.0",
+  "starlette>=0.47", "uvicorn>=0.35",
 ]
 
 [project.optional-dependencies]
@@ -27,7 +27,7 @@ taxsentry = "taxsentry.tui:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-taxsentry = ["knowledge_base/*.md"]
+taxsentry = ["knowledge_base/*.md", "web/static/*", "web/static/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

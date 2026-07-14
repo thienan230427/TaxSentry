@@ -16,6 +16,8 @@ from . import __version__
 from .config import APP_HOME, get_value
 from .events import AgentEvent, EventType
 
+CodexModel = tuple[str, str, tuple[str, ...]]
+
 
 class ProviderError(RuntimeError):
     pass
@@ -103,15 +105,24 @@ class CodexAppServerProvider:
         self.model = model
         self.process: asyncio.subprocess.Process | None = None
         self.thread_id = ""
+        self.codex_home = ""
         self._request_id = 0
 
     async def start(self) -> None:
         try:
             command = _codex_command()
-            self.process = await asyncio.create_subprocess_exec(command, "app-server", "--listen", "stdio://", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            codex_home = APP_HOME / "codex"
+            codex_home.mkdir(parents=True, exist_ok=True)
+            env = os.environ.copy()
+            env["CODEX_HOME"] = str(codex_home)
+            self.process = await asyncio.create_subprocess_exec(command, "app-server", "--listen", "stdio://", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=env)
         except (OSError, PermissionError) as exc:
             raise ProviderError("Codex CLI không chạy được. Đặt CODEX_CLI_PATH tới codex.exe hợp lệ.") from exc
-        await self._request("initialize", {"clientInfo": {"name": "taxsentry", "title": "TaxSentry", "version": __version__}, "capabilities": {"experimentalApi": False}})
+        initialized = await self._request("initialize", {"clientInfo": {"name": "taxsentry", "title": "TaxSentry", "version": __version__}, "capabilities": {"experimentalApi": False}})
+        self.codex_home = str(initialized.get("codexHome", ""))
+        if self.codex_home and os.path.normcase(os.path.abspath(self.codex_home)) != os.path.normcase(os.path.abspath(codex_home)):
+            await self.close()
+            raise ProviderError(f"Codex App Server dùng sai CODEX_HOME: {self.codex_home}")
         await self._notify("initialized", {})
 
     async def close(self) -> None:
@@ -119,39 +130,76 @@ class CodexAppServerProvider:
             self.process.terminate()
             await self.process.wait()
 
-    async def login(self, *, device_code: bool = False, challenge=None) -> dict[str, Any]:
+    async def start_login(self, *, device_code: bool = False) -> dict[str, Any]:
         if not self.process:
             await self.start()
-        result = await self._request("account/login/start", {"type": "chatgptDeviceCode" if device_code else "chatgpt", "useHostedLoginSuccessPage": True, "appBrand": "codex"} if not device_code else {"type": "chatgptDeviceCode"})
+        params = {"type": "chatgptDeviceCode"} if device_code else {"type": "chatgpt", "useHostedLoginSuccessPage": True, "appBrand": "codex"}
+        return await self._request("account/login/start", params)
+
+    async def wait_login(self, login_id: str) -> None:
+        assert self.process and self.process.stdout
+        while line := await self.process.stdout.readline():
+            message = json.loads(line)
+            if message.get("method") != "account/login/completed":
+                continue
+            payload = message.get("params", {})
+            if payload.get("loginId") not in {None, login_id}:
+                continue
+            if not payload.get("success"):
+                raise ProviderError(str(payload.get("error") or "Codex login failed"))
+            return
+        raise ProviderError("Codex app-server closed during login")
+
+    async def cancel_login(self, login_id: str) -> None:
+        if login_id:
+            await self._request("account/login/cancel", {"loginId": login_id})
+
+    async def login(self, *, device_code: bool = False, challenge=None) -> dict[str, Any]:
+        result = await self.start_login(device_code=device_code)
         if challenge:
             challenge(result)
         elif result.get("authUrl"):
             webbrowser.open(result["authUrl"])
-        assert self.process and self.process.stdout
-        while line := await self.process.stdout.readline():
-            message = json.loads(line)
-            if message.get("method") == "account/login/completed":
-                payload = message.get("params", {})
-                if not payload.get("success"):
-                    raise ProviderError(str(payload.get("error") or "Codex login failed"))
-                return result
-        raise ProviderError("Codex app-server closed during login")
+        login_id = str(result.get("loginId", ""))
+        try:
+            await self.wait_login(login_id)
+        except asyncio.CancelledError:
+            await self.cancel_login(login_id)
+            raise
+        return result
 
     async def account(self, *, refresh: bool = False) -> dict[str, Any]:
         if not self.process:
             await self.start()
         return await self._request("account/read", {"refreshToken": refresh})
 
-    async def models(self) -> list[tuple[str, str]]:
+    async def logout(self) -> None:
         if not self.process:
             await self.start()
-        result = await self._request("model/list", {"includeHidden": False})
-        models: list[tuple[str, str]] = []
-        for item in result.get("data", []):
-            model_id = str(item.get("id") or item.get("model") or item.get("slug") or "").strip()
-            if model_id and not item.get("hidden", False):
+        await self._request("account/logout", {})
+
+    async def models(self) -> list[CodexModel]:
+        if not self.process:
+            await self.start()
+        models: list[CodexModel] = []
+        cursor: str | None = None
+        seen: set[str] = set()
+        while True:
+            params: dict[str, Any] = {"includeHidden": False}
+            if cursor:
+                params["cursor"] = cursor
+            result = await self._request("model/list", params)
+            for item in result.get("data", []):
+                model_id = str(item.get("id") or item.get("model") or item.get("slug") or "").strip()
+                if not model_id or item.get("hidden", False) or model_id in seen:
+                    continue
+                efforts = tuple(str(value.get("reasoningEffort") or value.get("effort") or value) if isinstance(value, dict) else str(value) for value in item.get("supportedReasoningEfforts", []) if value)
                 label = str(item.get("displayName") or item.get("display_name") or model_id)
-                models.append((model_id, label))
+                models.append((model_id, label, efforts))
+                seen.add(model_id)
+            cursor = str(result.get("nextCursor") or "") or None
+            if not cursor:
+                break
         return models
 
     async def stream_turn(self, messages: list[dict[str, str]], *, output_schema: dict[str, Any] | None = None) -> AsyncIterator[AgentEvent]:

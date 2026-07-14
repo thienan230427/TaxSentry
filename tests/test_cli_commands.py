@@ -8,6 +8,7 @@ from taxsentry.tui import _parser, doctor, main, report
     [
         (["chat"], "chat"),
         (["start"], "start"),
+        (["dashboard", "--no-open", "--port", "9000"], "dashboard"),
         (["gateway"], "gateway"),
         (["update"], "update"),
         (["update", "--main"], "update"),
@@ -32,6 +33,15 @@ def test_update_flag_is_dispatched(monkeypatch):
 
     assert main(["update", "--main"]) == 0
     assert calls == [{"main": True}]
+
+
+def test_start_dispatches_control_center(monkeypatch):
+    calls = []
+    monkeypatch.setattr("taxsentry.tui.load_config", lambda: {"ui": {"port": 8765}})
+    monkeypatch.setattr("taxsentry.tui.run_dashboard", lambda **kwargs: calls.append(kwargs) or 0)
+
+    assert main(["start", "--no-open", "--port", "9000"]) == 0
+    assert calls == [{"port": 9000, "open_browser": False}]
 
 
 def test_doctor_skips_gmail_and_ocr_for_chat_profile(monkeypatch, tmp_path):

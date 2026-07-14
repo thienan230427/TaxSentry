@@ -137,3 +137,60 @@ class JobStore:
         result = dict(row)
         result["payload"] = json.loads(result["payload"])
         return result
+
+    def report_for_job(self, job_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT reports.*, jobs.subject, jobs.sender FROM reports JOIN jobs ON jobs.id=reports.job_id WHERE reports.job_id=?",
+            (job_id,),
+        ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def job_events(self, job_id: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT kind, payload, created_at FROM events WHERE job_id=? ORDER BY created_at",
+            (job_id,),
+        ).fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def create_session(self, provider: str) -> str:
+        session_id = str(uuid.uuid4())
+        self.connection.execute("INSERT INTO sessions VALUES (?, ?, ?)", (session_id, provider, self.now()))
+        self.connection.commit()
+        return session_id
+
+    def add_message(self, session_id: str, role: str, content: str) -> None:
+        self.connection.execute(
+            "INSERT INTO messages VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), session_id, role, content, self.now()),
+        )
+        self.connection.commit()
+
+    def session_messages(self, session_id: str, limit: int = 24) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT role, content, created_at FROM messages WHERE session_id=? ORDER BY created_at DESC LIMIT ?",
+            (session_id, limit),
+        ).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
+    def recent_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
+        return [
+            dict(row)
+            for row in self.connection.execute(
+                "SELECT sessions.id, sessions.provider, sessions.created_at, "
+                "COUNT(messages.id) AS message_count "
+                "FROM sessions LEFT JOIN messages ON messages.session_id=sessions.id "
+                "GROUP BY sessions.id ORDER BY sessions.created_at DESC LIMIT ?",
+                (limit,),
+            )
+        ]
+
+    def clear_session(self, session_id: str) -> None:
+        self.connection.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
+        self.connection.commit()
+
+    def close(self) -> None:
+        self.connection.close()

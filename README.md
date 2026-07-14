@@ -7,7 +7,7 @@ TaxSentry is a Python-first AI agent for Vietnamese finance and tax-reporting wo
 
 ## Highlights
 
-- Receives report attachments through the Gmail API.
+- Receives report attachments through Gmail IMAP.
 - Processes messages only from addresses listed in `gmail.trusted_senders`.
 - Supports XLSX, PDF, PNG, JPG, and JPEG files.
 - Validates file extensions, MIME types, magic bytes, size limits, and SHA-256 hashes.
@@ -44,10 +44,10 @@ Failures are retried with exponential backoff up to the configured limit. Jobs i
 - Node.js 22 or later when installing from npm.
 - [uv](https://docs.astral.sh/uv/) for direct Python installation and source development.
 - Tesseract OCR with the `vie` and `eng` language packs for scanned documents.
-- A Gmail OAuth Desktop App when Gmail integration is enabled.
+- A Google App Password when Gmail integration is enabled (requires 2-Step Verification).
 - Either:
   - LM Studio running at `http://127.0.0.1:1234/v1`; or
-  - an authenticated Codex CLI installation.
+  - the Codex CLI, which TaxSentry can authenticate during setup.
 - A Telegram bot token when Telegram delivery or remote control is enabled.
 
 ## Installation
@@ -94,7 +94,7 @@ taxsentry setup
 taxsentry doctor
 ```
 
-The wizard uses arrow keys, Space, and Enter and offers three profiles:
+The inline wizard supports number keys, arrow keys, Enter, Esc, and Ctrl+C and offers three profiles:
 
 | Profile | Components |
 | --- | --- |
@@ -102,9 +102,9 @@ The wizard uses arrow keys, Space, and Enter and offers three profiles:
 | **Email Agent** | AI provider and Gmail workflow |
 | **Chat Only** | AI provider and terminal cockpit |
 
-It lists only integrations implemented by TaxSentry. Codex models are discovered through the official App Server, while LM Studio models are read from its OpenAI-compatible `/models` endpoint. If discovery fails, the wizard can retry, use the provider default, or accept a model ID manually.
+It lists only integrations implemented by TaxSentry. After Codex is selected, authentication happens immediately: TaxSentry prints the browser OAuth URL before attempting to open it and provides device-code login as a fallback. The wizard then reads the authenticated account's visible models from the official App Server, including its advertised reasoning levels. Codex model names are never hard-coded or entered manually. LM Studio models are read from its OpenAI-compatible `/models` endpoint and can still be entered manually when discovery is unavailable.
 
-Existing configuration and credentials are selected by default when setup is run again. Before saving, the wizard shows a summary with **Save & Authenticate**, **Back**, and **Cancel**. Cancelling leaves the current configuration unchanged. Selected OAuth and token flows run immediately after the configuration is saved, and failures include a command that can be retried separately:
+Existing configuration and credentials are selected by default when setup is run again. Before saving, the wizard shows a summary with **Save & Authenticate**, **Back**, and **Cancel**. Cancelling leaves the current configuration unchanged. Provider, App Password, and bot-token checks finish before configuration or new secrets are committed; a failed check leaves the previous profile intact.
 
 ```powershell
 taxsentry auth gmail
@@ -113,9 +113,10 @@ taxsentry auth codex
 taxsentry auth status
 ```
 
-- Gmail uses the `gmail.modify` OAuth scope. Its refresh token is stored in the OS keyring.
+- Gmail uses IMAP/SMTP with a 16-character Google App Password stored in the OS keyring. OAuth and `credentials.json` are not used.
+- Google App Passwords require 2-Step Verification. Create one from [Google Account App Passwords](https://myaccount.google.com/apppasswords), then paste it into `taxsentry setup`.
 - The Telegram bot token is stored in the OS keyring and is never written to `config.json`.
-- Codex authentication is handled by the official `codex app-server`; TaxSentry does not manage the Codex OAuth token.
+- Codex authentication is handled by the official `codex app-server`. Its independent session is stored under `~/.taxsentry/codex`, so it does not change the login used by Codex CLI or VS Code. TaxSentry never writes OAuth tokens or login URLs to `config.json`.
 - LM Studio uses an OpenAI-compatible local endpoint. Select the provider and model during setup.
 - `taxsentry doctor --fix` creates missing runtime directories and can attempt to install Tesseract with the native package manager.
 
@@ -125,7 +126,6 @@ Important configuration keys:
 | --- | --- |
 | `gmail.enabled` | Enables the Gmail document-processing workflow |
 | `gmail.account` | Gmail account that receives reports |
-| `gmail.oauth_client_file` | Path to the Gmail OAuth `credentials.json` file |
 | `gmail.trusted_senders` | Allowlist of authorized report senders |
 | `director.email` | Recipient of generated PDF reports |
 | `director.telegram_chat_ids` | Telegram chat IDs allowed to receive reports and issue commands |
@@ -139,9 +139,10 @@ Important configuration keys:
 ## Command-line reference
 
 ```text
-taxsentry                       Open the terminal cockpit
+taxsentry                       Open the local Web Control Center
 taxsentry chat                  Open the terminal cockpit
-taxsentry start                 Open the terminal cockpit
+taxsentry start [--no-open]     Open the local Web Control Center
+taxsentry dashboard             Alias for `taxsentry start`
 taxsentry setup                 Create or update the local profile
 taxsentry status                Show the current configuration summary
 taxsentry doctor [--fix]        Validate dependencies and integrations
@@ -155,6 +156,8 @@ taxsentry report --send         Confirm and resend the latest report
 taxsentry auth gmail            Authenticate Gmail
 taxsentry auth telegram         Store the Telegram bot token
 taxsentry auth codex            Authenticate through Codex App Server
+taxsentry auth dashboard --show Show the local operator token
+taxsentry auth dashboard --rotate Rotate the token and invalidate sessions
 taxsentry auth status           Show authentication and configuration status
 taxsentry auth logout           Remove TaxSentry Gmail and Telegram secrets
 taxsentry service <action>      Manage the native background service
@@ -163,6 +166,10 @@ taxsentry update --main         Update the Python core from GitHub main
 ```
 
 Service actions are `install`, `start`, `stop`, `status`, `logs`, and `remove`.
+
+## Web Control Center
+
+`taxsentry start` serves the Finance Command Center at `http://127.0.0.1:8765` and opens a browser with a 60-second, single-use login code. The dashboard exposes Overview, Chat, Jobs, Reports, Connections, and Settings while the Python core remains the source of truth. It binds only to loopback; operator tokens stay in the OS keyring and authenticated mutations require a CSRF token.
 
 ## Terminal cockpit
 
@@ -240,6 +247,7 @@ logs/             Runtime logs
 run/              Worker lock and runtime files
 downloads/        Attachments and generated PDF reports
 runtime/          Isolated Python runtime used by the npm launcher
+codex/            Independent Codex App Server session and configuration
 ```
 
 Use `TAXSENTRY_HOME` to relocate the complete profile. `TAXSENTRY_CONFIG_FILE` and `TAXSENTRY_MEMORY_DB` can override the configuration and database paths independently.
@@ -254,7 +262,7 @@ Use `TAXSENTRY_HOME` to relocate the complete profile. `TAXSENTRY_CONFIG_FILE` a
 - TaxSentry is designed as a single-organization internal tool, not a multi-tenant public service.
 - AI-generated findings must be reviewed before they are used for financial decisions or tax filings.
 
-Do not commit `.env` files, OAuth credentials, tokens, databases, downloaded attachments, or generated reports.
+Do not commit `.env` files, App Passwords, tokens, databases, downloaded attachments, or generated reports.
 
 ## Development and validation
 
@@ -281,6 +289,8 @@ uv run pytest -q --basetemp=D:\TaxSentry\tmp-pytest
 
 GitHub Actions validates Python 3.11–3.13 and runs the npm launcher checks, package inspection, and smoke installation across Windows, macOS, and Ubuntu.
 
+OAuth is not exercised in CI. Before a release, run `taxsentry setup`, confirm that the printed Codex URL opens, complete browser or device-code login, and verify that the model menu matches the authenticated account.
+
 ## Project structure
 
 ```text
@@ -296,7 +306,7 @@ TaxSentry/
 
 ## Production readiness
 
-Before production use, validate Gmail OAuth, the selected AI provider, Telegram authorization, and Tesseract language packs on the target machine. Run at least one complete email-to-report delivery with representative data and review the generated analysis manually.
+Before production use, validate Gmail IMAP/SMTP access, the selected AI provider, Telegram authorization, and Tesseract language packs on the target machine. Run at least one complete email-to-report delivery with representative data and review the generated analysis manually.
 
 ## License
 

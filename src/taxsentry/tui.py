@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+import webbrowser
 from pathlib import Path
 
 import keyring
@@ -18,6 +19,7 @@ from rich.table import Table
 
 from .cockpit import Cockpit
 from .config import APP_HOME, backup_v1_profile, describe_config, ensure_directories, load_config, save_config
+from .control_server import DashboardAuth, run_dashboard
 from .gmail import GmailClient
 from .providers import CodexAppServerProvider, from_settings, health_check
 from .reporting import html_summary
@@ -36,7 +38,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="taxsentry", description="TaxSentry v2 — AI Agent cho Giám đốc")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("chat")
-    sub.add_parser("start")
+    for name in ("start", "dashboard"):
+        dashboard = sub.add_parser(name)
+        dashboard.add_argument("--no-open", action="store_true")
+        dashboard.add_argument("--port", type=int, default=None)
     sub.add_parser("gateway")
     update_parser = sub.add_parser("update")
     update_parser.add_argument("--main", action="store_true", help="cập nhật core từ GitHub main")
@@ -52,8 +57,10 @@ def _parser() -> argparse.ArgumentParser:
     worker.add_argument("--once", action="store_true")
     worker.add_argument("--gateway", action="store_true")
     auth = sub.add_parser("auth")
-    auth.add_argument("provider", choices=["codex", "gmail", "telegram", "status", "logout"])
+    auth.add_argument("provider", choices=["codex", "gmail", "telegram", "dashboard", "status", "logout"])
     auth.add_argument("--device-code", action="store_true")
+    auth.add_argument("--show", action="store_true")
+    auth.add_argument("--rotate", action="store_true")
     svc = sub.add_parser("service")
     svc.add_argument("action", choices=["install", "start", "stop", "status", "remove", "logs"])
     return parser
@@ -61,8 +68,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.command in {None, "chat", "start"}:
+    if args.command == "chat":
         return asyncio.run(Cockpit().run())
+    if args.command in {None, "start", "dashboard"}:
+        settings = load_config()
+        return run_dashboard(
+            port=getattr(args, "port", None) or int(settings["ui"].get("port", 8765)),
+            open_browser=not getattr(args, "no_open", False),
+        )
     if args.command == "gateway":
         from .bot.telegram_bot import main as run_gateway
 
@@ -84,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "worker":
         return asyncio.run(run_worker(once=args.once, gateway=args.gateway))
     if args.command == "auth":
-        return auth(args.provider, args.device_code)
+        return auth(args.provider, args.device_code, show=args.show, rotate=args.rotate)
     if args.command == "service":
         console.print(service(args.action))
         return 0
@@ -104,15 +117,16 @@ def setup() -> int:
     backup = backup_v1_profile()
     if backup:
         console.print(f"[yellow]Đã backup profile v1 / Backed up v1 profile: {backup}[/]")
-    save_config(selection.config)
     return authenticate_selection(selection, console)
 
 
-def auth(provider: str, device_code: bool = False) -> int:
+def auth(provider: str, device_code: bool = False, *, show: bool = False, rotate: bool = False) -> int:
     settings = load_config()
     if provider == "gmail":
-        GmailClient(settings).authenticate()
-        console.print("[green]✓ Gmail OAuth connected.[/]")
+        password = getpass.getpass("Gmail App Password (16 characters): ")
+        GmailClient(settings).authenticate(app_password=password)
+        save_config(settings)
+        console.print("[green]✓ Gmail connected with App Password.[/]")
     elif provider == "telegram":
         set_secret("telegram:bot-token", getpass.getpass("Telegram bot token: "))
         settings["telegram"]["enabled"] = True
@@ -126,8 +140,10 @@ def auth(provider: str, device_code: bool = False) -> int:
                 def show(result):
                     if result.get("authUrl"):
                         console.print(f"Mở trình duyệt: {result['authUrl']}")
+                        webbrowser.open(result["authUrl"])
                     if result.get("verificationUrl"):
                         console.print(f"Mở {result['verificationUrl']} và nhập mã [bold]{result['userCode']}[/]")
+                        webbrowser.open(result["verificationUrl"])
                 await client.login(device_code=device_code, challenge=show)
             finally:
                 await client.close()
@@ -136,11 +152,29 @@ def auth(provider: str, device_code: bool = False) -> int:
         settings["provider"]["auth_mode"] = "codex"
         save_config(settings)
         console.print("[green]✓ Codex connected through official app-server.[/]")
+    elif provider == "dashboard":
+        dashboard_auth = DashboardAuth()
+        token = dashboard_auth.rotate() if rotate else dashboard_auth.token
+        if show or rotate:
+            console.print(f"Dashboard token: [bold]{token}[/]")
+        else:
+            console.print("Dashboard token đã sẵn sàng. Dùng `taxsentry auth dashboard --show` để xem hoặc `--rotate` để đổi.")
     elif provider == "logout":
         account = settings["gmail"].get("account") or "default"
         delete_secret(f"gmail:{account}")
+        delete_secret(f"gmail-app-password:{account}")
         delete_secret("telegram:bot-token")
-        console.print("Đã xóa Gmail/Telegram secrets của TaxSentry. Dùng `codex logout` để đăng xuất Codex.")
+        async def logout_codex():
+            client = CodexAppServerProvider()
+            try:
+                await client.logout()
+            finally:
+                await client.close()
+        try:
+            asyncio.run(logout_codex())
+            console.print("Đã xóa Gmail/Telegram secrets và phiên Codex riêng của TaxSentry.")
+        except Exception as exc:
+            console.print(f"[yellow]Đã xóa Gmail/Telegram secrets; chưa thể đăng xuất Codex: {exc}[/]")
     else:
         console.print(describe_config(settings))
     return 0
@@ -164,15 +198,12 @@ def doctor(*, fix: bool = False) -> int:
             tesseract = shutil.which("tesseract")
             ocr_languages = _ocr_languages(tesseract) if tesseract else set()
         checks.append(("Tesseract", bool(tesseract) and required_languages <= ocr_languages, tesseract if required_languages <= ocr_languages else f"Thiếu {sorted(required_languages - ocr_languages)}; {_tesseract_hint()}"))
-        oauth_client = settings["gmail"].get("oauth_client_file", "")
-        oauth_file = Path(oauth_client) if oauth_client else None
-        checks.append(("Gmail OAuth client", bool(oauth_file and oauth_file.is_file()), str(oauth_file) if oauth_file else "not configured"))
         gmail_account = settings["gmail"].get("account") or "default"
         try:
-            gmail_token = get_secret(f"gmail:{gmail_account}")
+            gmail_token = get_secret(f"gmail-app-password:{gmail_account}")
         except keyring.errors.KeyringError:
             gmail_token = ""
-        checks.append(("Gmail token", bool(gmail_token), "stored in keyring" if gmail_token else "run `taxsentry auth gmail`"))
+        checks.append(("Gmail App Password", bool(gmail_token), "stored in keyring" if gmail_token else "run `taxsentry auth gmail`"))
         checks.append(("Trusted senders", bool(settings["gmail"].get("trusted_senders")), str(settings["gmail"].get("trusted_senders", []))))
         checks.append(("Director email", bool(settings["director"].get("email")), settings["director"].get("email") or "not configured"))
     else:

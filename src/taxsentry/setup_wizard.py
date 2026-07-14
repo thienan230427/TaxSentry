@@ -4,9 +4,9 @@ import asyncio
 import re
 import sys
 import webbrowser
+from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable
 
 import keyring
@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from .config import save_config
 from .gmail import GmailClient
 from .providers import CodexAppServerProvider, from_settings, lmstudio_models
 from .secrets import get_secret, set_secret
@@ -109,6 +110,7 @@ class WizardUI:
         radio = RadioList(
             choices,
             default=default,
+            show_numbers=True,
             select_on_focus=True,
             open_character="",
             select_character=self.marker,
@@ -137,7 +139,7 @@ class WizardUI:
                     [
                         Label(self._heading(title, text), dont_extend_height=True),
                         Box(radio, padding_left=2, padding_top=1, padding_bottom=1),
-                        Label("  ↑↓ di chuyển  Enter chọn  Esc hủy", style="class:hint", dont_extend_height=True),
+                        Label("  1-9 chọn nhanh  ↑↓ di chuyển  Enter chọn  Esc hủy", style="class:hint", dont_extend_height=True),
                     ]
                 ),
                 focused_element=radio,
@@ -150,6 +152,48 @@ class WizardUI:
         value = app.run()
         self._complete(title, labels[value])
         return value
+
+    async def wait(self, awaitable, timeout: float = 300):
+        keys = KeyBindings()
+
+        @keys.add("escape", eager=True)
+        @keys.add("c-c", eager=True)
+        def cancel(event) -> None:
+            event.app.exit(result=False)
+
+        app = Application(
+            layout=Layout(
+                HSplit(
+                    [
+                        Label(self._heading("Đăng nhập Codex / Codex Login", "Đang chờ xác thực trên trình duyệt / Waiting for browser authentication"), dont_extend_height=True),
+                        Label("  Esc hoặc Ctrl+C để hủy / to cancel", style="class:hint", dont_extend_height=True),
+                    ]
+                )
+            ),
+            key_bindings=keys,
+            style=STYLE,
+            full_screen=False,
+            erase_when_done=True,
+        )
+        task = asyncio.create_task(awaitable)
+        app_task = asyncio.create_task(app.run_async())
+        done, _ = await asyncio.wait({task, app_task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        if task in done:
+            if not app_task.done():
+                app.exit(result=True)
+            await app_task
+            return await task
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        if app_task.done():
+            await app_task
+        else:
+            app.exit(result=False)
+            await app_task
+        if not done:
+            raise TimeoutError("Codex OAuth timeout")
+        raise Cancelled
 
     def text(self, title: str, prompt: str, default: str = "", validate: Callable[[str], bool] | None = None, error: str = "Giá trị không hợp lệ / Invalid value", *, password: bool = False) -> str:
         keys = KeyBindings()
@@ -194,6 +238,7 @@ class SetupSelection:
     config: dict[str, Any]
     codex_auth: str = ""
     gmail_auth: str = ""
+    gmail_password: str = ""
     telegram_auth: str = ""
     telegram_token: str = ""
 
@@ -212,45 +257,126 @@ def _email(value: str) -> bool:
     return bool(EMAIL.fullmatch(value))
 
 
-async def _codex_catalog() -> tuple[dict[str, Any], list[tuple[str, str]], str]:
-    client = CodexAppServerProvider()
-    account: dict[str, Any] = {}
-    models: list[tuple[str, str]] = []
-    errors: list[str] = []
+def _show_codex_challenge(ui: WizardUI, result: dict[str, Any]) -> None:
+    url = str(result.get("authUrl") or result.get("verificationUrl") or "")
+    if not url:
+        raise RuntimeError("Codex App Server không trả về URL đăng nhập / returned no login URL")
+    ui.console.print(f"\n[bold cyan]Mở liên kết để đăng nhập / Open this login URL:[/]\n[link={url}]{url}[/link]")
+    if result.get("userCode"):
+        ui.console.print(f"Mã thiết bị / Device code: [bold blue]{result['userCode']}[/]\n")
     try:
+        opened = webbrowser.open(url)
+    except Exception:
+        opened = False
+    if not opened:
+        ui.console.print("[yellow]Trình duyệt không tự mở; hãy bấm hoặc sao chép liên kết phía trên.[/]")
+
+
+async def _await_login(ui: WizardUI, client: CodexAppServerProvider, result: dict[str, Any]) -> None:
+    login_id = str(result.get("loginId") or "")
+    try:
+        waiter = client.wait_login(login_id)
+        if hasattr(ui, "wait"):
+            await ui.wait(waiter)
+        else:
+            await waiter
+    except (Cancelled, TimeoutError):
+        await client.cancel_login(login_id)
+        raise
+
+
+async def _login_codex(ui: WizardUI, client: CodexAppServerProvider, mode: str) -> None:
+    while True:
         try:
-            account = await client.account()
+            result = await client.start_login(device_code=mode == "device")
+            _show_codex_challenge(ui, result)
+            await _await_login(ui, client, result)
+            return
+        except Cancelled:
+            raise
         except Exception as exc:
-            errors.append(str(exc))
-        try:
-            models = await client.models()
-        except Exception as exc:
-            errors.append(str(exc))
-        return account, models, "; ".join(dict.fromkeys(errors))
+            ui.message("Codex OAuth", str(exc))
+            action = ui.choose(
+                "Lỗi đăng nhập / Login failed",
+                "Chọn cách tiếp tục / Choose how to continue",
+                [("retry", "Thử lại\nRetry"), ("device", "Dùng mã thiết bị\nUse device code"), ("cancel", "Hủy\nCancel")],
+                "device" if mode == "browser" else "retry",
+            )
+            if action == "cancel":
+                raise Cancelled
+            mode = "device" if action == "device" else mode
+
+
+async def _codex_session(ui: WizardUI) -> tuple[dict[str, Any], list[tuple[str, str, tuple[str, ...]]]]:
+    client = CodexAppServerProvider()
+    try:
+        account = await client.account()
+        existing = bool(account.get("account")) or account.get("requiresOpenaiAuth") is False
+        account_info = account.get("account") or {}
+        identity = str(account_info.get("email") or account_info.get("type") or "Codex")
+        plan = str(account_info.get("planType") or "").strip()
+        values = []
+        if existing:
+            values.append(("existing", f"Dùng phiên hiện tại — {identity}{f' ({plan})' if plan else ''}\nUse existing session"))
+        values.extend([("browser", "Đăng nhập bằng trình duyệt\nBrowser OAuth"), ("device", "Đăng nhập bằng mã thiết bị\nDevice code login"), ("cancel", "Hủy\nCancel")])
+        mode = ui.choose("Xác thực Codex / Codex Authentication", "Chọn phương thức đăng nhập / Select authentication method", values, "existing" if existing else "browser")
+        if mode == "cancel":
+            raise Cancelled
+        if mode != "existing":
+            await _login_codex(ui, client, mode)
+            account = await client.account(refresh=True)
+
+        while True:
+            try:
+                return account, await client.models()
+            except Exception as exc:
+                ui.message("Danh sách model / Model list", str(exc))
+                action = ui.choose(
+                    "Không lấy được model / Models unavailable",
+                    "Chọn cách tiếp tục / Choose how to continue",
+                    [("retry", "Thử lại\nRetry"), ("login", "Đăng nhập lại\nReauthenticate"), ("default", "Dùng mặc định Codex\nUse Codex default"), ("cancel", "Hủy\nCancel")],
+                    "retry",
+                )
+                if action == "retry":
+                    continue
+                if action == "login":
+                    await _login_codex(ui, client, "browser")
+                    account = await client.account(refresh=True)
+                    continue
+                if action == "default":
+                    return account, []
+                raise Cancelled
     finally:
         await client.close()
 
 
-def _pick_model(ui: WizardUI, config: dict[str, Any], kind: str) -> tuple[str, dict[str, Any]]:
+def _pick_model(ui: WizardUI, config: dict[str, Any], kind: str, codex_models=()) -> tuple[str, dict[str, Any]]:
     current = str(config["provider"].get("model", ""))
     account: dict[str, Any] = {}
     while True:
         error = ""
         try:
             if kind == "codex":
-                account, models, error = asyncio.run(_codex_catalog())
+                models = list(codex_models)
             else:
-                models = [(item, item) for item in lmstudio_models(from_settings(config))]
+                models = [(item, item, ()) for item in lmstudio_models(from_settings(config))]
         except Exception as exc:
             models, error = [], str(exc)
         values = [("", "Mặc định của provider\nProvider default")]
-        values.extend((model_id, f"{label}  [{model_id}]") for model_id, label in models)
-        if current and not any(item[0] == current for item in values):
+        for model_id, label, efforts in models:
+            details = [model_id]
+            if efforts:
+                details.append(f"reasoning: {', '.join(efforts)}")
+            if model_id == current:
+                details.append("đang dùng / currently in use")
+            values.append((model_id, f"{label}\n{' · '.join(details)}"))
+        if kind != "codex" and current and not any(item[0] == current for item in values):
             values.append((current, f"Model tùy chỉnh hiện tại  [{current}]\nCurrent custom model"))
-        values.append(("__manual__", "Nhập model thủ công\nEnter model manually"))
+        if kind != "codex":
+            values.append(("__manual__", "Nhập model thủ công\nEnter model manually"))
         if error:
             values.append(("__retry__", f"Thử kết nối lại — {error[:80]}\nRetry connection"))
-        default = current or (models[0][0] if kind == "lmstudio" and models else "")
+        default = current if any(item[0] == current for item in values) else (models[0][0] if kind == "lmstudio" and models else "")
         selected = ui.choose("Model", "Chọn model bằng phím mũi tên / Select a model", values, default)
         if selected == "__retry__":
             continue
@@ -278,21 +404,18 @@ def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
         base_url = ui.text("LM Studio", "Base URL", str(candidate["provider"].get("lmstudio_base_url", "http://127.0.0.1:1234/v1")), lambda value: value.startswith(("http://", "https://")), "URL phải bắt đầu bằng http:// hoặc https://")
         candidate["provider"]["lmstudio_base_url"] = base_url
         candidate["provider"]["base_url"] = base_url
-    model, account = _pick_model(ui, candidate, kind)
+    account: dict[str, Any] = {}
+    codex_models = ()
+    if kind == "codex":
+        account, codex_models = asyncio.run(_codex_session(ui))
+    model, account = _pick_model(ui, candidate, kind, codex_models) if kind == "codex" else _pick_model(ui, candidate, kind)
     candidate["provider"]["model"] = model
 
-    selection = SetupSelection(candidate)
-    if kind == "codex":
-        existing = bool(account.get("account")) or account.get("requiresOpenaiAuth") is False
-        values = [("existing", "Dùng đăng nhập hiện có\nUse existing credentials")] if existing else []
-        values += [("browser", "Đăng nhập bằng trình duyệt\nBrowser login"), ("device", "Đăng nhập bằng mã thiết bị\nDevice code login")]
-        selection.codex_auth = ui.choose("Xác thực Codex / Codex Authentication", "Chọn phương thức đăng nhập / Select authentication method", values, "existing" if existing else "browser")
+    selection = SetupSelection(candidate, codex_auth="existing" if kind == "codex" else "")
 
     if candidate["gmail"]["enabled"]:
         gmail = candidate["gmail"]
         gmail["account"] = ui.text("Gmail", "Tài khoản nhận báo cáo / Report inbox", str(gmail.get("account", "")), _email, "Nhập địa chỉ email hợp lệ / Enter a valid email")
-        client_file = ui.text("Gmail OAuth", "Đường dẫn credentials.json / Path to credentials.json", str(gmail.get("oauth_client_file", "")), lambda value: Path(value.strip("\"'")).expanduser().is_file(), "Không tìm thấy file / File not found")
-        gmail["oauth_client_file"] = client_file.strip("\"'")
         senders = ui.text("Trusted Senders", "Email được phép, phân cách dấu phẩy / Allowed emails, comma-separated", ",".join(gmail.get("trusted_senders", [])), lambda value: bool(_csv(value)) and all(_email(item) for item in _csv(value)), "Cần ít nhất một email hợp lệ / At least one valid email is required")
         gmail["trusted_senders"] = [item.casefold() for item in _csv(senders)]
         candidate["director"]["email"] = ui.text("Director", "Email Giám đốc / Director email", str(candidate["director"].get("email", "")), _email, "Nhập địa chỉ email hợp lệ / Enter a valid email")
@@ -302,10 +425,15 @@ def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
             poll = int(ui.text("Polling", "Số giây, tối thiểu 10 / Seconds, minimum 10", str(current_poll), lambda value: value.isdigit() and int(value) >= 10, "Giá trị phải là số >= 10"))
         candidate["worker"]["poll_seconds"] = poll
         try:
-            has_gmail = bool(get_secret(f"gmail:{gmail['account']}"))
+            has_gmail = bool(get_secret(f"gmail-app-password:{gmail['account']}"))
         except keyring.errors.KeyringError:
             has_gmail = False
-        selection.gmail_auth = ui.choose("Xác thực Gmail / Gmail Authentication", "Chọn cách xác thực / Select authentication", ([('existing', "Dùng OAuth hiện có\nUse existing OAuth")] if has_gmail else []) + [("reauth", "Đăng nhập ngay\nAuthenticate now")], "existing" if has_gmail else "reauth")
+        if has_gmail:
+            selection.gmail_auth = ui.choose("Xác thực Gmail / Gmail Authentication", "Chọn App Password / Select App Password", [("existing", "Dùng App Password hiện có\nUse existing App Password"), ("replace", "Nhập App Password mới\nEnter a new App Password")], "existing")
+        else:
+            selection.gmail_auth = "replace"
+        if selection.gmail_auth == "replace":
+            selection.gmail_password = ui.text("Gmail App Password", "App Password 16 ký tự / 16-character App Password", password=True, validate=lambda value: len("".join(value.split())) == 16, error="App Password phải có đúng 16 ký tự / must contain exactly 16 characters")
 
     if candidate["telegram"]["enabled"]:
         chats = ui.text("Telegram", "Chat ID, phân cách dấu phẩy / Chat IDs, comma-separated", ",".join(map(str, candidate["director"].get("telegram_chat_ids", []))), lambda value: bool(_csv(value)) and all(re.fullmatch(r"-?\d+", item) for item in _csv(value)), "Chat ID phải là số nguyên / must be integers")
@@ -389,7 +517,7 @@ def authenticate_selection(selection: SetupSelection, console: Console) -> int:
 
     if config["gmail"]["enabled"]:
         try:
-            GmailClient(config).authenticate(force=selection.gmail_auth == "reauth")
+            GmailClient(config).authenticate(app_password=selection.gmail_password, store=False)
             statuses.append(("Gmail", "OK", config["gmail"]["account"]))
         except Exception as exc:
             statuses.append(("Gmail", "FAIL", f"{exc}; run `taxsentry auth gmail`"))
@@ -401,14 +529,21 @@ def authenticate_selection(selection: SetupSelection, console: Console) -> int:
         try:
             token = selection.telegram_token if selection.telegram_auth == "replace" else get_secret("telegram:bot-token")
             detail = asyncio.run(_telegram_auth(token))
-            if selection.telegram_auth == "replace":
-                set_secret("telegram:bot-token", token)
             statuses.append(("Telegram", "OK", detail))
         except Exception as exc:
             statuses.append(("Telegram", "FAIL", f"{exc}; run `taxsentry auth telegram`"))
             failed = True
     else:
         statuses.append(("Telegram", "SKIP", "disabled"))
+
+    if not failed:
+        if config["gmail"]["enabled"] and selection.gmail_password:
+            account = config["gmail"]["account"]
+            set_secret(f"gmail-app-password:{account}", "".join(selection.gmail_password.split()))
+        if config["telegram"]["enabled"] and selection.telegram_auth == "replace":
+            set_secret("telegram:bot-token", selection.telegram_token)
+        config["configured"] = True
+        save_config(config)
 
     table = Table("Service", "Status", "Detail", title="Setup result / Kết quả cấu hình")
     for row in statuses:

@@ -1,4 +1,5 @@
 import zipfile
+from email.message import EmailMessage
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,45 +50,68 @@ def test_native_service_runs_worker_with_gateway(monkeypatch, system):
     assert "worker" in content and "--gateway" in content
 
 
-class _Call:
-    def __init__(self, payload):
-        self.payload = payload
-
-    def execute(self):
-        return self.payload
-
-
-class _Messages:
-    def __init__(self, existing=None):
-        self.existing, self.sent = existing or [], 0
-
-    def list(self, **kwargs):
-        return _Call({"messages": self.existing})
-
-    def send(self, **kwargs):
-        self.sent += 1
-        return _Call({"id": "new-message"})
-
-
-class _Service:
-    def __init__(self, messages):
-        self._messages = messages
-
-    def users(self):
-        return self
-
-    def messages(self):
-        return self._messages
-
-
 def test_gmail_delivery_uses_stable_message_id(tmp_path):
     pdf = tmp_path / "report.pdf"
     pdf.write_bytes(b"%PDF-1.7")
-    messages = _Messages([{"id": "already-sent"}])
-    client = GmailClient({}, service=_Service(messages))
+
+    class Imap:
+        def select(self, mailbox):
+            return "OK", []
+
+        def uid(self, *args):
+            return "OK", [b"123"]
+
+    client = GmailClient({"gmail": {"account": "boss@gmail.com"}}, imap=Imap())
     result = client.send_report("director@example.com", "Report", "<p>ok</p>", pdf, idempotency_key="job-1")
-    assert result == "already-sent"
-    assert messages.sent == 0
+    assert result == "123"
+
+
+def test_gmail_app_password_is_verified_before_keyring_storage(monkeypatch):
+    calls = []
+
+    class Imap:
+        def login(self, account, password):
+            calls.append((account, password))
+
+    monkeypatch.setattr("taxsentry.gmail.imaplib.IMAP4_SSL", lambda *args: Imap())
+    monkeypatch.setattr("taxsentry.gmail.set_secret", lambda *args: calls.append(args))
+    client = GmailClient({"gmail": {"account": "boss@gmail.com"}})
+    client.authenticate(app_password="abcd efgh ijkl mnop")
+
+    assert calls == [
+        ("boss@gmail.com", "abcdefghijklmnop"),
+        ("gmail-app-password:boss@gmail.com", "abcdefghijklmnop"),
+    ]
+
+
+def test_gmail_imap_reads_attachments_and_applies_workflow_label():
+    message = EmailMessage()
+    message["From"], message["Subject"] = "accounting@example.com", "Báo cáo"
+    message.set_content("attached")
+    message.add_attachment(b"%PDF-1.7", maintype="application", subtype="pdf", filename="report.pdf")
+
+    class Imap:
+        def __init__(self):
+            self.stores = []
+
+        def select(self, mailbox):
+            return "OK", []
+
+        def uid(self, command, uid=None, *args):
+            if command == "search":
+                return "OK", [b"42"]
+            if command == "fetch":
+                return "OK", [(b"42 (RFC822)", message.as_bytes())]
+            self.stores.append((uid, args))
+            return "OK", []
+
+    imap = Imap()
+    client = GmailClient({"gmail": {"account": "boss@gmail.com"}}, imap=imap)
+    received = client.messages()[0]
+    client.label(received.id, "TaxSentry/Completed")
+
+    assert received.subject == "Báo cáo" and received.attachments[0].data == b"%PDF-1.7"
+    assert len(imap.stores) == len(("TaxSentry/Processing", "TaxSentry/Completed", "TaxSentry/NeedsReview", "TaxSentry/Failed"))
 
 
 class _Bot:

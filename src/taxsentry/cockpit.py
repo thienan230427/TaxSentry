@@ -10,22 +10,21 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from .chat_service import SYSTEM as SYSTEM
+from .chat_service import ChatService
 from .config import describe_config, load_config, save_config
 from .events import EventType
 from .providers import create_provider
 from .store import JobStore
 
 COMMANDS = ["/help", "/status", "/jobs", "/latest", "/report", "/provider", "/auth", "/retry", "/approve", "/clear", "/exit"]
-SYSTEM = "Bạn là TaxSentry, trợ lý CFO và thuế Việt Nam. Xưng em, gọi người dùng là Sếp. Chỉ kết luận từ dữ liệu có thật, luôn nêu độ tin cậy và để Giám đốc quyết định cuối cùng."
-
-
 class Cockpit:
     def __init__(self, settings: dict[str, Any] | None = None):
         self.settings = settings or load_config()
         self.console = Console()
-        self.store = JobStore()
-        self.provider = create_provider(self.settings)
-        self.history: list[dict[str, str]] = [{"role": "system", "content": SYSTEM}]
+        self.chat = ChatService(self.settings, store=JobStore(), provider_factory=create_provider)
+        self.store = self.chat.store
+        self.history = self.chat.history
         self.prompt = PromptSession(completer=WordCompleter(COMMANDS, ignore_case=True), auto_suggest=AutoSuggestFromHistory(), enable_history_search=True, multiline=False)
 
     async def run(self) -> int:
@@ -43,12 +42,9 @@ class Cockpit:
                 if text.startswith("/"):
                     await self._command(text)
                     continue
-                self.history.append({"role": "user", "content": text})
                 self.console.print("[bold #38bdf8]TaxSentry ›[/] ", end="")
-                chunks: list[str] = []
-                async for event in self.provider.stream_turn(self.history):
+                async for event in self.chat.stream(text):
                     if event.type == EventType.TEXT_DELTA:
-                        chunks.append(event.text)
                         self.console.print(event.text, end="", markup=False, soft_wrap=True)
                     elif event.type == EventType.TOOL_STARTED:
                         self.console.print(f"\n[dim]● {event.name}…[/]")
@@ -57,10 +53,12 @@ class Cockpit:
                     elif event.type == EventType.ERROR:
                         self.console.print(f"\n[red]Lỗi: {event.text}[/]")
                 self.console.print()
-                if chunks:
-                    self.history.append({"role": "assistant", "content": "".join(chunks)})
         finally:
-            await self.provider.close()
+            await self.chat.close()
+
+    @property
+    def provider(self):
+        return self.chat.provider
 
     def _header(self) -> None:
         provider = self.settings["provider"]
@@ -90,14 +88,11 @@ class Cockpit:
             if selected not in {"codex", "lmstudio"}:
                 self.console.print("Dùng /provider codex hoặc /provider lmstudio")
                 return
-            self.settings["provider"]["kind"] = selected
-            self.settings["provider"]["auth_mode"] = selected
+            await self.chat.switch_provider(selected)
             save_config(self.settings)
-            await self.provider.close()
-            self.provider = create_provider(self.settings)
             self.console.print(f"[green]Đã chuyển sang {selected}[/]")
         elif command == "/clear":
-            self.history = self.history[:1]
+            self.chat.clear()
             self.console.print("Đã xóa context hội thoại; transcript terminal được giữ nguyên.")
         elif command in {"/retry", "/approve"}:
             job = self.store.resolve(args[0] if args else "")

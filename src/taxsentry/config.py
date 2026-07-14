@@ -20,7 +20,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "version": __version__, "configured": False,
     "agent": {"name": "TaxSentry", "persona": "precise and practical", "language": "vi", "memory_enabled": True},
     "provider": {"kind": "lmstudio", "model": "", "lmstudio_base_url": "http://127.0.0.1:1234/v1", "base_url": "http://127.0.0.1:1234/v1", "api_key": "", "auth_mode": "lmstudio"},
-    "gmail": {"enabled": True, "account": "", "oauth_client_file": "", "trusted_senders": []},
+    "gmail": {"enabled": True, "account": "", "trusted_senders": []},
     "director": {"email": "", "telegram_chat_ids": []},
     "telegram": {"enabled": False},
     "worker": {"poll_seconds": 60, "max_retries": 3, "max_attachment_mb": 25, "gateway": True},
@@ -30,7 +30,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "memory": {"max_facts": 50, "max_turns": 12, "session_title": "TaxSentry session"},
     "jobs": {"tracking_enabled": True, "retry_limit": 3, "default_state": "queued", "needs_human_review_on_missing_data": True, "auto_send_email": True, "auto_send_telegram": True},
     "integrations": {"telegram": {"enabled": False, "bot_token": "", "admin_chat_id": ""}},
-    "ui": {"theme": "ocean", "show_banner": True}, "extra_env": {},
+    "ui": {"theme": "sentinel", "port": 8765, "show_banner": True}, "extra_env": {},
 }
 
 
@@ -83,6 +83,8 @@ def save_config(config: dict[str, Any]) -> None:
     payload = deepcopy(config)
     payload["version"] = __version__
     payload.get("provider", {}).pop("api_key", None)
+    payload.get("gmail", {}).pop("auth_mode", None)
+    payload.get("gmail", {}).pop("oauth_client_file", None)
     payload.get("integrations", {}).get("telegram", {}).pop("bot_token", None)
     temp = CONFIG_FILE.with_suffix(".tmp")
     temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
