@@ -40,3 +40,18 @@ def test_codex_jsonl_stream_contract():
 
     events = asyncio.run(collect())
     assert [event.type for event in events] == [EventType.TEXT_DELTA, EventType.TURN_COMPLETED]
+
+
+def test_codex_account_and_model_catalog_contract():
+    provider = CodexAppServerProvider()
+    provider.process = _Process([
+        {"id": 1, "result": {"account": {"type": "chatgpt"}, "requiresOpenaiAuth": True}},
+        {"id": 2, "result": {"data": [{"id": "gpt-tax", "displayName": "GPT Tax", "hidden": False}, {"id": "hidden", "hidden": True}]}},
+    ])
+
+    async def inspect():
+        return await provider.account(), await provider.models()
+
+    account, models = asyncio.run(inspect())
+    assert account["account"]["type"] == "chatgpt"
+    assert models == [("gpt-tax", "GPT Tax")]

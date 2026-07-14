@@ -85,17 +85,32 @@ uv run taxsentry setup
 
 `taxsentry setup` creates a profile in `~/.taxsentry`. When it detects a v1 profile, it moves that profile to a timestamped backup directory instead of deleting it.
 
-## Initial configuration
+## Interactive setup
 
-Run the interactive setup and connect the required services:
+Run the bilingual setup wizard:
 
 ```powershell
 taxsentry setup
+taxsentry doctor
+```
+
+The wizard uses arrow keys, Space, and Enter and offers three profiles:
+
+| Profile | Components |
+| --- | --- |
+| **Full Agent** | AI provider, Gmail workflow, and Telegram |
+| **Email Agent** | AI provider and Gmail workflow |
+| **Chat Only** | AI provider and terminal cockpit |
+
+It lists only integrations implemented by TaxSentry. Codex models are discovered through the official App Server, while LM Studio models are read from its OpenAI-compatible `/models` endpoint. If discovery fails, the wizard can retry, use the provider default, or accept a model ID manually.
+
+Existing configuration and credentials are selected by default when setup is run again. Before saving, the wizard shows a summary with **Save & Authenticate**, **Back**, and **Cancel**. Cancelling leaves the current configuration unchanged. Selected OAuth and token flows run immediately after the configuration is saved, and failures include a command that can be retried separately:
+
+```powershell
 taxsentry auth gmail
 taxsentry auth telegram
 taxsentry auth codex
 taxsentry auth status
-taxsentry doctor
 ```
 
 - Gmail uses the `gmail.modify` OAuth scope. Its refresh token is stored in the OS keyring.
@@ -108,6 +123,7 @@ Important configuration keys:
 
 | Key | Purpose |
 | --- | --- |
+| `gmail.enabled` | Enables the Gmail document-processing workflow |
 | `gmail.account` | Gmail account that receives reports |
 | `gmail.oauth_client_file` | Path to the Gmail OAuth `credentials.json` file |
 | `gmail.trusted_senders` | Allowlist of authorized report senders |

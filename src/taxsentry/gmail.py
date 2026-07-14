@@ -60,7 +60,7 @@ class GmailClient:
         self.service = service
         self.labels: dict[str, str] = {}
 
-    def authenticate(self) -> None:
+    def authenticate(self, *, force: bool = False) -> None:
         if self.service is not None:
             return
         from google.auth.transport.requests import Request
@@ -69,7 +69,7 @@ class GmailClient:
         from googleapiclient.discovery import build
 
         account = self.settings["gmail"].get("account") or "default"
-        raw = get_secret(f"gmail:{account}")
+        raw = "" if force else get_secret(f"gmail:{account}")
         credentials = Credentials.from_authorized_user_info(json.loads(raw), SCOPES) if raw else None
         if credentials and credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())

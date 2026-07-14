@@ -36,13 +36,17 @@ def single_instance(path: Path = RUNTIME_DIR / "worker.lock"):
 
 async def run_worker(*, once: bool = False, gateway: bool = False) -> int:
     settings, stop = load_config(), asyncio.Event()
+    console = Console()
+    if not settings.get("gmail", {}).get("enabled", True):
+        console.print("[red]Gmail đang tắt / Gmail is disabled. Chạy `taxsentry setup` và chọn Full Agent hoặc Email Agent.[/]")
+        return 2
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, stop.set)
         except (NotImplementedError, RuntimeError):
             pass
-    workflow, console, gateway_task = TaxSentryWorkflow(settings), Console(), None
+    workflow, gateway_task = TaxSentryWorkflow(settings), None
     if gateway and settings.get("telegram", {}).get("enabled") and not once:
         from .bot.telegram_bot import serve
 

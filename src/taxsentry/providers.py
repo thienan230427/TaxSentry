@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI, OpenAI
 
+from . import __version__
 from .config import APP_HOME, get_value
 from .events import AgentEvent, EventType
 
@@ -60,6 +61,14 @@ def health_check(spec: ProviderConfig) -> tuple[bool, str]:
         return False, str(exc)
 
 
+def lmstudio_models(spec: ProviderConfig) -> list[str]:
+    client = build_client(spec)
+    try:
+        return sorted({str(item.id) for item in client.models.list().data if getattr(item, "id", None)})
+    finally:
+        client.close()
+
+
 def generate_chat(spec: ProviderConfig, messages: list[dict[str, str]], temperature: float = 0.3) -> str:
     response = build_client(spec).chat.completions.create(model=spec.model, messages=messages, temperature=temperature)
     return str(response.choices[0].message.content or "").strip()
@@ -102,7 +111,7 @@ class CodexAppServerProvider:
             self.process = await asyncio.create_subprocess_exec(command, "app-server", "--listen", "stdio://", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         except (OSError, PermissionError) as exc:
             raise ProviderError("Codex CLI không chạy được. Đặt CODEX_CLI_PATH tới codex.exe hợp lệ.") from exc
-        await self._request("initialize", {"clientInfo": {"name": "taxsentry", "title": "TaxSentry", "version": "2.0.0"}, "capabilities": {"experimentalApi": False}})
+        await self._request("initialize", {"clientInfo": {"name": "taxsentry", "title": "TaxSentry", "version": __version__}, "capabilities": {"experimentalApi": False}})
         await self._notify("initialized", {})
 
     async def close(self) -> None:
@@ -127,6 +136,23 @@ class CodexAppServerProvider:
                     raise ProviderError(str(payload.get("error") or "Codex login failed"))
                 return result
         raise ProviderError("Codex app-server closed during login")
+
+    async def account(self, *, refresh: bool = False) -> dict[str, Any]:
+        if not self.process:
+            await self.start()
+        return await self._request("account/read", {"refreshToken": refresh})
+
+    async def models(self) -> list[tuple[str, str]]:
+        if not self.process:
+            await self.start()
+        result = await self._request("model/list", {"includeHidden": False})
+        models: list[tuple[str, str]] = []
+        for item in result.get("data", []):
+            model_id = str(item.get("id") or item.get("model") or item.get("slug") or "").strip()
+            if model_id and not item.get("hidden", False):
+                label = str(item.get("displayName") or item.get("display_name") or model_id)
+                models.append((model_id, label))
+        return models
 
     async def stream_turn(self, messages: list[dict[str, str]], *, output_schema: dict[str, Any] | None = None) -> AsyncIterator[AgentEvent]:
         if not self.process:

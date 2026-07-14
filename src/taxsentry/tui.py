@@ -13,7 +13,7 @@ from pathlib import Path
 
 import keyring
 from rich.console import Console
-from rich.prompt import Confirm, IntPrompt, Prompt
+from rich.prompt import Confirm
 from rich.table import Table
 
 from .cockpit import Cockpit
@@ -23,6 +23,7 @@ from .providers import CodexAppServerProvider, from_settings, health_check
 from .reporting import html_summary
 from .secrets import delete_secret, get_secret, set_secret
 from .service_control import service
+from .setup_wizard import authenticate_selection, run_setup_wizard
 from .store import JobStore
 from .telegram import TelegramDirector
 from .updater import perform_update
@@ -91,24 +92,20 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def setup() -> int:
+    config = load_config()
+    try:
+        selection = run_setup_wizard(config, console)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
+        return 2
+    if selection is None:
+        console.print("[yellow]Đã hủy; cấu hình không thay đổi / Cancelled; configuration unchanged.[/]")
+        return 0
     backup = backup_v1_profile()
     if backup:
-        console.print(f"[yellow]Đã backup profile v1: {backup}[/]")
-    config = load_config()
-    config["gmail"]["account"] = Prompt.ask("Gmail nội bộ dùng để nhận báo cáo", default=config["gmail"].get("account", ""))
-    config["gmail"]["oauth_client_file"] = Prompt.ask("Đường dẫn OAuth Desktop credentials.json", default=config["gmail"].get("oauth_client_file", ""))
-    senders = Prompt.ask("Email Kế toán trưởng (phân cách dấu phẩy)", default=",".join(config["gmail"].get("trusted_senders", [])))
-    config["gmail"]["trusted_senders"] = [item.strip().casefold() for item in senders.split(",") if item.strip()]
-    config["director"]["email"] = Prompt.ask("Email Giám đốc", default=config["director"].get("email", ""))
-    chats = Prompt.ask("Telegram chat ID Giám đốc (phân cách dấu phẩy)", default=",".join(map(str, config["director"].get("telegram_chat_ids", []))))
-    config["director"]["telegram_chat_ids"] = [item.strip() for item in chats.split(",") if item.strip()]
-    config["provider"]["kind"] = Prompt.ask("Provider", choices=["codex", "lmstudio"], default=config["provider"].get("kind", "lmstudio"))
-    config["provider"]["model"] = Prompt.ask("Model (để trống dùng mặc định)", default=config["provider"].get("model", ""))
-    config["worker"]["poll_seconds"] = IntPrompt.ask("Chu kỳ quét Gmail (giây)", default=int(config["worker"].get("poll_seconds", 60)))
-    config["configured"] = True
-    save_config(config)
-    console.print("[green]✓ Đã tạo profile TaxSentry v2 sạch.[/]")
-    return 0
+        console.print(f"[yellow]Đã backup profile v1 / Backed up v1 profile: {backup}[/]")
+    save_config(selection.config)
+    return authenticate_selection(selection, console)
 
 
 def auth(provider: str, device_code: bool = False) -> int:
@@ -157,25 +154,29 @@ def doctor(*, fix: bool = False) -> int:
     checks = []
     ok, detail = health_check(from_settings(settings))
     checks.append(("Provider", ok, detail))
-    tesseract = shutil.which("tesseract")
-    required_languages = set(settings["ocr"].get("languages", ["vie", "eng"]))
-    ocr_languages = _ocr_languages(tesseract) if tesseract else set()
-    if fix and (not tesseract or not required_languages <= ocr_languages):
-        _install_tesseract()
+    gmail_required = bool(settings["gmail"].get("enabled", True))
+    if gmail_required:
         tesseract = shutil.which("tesseract")
+        required_languages = set(settings["ocr"].get("languages", ["vie", "eng"]))
         ocr_languages = _ocr_languages(tesseract) if tesseract else set()
-    checks.append(("Tesseract", bool(tesseract) and required_languages <= ocr_languages, tesseract if required_languages <= ocr_languages else f"Thiếu {sorted(required_languages - ocr_languages)}; {_tesseract_hint()}"))
-    oauth_client = settings["gmail"].get("oauth_client_file", "")
-    oauth_file = Path(oauth_client) if oauth_client else None
-    checks.append(("Gmail OAuth client", bool(oauth_file and oauth_file.is_file()), str(oauth_file) if oauth_file else "not configured"))
-    gmail_account = settings["gmail"].get("account") or "default"
-    try:
-        gmail_token = get_secret(f"gmail:{gmail_account}")
-    except keyring.errors.KeyringError:
-        gmail_token = ""
-    checks.append(("Gmail token", bool(gmail_token), "stored in keyring" if gmail_token else "run `taxsentry auth gmail`"))
-    checks.append(("Trusted senders", bool(settings["gmail"].get("trusted_senders")), str(settings["gmail"].get("trusted_senders", []))))
-    checks.append(("Director email", bool(settings["director"].get("email")), settings["director"].get("email") or "not configured"))
+        if fix and (not tesseract or not required_languages <= ocr_languages):
+            _install_tesseract()
+            tesseract = shutil.which("tesseract")
+            ocr_languages = _ocr_languages(tesseract) if tesseract else set()
+        checks.append(("Tesseract", bool(tesseract) and required_languages <= ocr_languages, tesseract if required_languages <= ocr_languages else f"Thiếu {sorted(required_languages - ocr_languages)}; {_tesseract_hint()}"))
+        oauth_client = settings["gmail"].get("oauth_client_file", "")
+        oauth_file = Path(oauth_client) if oauth_client else None
+        checks.append(("Gmail OAuth client", bool(oauth_file and oauth_file.is_file()), str(oauth_file) if oauth_file else "not configured"))
+        gmail_account = settings["gmail"].get("account") or "default"
+        try:
+            gmail_token = get_secret(f"gmail:{gmail_account}")
+        except keyring.errors.KeyringError:
+            gmail_token = ""
+        checks.append(("Gmail token", bool(gmail_token), "stored in keyring" if gmail_token else "run `taxsentry auth gmail`"))
+        checks.append(("Trusted senders", bool(settings["gmail"].get("trusted_senders")), str(settings["gmail"].get("trusted_senders", []))))
+        checks.append(("Director email", bool(settings["director"].get("email")), settings["director"].get("email") or "not configured"))
+    else:
+        checks.append(("Gmail + OCR", True, "SKIP — disabled by setup profile"))
     telegram_required = bool(settings.get("telegram", {}).get("enabled"))
     try:
         telegram_token = get_secret("telegram:bot-token") if telegram_required else "disabled"

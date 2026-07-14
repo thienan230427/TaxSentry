@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import __version__
+
 APP_HOME = Path(os.getenv("TAXSENTRY_HOME", Path.home() / ".taxsentry"))
 CONFIG_FILE = Path(os.getenv("TAXSENTRY_CONFIG_FILE", APP_HOME / "config.json"))
 MEMORY_DB = Path(os.getenv("TAXSENTRY_MEMORY_DB", APP_HOME / "taxsentry.db"))
@@ -15,10 +17,10 @@ SESSION_FILE = APP_HOME / "sessions.jsonl"
 LOGS_DIR, RUNTIME_DIR, DOWNLOAD_DIR = APP_HOME / "logs", APP_HOME / "run", APP_HOME / "downloads"
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": "2.0.0", "configured": False,
+    "version": __version__, "configured": False,
     "agent": {"name": "TaxSentry", "persona": "precise and practical", "language": "vi", "memory_enabled": True},
     "provider": {"kind": "lmstudio", "model": "", "lmstudio_base_url": "http://127.0.0.1:1234/v1", "base_url": "http://127.0.0.1:1234/v1", "api_key": "", "auth_mode": "lmstudio"},
-    "gmail": {"account": "", "oauth_client_file": "", "trusted_senders": []},
+    "gmail": {"enabled": True, "account": "", "oauth_client_file": "", "trusted_senders": []},
     "director": {"email": "", "telegram_chat_ids": []},
     "telegram": {"enabled": False},
     "worker": {"poll_seconds": 60, "max_retries": 3, "max_attachment_mb": 25, "gateway": True},
@@ -79,7 +81,7 @@ def load_config() -> dict[str, Any]:
 def save_config(config: dict[str, Any]) -> None:
     ensure_directories()
     payload = deepcopy(config)
-    payload["version"] = "2.0.0"
+    payload["version"] = __version__
     payload.get("provider", {}).pop("api_key", None)
     payload.get("integrations", {}).get("telegram", {}).pop("bot_token", None)
     temp = CONFIG_FILE.with_suffix(".tmp")
@@ -112,7 +114,9 @@ def write_env_file(config: dict[str, Any]) -> Path:
 
 def describe_config(config: dict[str, Any]) -> str:
     provider = config["provider"]
-    return "\n".join((f"TaxSentry {config.get('version', '2.0.0')}", f"Provider: {provider['kind']} / {provider.get('model') or 'default'}", f"Gmail: {config['gmail'].get('account') or 'not connected'}", f"Telegram: {'enabled' if config['telegram'].get('enabled') else 'disabled'}", f"Trusted senders: {len(config['gmail'].get('trusted_senders', []))}", f"Config: {CONFIG_FILE}"))
+    gmail = config["gmail"]
+    gmail_status = (gmail.get("account") or "not connected") if gmail.get("enabled", True) else "disabled"
+    return "\n".join((f"TaxSentry {config.get('version', __version__)}", f"Provider: {provider['kind']} / {provider.get('model') or 'default'}", f"Gmail: {gmail_status}", f"Telegram: {'enabled' if config['telegram'].get('enabled') else 'disabled'}", f"Trusted senders: {len(gmail.get('trusted_senders', []))}", f"Config: {CONFIG_FILE}"))
 
 
 def build_env_lines(config: dict[str, Any]) -> list[str]:

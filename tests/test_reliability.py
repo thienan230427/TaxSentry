@@ -9,6 +9,7 @@ from taxsentry.gmail import GmailAttachment, GmailClient, validate_attachment
 from taxsentry.service_control import artifact
 from taxsentry.store import JobStore
 from taxsentry.telegram import TelegramDirector
+from taxsentry.worker import run_worker
 
 
 def test_attachment_validates_mime_and_magic_bytes():
@@ -107,3 +108,9 @@ async def test_telegram_delivery_only_targets_director_ids():
     director = TelegramDirector({"telegram": {"enabled": True}, "director": {"telegram_chat_ids": ["10", "20"]}}, bot=bot)
     assert await director.notify("status") == ["1", "1"]
     assert bot.chats == ["10", "20"]
+
+
+@pytest.mark.asyncio
+async def test_worker_rejects_chat_only_profile(monkeypatch):
+    monkeypatch.setattr("taxsentry.worker.load_config", lambda: {"gmail": {"enabled": False}})
+    assert await run_worker(once=True) == 2

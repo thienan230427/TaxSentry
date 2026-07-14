@@ -1,6 +1,6 @@
 import pytest
 
-from taxsentry.tui import _parser, main, report
+from taxsentry.tui import _parser, doctor, main, report
 
 
 @pytest.mark.parametrize(
@@ -32,6 +32,21 @@ def test_update_flag_is_dispatched(monkeypatch):
 
     assert main(["update", "--main"]) == 0
     assert calls == [{"main": True}]
+
+
+def test_doctor_skips_gmail_and_ocr_for_chat_profile(monkeypatch, tmp_path):
+    settings = {
+        "provider": {"kind": "lmstudio", "model": "", "base_url": "http://localhost"},
+        "gmail": {"enabled": False},
+        "telegram": {"enabled": False},
+        "ocr": {"languages": ["vie", "eng"]},
+        "director": {},
+    }
+    monkeypatch.setattr("taxsentry.tui.load_config", lambda: settings)
+    monkeypatch.setattr("taxsentry.tui.APP_HOME", tmp_path)
+    monkeypatch.setattr("taxsentry.tui.health_check", lambda spec: (True, "ok"))
+    monkeypatch.setattr("taxsentry.tui.get_secret", lambda name: pytest.fail("disabled integrations must not read secrets"))
+    assert doctor() == 0
 
 
 def test_manual_report_send_requires_confirmation_and_audits(monkeypatch, tmp_path):
