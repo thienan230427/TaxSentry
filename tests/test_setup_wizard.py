@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from io import StringIO
 
 import pytest
+from rich.console import Console
 
 from taxsentry.config import DEFAULT_SETTINGS
-from taxsentry.setup_wizard import SetupSelection, _pick_model, authenticate_selection, run_setup_wizard
+from taxsentry.setup_wizard import (
+    SetupSelection,
+    WizardUI,
+    _pick_model,
+    authenticate_selection,
+    run_setup_wizard,
+)
 
 
 class FakeUI:
@@ -31,6 +39,57 @@ class FakeUI:
 
 def config():
     return deepcopy(DEFAULT_SETTINGS)
+
+
+def inline_ui():
+    output = StringIO()
+    ui = WizardUI.__new__(WizardUI)
+    ui.console = Console(file=output, force_terminal=False, width=50)
+    ui.unicode = True
+    ui.marker, ui.done, ui.line = "◆", "✓", "│"
+    return ui, output
+
+
+def test_inline_menu_is_transient_and_supports_keyboard_cancel(monkeypatch):
+    ui, output = inline_ui()
+    captured = {}
+
+    class InlineApplication:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def run(self):
+            return "chat"
+
+    monkeypatch.setattr("taxsentry.setup_wizard.Application", InlineApplication)
+    assert ui.choose("Hồ sơ / Profile", "Chọn hồ sơ / Choose a profile", [("chat", "Chat Only\nTerminal cockpit")], "chat") == "chat"
+
+    keys = {getattr(key, "value", key) for binding in captured["key_bindings"].bindings for key in binding.keys}
+    assert captured["full_screen"] is False and captured["erase_when_done"] is True
+    assert {"c-m", "escape", "c-c"} <= keys
+    assert "✓ Hồ sơ  Chat Only" in output.getvalue()
+
+
+def test_password_input_is_erased_and_never_echoed(monkeypatch):
+    ui, output = inline_ui()
+    options = {}
+
+    class Session:
+        def __init__(self, *args, **kwargs):
+            options.update(kwargs)
+
+        def prompt(self, **kwargs):
+            return "super-secret"
+
+    monkeypatch.setattr("taxsentry.setup_wizard.PromptSession", Session)
+    assert ui.text("Telegram", "Bot token", password=True) == "super-secret"
+    assert options["is_password"] is True and options["erase_when_done"] is True
+    assert "super-secret" not in output.getvalue() and "••••••" in output.getvalue()
+
+
+def test_unicode_symbols_fall_back_for_ascii_terminal(monkeypatch):
+    monkeypatch.setattr("taxsentry.setup_wizard.sys.stdout", type("AsciiOutput", (), {"encoding": "ascii"})())
+    assert WizardUI._supports_unicode() is False
 
 
 def test_chat_profile_preserves_current_codex_credentials(monkeypatch):
@@ -121,4 +180,3 @@ def test_setup_cancel_does_not_write_config(monkeypatch):
     monkeypatch.setattr(tui, "run_setup_wizard", lambda settings, console: None)
     monkeypatch.setattr(tui, "save_config", lambda settings: pytest.fail("config must not be written"))
     assert tui.setup() == 0
-

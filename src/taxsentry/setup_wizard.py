@@ -10,16 +10,34 @@ from pathlib import Path
 from typing import Any, Callable
 
 import keyring
-from prompt_toolkit.shortcuts import input_dialog, message_dialog, radiolist_dialog
+from prompt_toolkit import PromptSession
+from prompt_toolkit.application import Application
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import HSplit, Layout
 from prompt_toolkit.styles import Style
+from prompt_toolkit.validation import Validator
+from prompt_toolkit.widgets import Box, Label, RadioList
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from .gmail import GmailClient
 from .providers import CodexAppServerProvider, from_settings, lmstudio_models
 from .secrets import get_secret, set_secret
 
-STYLE = Style.from_dict({"dialog": "bg:#0f172a", "dialog.body": "bg:#0f172a #e2e8f0", "dialog frame.label": "#38bdf8 bold", "button": "bg:#1e293b #e2e8f0", "button.focused": "bg:#0ea5e9 #ffffff bold", "radio-selected": "#22c55e bold", "radio-checked": "#22c55e"})
+STYLE = Style.from_dict(
+    {
+        "marker": "#22d3ee bold",
+        "title": "bold",
+        "description": "#64748b",
+        "option": "#cbd5e1",
+        "option.selected": "#22d3ee bold",
+        "option.checked": "#22c55e bold",
+        "hint": "#64748b",
+        "prompt": "#22d3ee bold",
+        "validation-toolbar": "bg:#7f1d1d #ffffff",
+    }
+)
 EMAIL = re.compile(r"^[^\s@]+@[^\s@]+$")
 
 
@@ -32,28 +50,140 @@ class WizardUI:
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise RuntimeError("`taxsentry setup` cần terminal tương tác / requires an interactive terminal.")
         self.console = console
+        self.unicode = self._supports_unicode()
+        self.marker, self.done, self.line = ("◆", "✓", "│") if self.unicode else (">", "+", "|")
+        self.console.print()
+        self.console.print(Text(f"{self.marker} TaxSentry Setup", style="bold cyan"))
+        self.console.print(Text("  Cấu hình trợ lý của bạn", style="bold"))
+        self.console.print(Text("  Configure your assistant", style="dim"))
+
+    @staticmethod
+    def _supports_unicode() -> bool:
+        try:
+            "◆✓│".encode(sys.stdout.encoding or "ascii")
+            return True
+        except (LookupError, UnicodeEncodeError):
+            return False
+
+    @staticmethod
+    def _parts(value: str) -> tuple[str, str]:
+        parts = value.split(" / ", 1)
+        return parts[0], parts[1] if len(parts) == 2 else ""
+
+    @staticmethod
+    def _option(label: str):
+        primary, _, secondary = label.partition("\n")
+        result = [("class:option", primary)]
+        if secondary:
+            result += [("", "\n   "), ("class:description", secondary)]
+        return result
+
+    def _heading(self, title: str, text: str, prompt: str = ""):
+        primary, secondary = self._parts(title)
+        description, english = self._parts(text)
+        result = [
+            ("class:marker", f"{self.marker} "),
+            ("class:title", primary),
+        ]
+        if secondary:
+            result += [("class:description", f"  {secondary}")]
+        result += [("", "\n"), ("class:marker", f"{self.line} "), ("", description)]
+        if english:
+            result += [("", "\n"), ("class:marker", f"{self.line} "), ("class:description", english)]
+        if prompt:
+            result += [("", "\n"), ("class:marker", f"{self.line} "), ("class:prompt", f"{prompt}: ")]
+        return result
+
+    def _complete(self, title: str, value: str) -> None:
+        primary, _ = self._parts(title)
+        line = Text()
+        line.append(f"{self.done} ", style="green bold")
+        line.append(primary, style="bold")
+        line.append("  ", style="dim")
+        line.append(value.splitlines()[0] or "Mặc định", style="cyan")
+        self.console.print(line)
 
     def choose(self, title: str, text: str, values, default):
-        value = radiolist_dialog(title=title, text=text, values=values, default=default, ok_text="Chọn / Select", cancel_text="Hủy / Cancel", style=STYLE).run()
-        if value is None:
-            raise Cancelled
+        labels = dict(values)
+        choices = [(value, self._option(label)) for value, label in values]
+        radio = RadioList(
+            choices,
+            default=default,
+            select_on_focus=True,
+            open_character="",
+            select_character=self.marker,
+            close_character="",
+            show_cursor=False,
+            show_scrollbar=True,
+            container_style="class:option",
+            default_style="class:option",
+            selected_style="class:option.selected",
+            checked_style="class:option.checked",
+        )
+        keys = KeyBindings()
+
+        @keys.add("enter", eager=True)
+        def accept(event) -> None:
+            event.app.exit(result=radio.current_value)
+
+        @keys.add("escape", eager=True)
+        @keys.add("c-c", eager=True)
+        def cancel(event) -> None:
+            event.app.exit(exception=Cancelled())
+
+        app = Application(
+            layout=Layout(
+                HSplit(
+                    [
+                        Label(self._heading(title, text), dont_extend_height=True),
+                        Box(radio, padding_left=2, padding_top=1, padding_bottom=1),
+                        Label("  ↑↓ di chuyển  Enter chọn  Esc hủy", style="class:hint", dont_extend_height=True),
+                    ]
+                ),
+                focused_element=radio,
+            ),
+            key_bindings=keys,
+            style=STYLE,
+            full_screen=False,
+            erase_when_done=True,
+        )
+        value = app.run()
+        self._complete(title, labels[value])
         return value
 
     def text(self, title: str, prompt: str, default: str = "", validate: Callable[[str], bool] | None = None, error: str = "Giá trị không hợp lệ / Invalid value", *, password: bool = False) -> str:
-        while True:
-            value = input_dialog(title=title, text=prompt, default=default, password=password, ok_text="Tiếp tục / Continue", cancel_text="Hủy / Cancel", style=STYLE).run()
-            if value is None:
-                raise Cancelled
-            value = value.strip()
-            if not validate or validate(value):
-                return value
-            self.message("Không hợp lệ / Invalid", error)
+        keys = KeyBindings()
+
+        @keys.add("escape", eager=True)
+        def cancel(event) -> None:
+            event.app.exit(exception=Cancelled())
+
+        validator = None
+        if validate:
+            validator = Validator.from_callable(
+                lambda value: validate(value.strip()), error_message=error, move_cursor_to_end=True
+            )
+        session = PromptSession(
+            self._heading(title, "Nhập giá trị / Enter a value", prompt),
+            is_password=password,
+            validator=validator,
+            validate_while_typing=False,
+            key_bindings=keys,
+            style=STYLE,
+            erase_when_done=True,
+        )
+        try:
+            value = session.prompt(default=default).strip()
+        except (EOFError, KeyboardInterrupt) as exc:
+            raise Cancelled from exc
+        self._complete(title, "••••••" if password else value)
+        return value
 
     def message(self, title: str, text: str) -> None:
-        message_dialog(title=title, text=text, ok_text="OK", style=STYLE).run()
+        self.console.print(Text(f"! {title}: {text}", style="bold red"))
 
     def summary(self, rows: list[tuple[str, str]]) -> None:
-        table = Table("Mục / Item", "Lựa chọn / Selection", title="TaxSentry Setup")
+        table = Table("Mục", "Lựa chọn", title="Xác nhận cấu hình", title_style="bold cyan", border_style="cyan")
         for name, value in rows:
             table.add_row(name, value)
         self.console.print(table)
@@ -113,13 +243,13 @@ def _pick_model(ui: WizardUI, config: dict[str, Any], kind: str) -> tuple[str, d
                 models = [(item, item) for item in lmstudio_models(from_settings(config))]
         except Exception as exc:
             models, error = [], str(exc)
-        values = [("", "Provider default / Mặc định của provider")]
+        values = [("", "Mặc định của provider\nProvider default")]
         values.extend((model_id, f"{label}  [{model_id}]") for model_id, label in models)
         if current and not any(item[0] == current for item in values):
-            values.append((current, f"Current custom model / Model tùy chỉnh hiện tại  [{current}]"))
-        values.append(("__manual__", "Enter model manually / Nhập model thủ công"))
+            values.append((current, f"Model tùy chỉnh hiện tại  [{current}]\nCurrent custom model"))
+        values.append(("__manual__", "Nhập model thủ công\nEnter model manually"))
         if error:
-            values.append(("__retry__", f"Retry connection / Thử kết nối lại — {error[:80]}"))
+            values.append(("__retry__", f"Thử kết nối lại — {error[:80]}\nRetry connection"))
         default = current or (models[0][0] if kind == "lmstudio" and models else "")
         selected = ui.choose("Model", "Chọn model bằng phím mũi tên / Select a model", values, default)
         if selected == "__retry__":
@@ -154,9 +284,9 @@ def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
     selection = SetupSelection(candidate)
     if kind == "codex":
         existing = bool(account.get("account")) or account.get("requiresOpenaiAuth") is False
-        values = [("existing", "Use existing credentials / Dùng đăng nhập hiện có")] if existing else []
-        values += [("browser", "Browser login / Đăng nhập bằng trình duyệt"), ("device", "Device code login / Đăng nhập bằng mã thiết bị")]
-        selection.codex_auth = ui.choose("Codex Authentication / Xác thực Codex", "Chọn phương thức đăng nhập / Select authentication method", values, "existing" if existing else "browser")
+        values = [("existing", "Dùng đăng nhập hiện có\nUse existing credentials")] if existing else []
+        values += [("browser", "Đăng nhập bằng trình duyệt\nBrowser login"), ("device", "Đăng nhập bằng mã thiết bị\nDevice code login")]
+        selection.codex_auth = ui.choose("Xác thực Codex / Codex Authentication", "Chọn phương thức đăng nhập / Select authentication method", values, "existing" if existing else "browser")
 
     if candidate["gmail"]["enabled"]:
         gmail = candidate["gmail"]
@@ -167,7 +297,7 @@ def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
         gmail["trusted_senders"] = [item.casefold() for item in _csv(senders)]
         candidate["director"]["email"] = ui.text("Director", "Email Giám đốc / Director email", str(candidate["director"].get("email", "")), _email, "Nhập địa chỉ email hợp lệ / Enter a valid email")
         current_poll = int(candidate["worker"].get("poll_seconds", 60))
-        poll = ui.choose("Polling", "Chu kỳ quét Gmail / Gmail polling interval", [(30, "30 seconds"), (60, "60 seconds — recommended"), (300, "5 minutes"), (0, "Custom / Tùy chỉnh")], current_poll if current_poll in {30, 60, 300} else 0)
+        poll = ui.choose("Polling", "Chu kỳ quét Gmail / Gmail polling interval", [(30, "30 giây\n30 seconds"), (60, "60 giây — khuyên dùng\n60 seconds — recommended"), (300, "5 phút\n5 minutes"), (0, "Tùy chỉnh\nCustom")], current_poll if current_poll in {30, 60, 300} else 0)
         if poll == 0:
             poll = int(ui.text("Polling", "Số giây, tối thiểu 10 / Seconds, minimum 10", str(current_poll), lambda value: value.isdigit() and int(value) >= 10, "Giá trị phải là số >= 10"))
         candidate["worker"]["poll_seconds"] = poll
@@ -175,7 +305,7 @@ def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
             has_gmail = bool(get_secret(f"gmail:{gmail['account']}"))
         except keyring.errors.KeyringError:
             has_gmail = False
-        selection.gmail_auth = ui.choose("Gmail Authentication / Xác thực Gmail", "Chọn cách xác thực / Select authentication", ([('existing', "Use existing OAuth / Dùng OAuth hiện có")] if has_gmail else []) + [("reauth", "Authenticate now / Đăng nhập ngay")], "existing" if has_gmail else "reauth")
+        selection.gmail_auth = ui.choose("Xác thực Gmail / Gmail Authentication", "Chọn cách xác thực / Select authentication", ([('existing', "Dùng OAuth hiện có\nUse existing OAuth")] if has_gmail else []) + [("reauth", "Đăng nhập ngay\nAuthenticate now")], "existing" if has_gmail else "reauth")
 
     if candidate["telegram"]["enabled"]:
         chats = ui.text("Telegram", "Chat ID, phân cách dấu phẩy / Chat IDs, comma-separated", ",".join(map(str, candidate["director"].get("telegram_chat_ids", []))), lambda value: bool(_csv(value)) and all(re.fullmatch(r"-?\d+", item) for item in _csv(value)), "Chat ID phải là số nguyên / must be integers")
@@ -184,7 +314,7 @@ def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
             has_token = bool(get_secret("telegram:bot-token"))
         except keyring.errors.KeyringError:
             has_token = False
-        selection.telegram_auth = ui.choose("Telegram Authentication / Xác thực Telegram", "Chọn token / Select token", ([('existing', "Use existing token / Dùng token hiện có")] if has_token else []) + [("replace", "Enter a new token / Nhập token mới")], "existing" if has_token else "replace")
+        selection.telegram_auth = ui.choose("Xác thực Telegram / Telegram Authentication", "Chọn token / Select token", ([('existing', "Dùng token hiện có\nUse existing token")] if has_token else []) + [("replace", "Nhập token mới\nEnter a new token")], "existing" if has_token else "replace")
         if selection.telegram_auth == "replace":
             selection.telegram_token = ui.text("Telegram Token", "Bot token (hidden / được ẩn)", password=True, validate=lambda value: bool(value), error="Token không được trống / cannot be empty")
     candidate["configured"] = True
@@ -204,7 +334,7 @@ def run_setup_wizard(config: dict[str, Any], console: Console, ui: WizardUI | No
                 ("Telegram", ", ".join(selected["director"].get("telegram_chat_ids", [])) if selected["telegram"]["enabled"] else "disabled"),
             ]
             ui.summary(rows)
-            action = ui.choose("Xác nhận / Confirm", "Lưu cấu hình và xác thực? / Save configuration and authenticate?", [("save", "Save & Authenticate / Lưu và xác thực"), ("back", "Back / Quay lại"), ("cancel", "Cancel / Hủy")], "save")
+            action = ui.choose("Xác nhận / Confirm", "Lưu cấu hình và xác thực? / Save configuration and authenticate?", [("save", "Lưu và xác thực\nSave & Authenticate"), ("back", "Quay lại\nBack"), ("cancel", "Hủy\nCancel")], "save")
             if action == "save":
                 return selection
             if action == "cancel":
