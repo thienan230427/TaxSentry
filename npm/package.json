@@ -15,6 +15,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/tests/*.test.js",
+    "smoke": "node scripts/smoke-install.mjs",
     "prepack": "node scripts/prepack.mjs && npm run build"
   },
   "engines": {

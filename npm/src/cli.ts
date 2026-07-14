@@ -14,7 +14,7 @@ if (args.length === 1 && (args[0] === "--version" || args[0] === "-V")) {
 }
 
 if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
-  console.log(`TaxSentry ${metadata.version}\n\nUsage: taxsentry [command] [options]\n\nCommands: setup, doctor, status, worker, gateway, jobs, report, service, auth`);
+  console.log(`TaxSentry ${metadata.version}\n\nUsage: taxsentry [command] [options]\n\nCommands: chat, start, setup, doctor, status, worker, gateway, jobs, report, service, auth, update`);
   process.exit(0);
 }
 

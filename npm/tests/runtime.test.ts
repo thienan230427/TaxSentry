@@ -1,8 +1,11 @@
 import { EventEmitter } from "node:events";
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -58,4 +61,13 @@ test("forwardToPython preserves unicode arguments and exit code", async () => {
 
   assert.equal(await forwardToPython("python", ["report", "báo cáo tháng 5"], spawn), 7);
   assert.deepEqual(invocation, ["python", "-m", "taxsentry", "report", "báo cáo tháng 5"]);
+});
+
+test("npm help lists every public Python command without bootstrapping", () => {
+  const cli = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "cli.js");
+  const result = spawnSync(process.execPath, [cli, "--help"], { encoding: "utf8" });
+
+  assert.equal(result.status, 0);
+  for (const command of ["chat", "start", "setup", "doctor", "status", "worker", "gateway", "jobs", "report", "service", "auth", "update"])
+    assert.match(result.stdout, new RegExp(`\\b${command}\\b`));
 });

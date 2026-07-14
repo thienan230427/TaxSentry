@@ -37,8 +37,12 @@ jobs:
       - run: uv build
 
   npm:
-    name: npm launcher / node-24
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / npm launcher / node-24
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -57,4 +61,6 @@ jobs:
       - run: npm test
         working-directory: npm
       - run: npm pack --dry-run
+        working-directory: npm
+      - run: npm run smoke
         working-directory: npm

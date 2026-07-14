@@ -10,6 +10,8 @@ from taxsentry.providers import create_provider
 from taxsentry.secrets import get_secret
 from taxsentry.store import JobStore
 
+COMMANDS = ("status", "jobs", "latest", "report", "retry", "approve", "cancel")
+
 
 def _allowed(update, settings) -> bool:
     return str(update.effective_chat.id) in {str(item) for item in settings["director"].get("telegram_chat_ids", [])}
@@ -76,12 +78,16 @@ def build_application():
         grounding = json.dumps(latest_report["payload"], ensure_ascii=False) if latest_report else "Không có báo cáo"
         prompt = f"Dữ liệu báo cáo gần nhất: {grounding[:30000]}\n\nCâu hỏi Giám đốc: {update.message.text}\nLuôn nêu độ tin cậy."
         chunks = []
-        async for event in create_provider(settings).stream_turn([{"role": "user", "content": prompt}]):
-            if event.type == EventType.TEXT_DELTA: chunks.append(event.text)
+        provider = create_provider(settings)
+        try:
+            async for event in provider.stream_turn([{"role": "user", "content": prompt}]):
+                if event.type == EventType.TEXT_DELTA: chunks.append(event.text)
+        finally:
+            await provider.close()
         text = "".join(chunks) or "Em chưa thể trả lời vì provider không có phản hồi."
         for start in range(0, len(text), 4096): await update.message.reply_text(text[start:start + 4096])
 
-    for name, handler in (("status", status), ("jobs", status), ("latest", latest), ("report", report), ("retry", retry), ("approve", approve), ("cancel", cancel)):
+    for name, handler in zip(COMMANDS, (status, status, latest, report, retry, approve, cancel), strict=True):
         app.add_handler(CommandHandler(name, handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     return app

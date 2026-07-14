@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,8 +13,14 @@ if (pkg.version !== pythonVersion || pkg.version !== moduleVersion) throw new Er
 
 const vendor = join(root, "dist", "vendor");
 mkdirSync(vendor, { recursive: true });
-for (const name of readdirSync(vendor)) if (name.endsWith(".whl")) rmSync(join(vendor, name));
-execFileSync("uv", ["build", "--wheel", repository, "--out-dir", vendor], { stdio: "inherit" });
-rmSync(join(vendor, ".gitignore"), { force: true });
-if (readdirSync(vendor).filter((name) => name.endsWith(".whl")).length !== 1) throw new Error("uv build did not produce exactly one wheel");
+const build = mkdtempSync(join(tmpdir(), "taxsentry-wheel-"));
+try {
+  execFileSync("uv", ["build", "--wheel", repository, "--out-dir", build], { stdio: "inherit" });
+  const wheels = readdirSync(build).filter((name) => name.endsWith(".whl"));
+  if (wheels.length !== 1) throw new Error("uv build did not produce exactly one wheel");
+  copyFileSync(join(build, wheels[0]), join(vendor, wheels[0]));
+  for (const name of readdirSync(vendor)) if (name.endsWith(".whl") && name !== wheels[0]) rmSync(join(vendor, name));
+} finally {
+  rmSync(build, { recursive: true, force: true });
+}
 if (!existsSync(join(repository, "LICENSE"))) throw new Error("LICENSE is missing");

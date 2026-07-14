@@ -1,23 +1,37 @@
-from taxsentry.tui import _parser, report, update
+import pytest
+
+from taxsentry.tui import _parser, main, report
 
 
-def test_new_commands_are_public(monkeypatch):
+@pytest.mark.parametrize(
+    ("arguments", "command"),
+    [
+        (["chat"], "chat"),
+        (["start"], "start"),
+        (["gateway"], "gateway"),
+        (["update"], "update"),
+        (["update", "--main"], "update"),
+        (["setup"], "setup"),
+        (["status"], "status"),
+        (["doctor", "--fix"], "doctor"),
+        (["jobs"], "jobs"),
+        (["report", "--send"], "report"),
+        (["worker", "run", "--once"], "worker"),
+        (["auth", "codex", "--device-code"], "auth"),
+        (["service", "status"], "service"),
+    ],
+)
+def test_all_commands_are_public(arguments, command):
     parser = _parser()
-    assert parser.parse_args(["start"]).command == "start"
-    assert parser.parse_args(["gateway"]).command == "gateway"
-    assert parser.parse_args(["doctor", "--fix"]).fix is True
+    assert parser.parse_args(arguments).command == command
 
-    monkeypatch.setattr("taxsentry.tui.shutil.which", lambda name: "uv")
+
+def test_update_flag_is_dispatched(monkeypatch):
     calls = []
+    monkeypatch.setattr("taxsentry.tui.perform_update", lambda **kwargs: calls.append(kwargs) or (0, "ok"))
 
-    def run(command, **kwargs):
-        calls.append(command)
-        return type("Result", (), {"returncode": 0})()
-
-    monkeypatch.setattr("taxsentry.tui.subprocess.run", run)
-    assert update() == 0
-    assert calls[0][:3] == ["uv", "tool", "install"]
-    assert calls[0][-1].startswith("git+https://github.com/")
+    assert main(["update", "--main"]) == 0
+    assert calls == [{"main": True}]
 
 
 def test_manual_report_send_requires_confirmation_and_audits(monkeypatch, tmp_path):

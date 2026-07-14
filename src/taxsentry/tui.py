@@ -25,6 +25,7 @@ from .secrets import delete_secret, get_secret, set_secret
 from .service_control import service
 from .store import JobStore
 from .telegram import TelegramDirector
+from .updater import perform_update
 from .worker import run_worker
 
 console = Console()
@@ -36,7 +37,8 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("chat")
     sub.add_parser("start")
     sub.add_parser("gateway")
-    sub.add_parser("update")
+    update_parser = sub.add_parser("update")
+    update_parser.add_argument("--main", action="store_true", help="cập nhật core từ GitHub main")
     sub.add_parser("setup")
     sub.add_parser("status")
     doctor_parser = sub.add_parser("doctor")
@@ -66,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         run_gateway()
         return 0
     if args.command == "update":
-        return update()
+        return update(main=args.main)
     if args.command == "setup":
         return setup()
     if args.command == "status":
@@ -206,19 +208,10 @@ def _install_tesseract() -> None:
         console.print(f"[yellow]Không thể tự cài Tesseract: {exc}\nHãy chạy: {_tesseract_hint()}[/]")
 
 
-def update() -> int:
-    uv = shutil.which("uv")
-    if not uv:
-        console.print("[red]Không tìm thấy uv. Cài uv trước khi cập nhật TaxSentry.[/]")
-        return 1
-    source = load_config().get("update", {}).get("source", "taxsentry-agent")
-    command = [uv, "tool", "install", "--force", source] if source.startswith(("git+", "https://")) else [uv, "tool", "upgrade", source]
-    result = subprocess.run(command, check=False)
-    if result.returncode:
-        console.print("[red]Cập nhật thất bại. Kiểm tra nguồn cài đặt và kết nối mạng.[/]")
-        return result.returncode
-    console.print("[green]✓ TaxSentry đã được cập nhật.[/]")
-    return 0
+def update(*, main: bool = False) -> int:
+    code, message = perform_update(main=main)
+    console.print(f"[{'green' if code == 0 else 'red'}]{'✓' if code == 0 else 'Lỗi:'} {message}[/]")
+    return code
 
 
 def _tesseract_hint() -> str:
