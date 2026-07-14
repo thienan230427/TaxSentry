@@ -31,7 +31,7 @@ try {
   const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
   const { ensureRuntime } = await import(pathToFileURL(join(packageRoot, "dist", "src", "runtime.js")).href);
   const runtime = ensureRuntime(version, { home: env.TAXSENTRY_HOME, root: packageRoot });
-  for (const args of [["--version"], ["--help"]]) execFileSync(process.execPath, [cli, ...args], { env, stdio: "inherit" });
+  for (const args of [["--version"], ["--help"], ["status"]]) execFileSync(process.execPath, [cli, ...args], { env, stdio: "inherit" });
 
   if (!readFileSync(join(temp, "home", "runtime", "installed-version"), "utf8").includes(version)) throw new Error("runtime version sentinel was not created");
   const verify = "import importlib.util; assert importlib.util.find_spec('taxsentry.control_server') is None; assert importlib.util.find_spec('taxsentry.service_control') is None; from taxsentry.cockpit import banner_text; print(banner_text({'provider': {'kind': 'smoke', 'model': 'test'}, 'gmail': {'enabled': False}, 'telegram': {'enabled': False}}, 80))";

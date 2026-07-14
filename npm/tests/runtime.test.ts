@@ -68,7 +68,7 @@ test("npm help lists every public Python command without bootstrapping", () => {
   const result = spawnSync(process.execPath, [cli, "--help"], { encoding: "utf8" });
 
   assert.equal(result.status, 0);
-  for (const command of ["setup", "doctor", "update"])
+  for (const command of ["setup", "status", "doctor", "update"])
     assert.match(result.stdout, new RegExp(`\\b${command}\\b`));
   for (const command of ["start", "dashboard", "chat", "gateway", "worker", "service"])
     assert.doesNotMatch(result.stdout, new RegExp(`\\b${command}\\b`));

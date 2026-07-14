@@ -13,6 +13,7 @@ from taxsentry.setup_wizard import (
     SetupSelection,
     WizardUI,
     _codex_session,
+    _collect,
     _pick_model,
     authenticate_selection,
     run_setup_wizard,
@@ -150,8 +151,6 @@ def test_full_profile_collects_and_validates_every_enabled_service(monkeypatch):
         texts=[
             "http://127.0.0.1:1234/v1",
             "reports@example.com",
-            "accounting@example.com, tax@example.com",
-            "director@example.com",
             "abcd efgh ijkl mnop",
             "123,-456",
             "telegram-token",
@@ -164,9 +163,20 @@ def test_full_profile_collects_and_validates_every_enabled_service(monkeypatch):
     assert result.gmail_password == "abcd efgh ijkl mnop"
     assert "gmail_password" not in result.config["gmail"]
     assert result.telegram_token == "telegram-token"
-    assert result.config["gmail"]["trusted_senders"] == ["accounting@example.com", "tax@example.com"]
+    assert "trusted_senders" not in result.config["gmail"]
+    assert "email" not in result.config["director"]
+    assert result.gmail_reset_uid
     assert result.config["director"]["telegram_chat_ids"] == ["123", "-456"]
     assert result.config["worker"]["poll_seconds"] == 60
+
+
+def test_reenabling_same_gmail_resets_worker_uid(monkeypatch):
+    settings = config()
+    settings["gmail"].update({"enabled": False, "account": "boss@example.com", "process_after_uid": 99})
+    monkeypatch.setattr("taxsentry.setup_wizard._pick_model", lambda ui, value, kind: ("local", {}))
+    monkeypatch.setattr("taxsentry.setup_wizard.get_secret", lambda name: "")
+    ui = FakeUI(choices=["email", "lmstudio", 60], texts=["http://127.0.0.1:1234/v1", "boss@example.com", "abcd efgh ijkl mnop"])
+    assert _collect(settings, ui).gmail_reset_uid
 
 
 def test_summary_cancel_returns_without_selection(monkeypatch):
@@ -277,6 +287,27 @@ def test_failed_telegram_validation_never_replaces_secret(monkeypatch):
 
     assert authenticate_selection(selection, Console()) == 1
     assert stored == []
+
+
+def test_successful_gmail_setup_records_current_uid(monkeypatch):
+    settings = config()
+    settings["gmail"].update({"enabled": True, "account": "boss@gmail.com", "process_after_uid": None})
+    settings["telegram"]["enabled"] = False
+    selection = SetupSelection(settings, gmail_password="abcd efgh ijkl mnop", gmail_reset_uid=True)
+    saved = []
+
+    class Gmail:
+        def __init__(self, value): pass
+        def authenticate(self, **kwargs): pass
+        def latest_uid(self): return 42
+
+    monkeypatch.setattr("taxsentry.setup_wizard.GmailClient", Gmail)
+    monkeypatch.setattr("taxsentry.setup_wizard.lmstudio_models", lambda spec: ["model"])
+    monkeypatch.setattr("taxsentry.setup_wizard.set_secret", lambda *args: None)
+    monkeypatch.setattr("taxsentry.setup_wizard.save_config", lambda value: saved.append(value))
+
+    assert authenticate_selection(selection, Console(file=StringIO())) == 0
+    assert saved[0]["gmail"]["process_after_uid"] == 42
 
 
 def test_setup_cancel_does_not_write_config(monkeypatch):

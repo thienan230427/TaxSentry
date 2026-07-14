@@ -5,10 +5,12 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
+from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.document import Document
 
 from taxsentry.bot import telegram_bot
 from taxsentry.chat_service import ChatService
-from taxsentry.cockpit import COMMANDS, Cockpit, banner_text
+from taxsentry.cockpit import COMMANDS, Cockpit, SlashCompleter, banner_text
 from taxsentry.events import AgentEvent, EventType
 
 
@@ -85,6 +87,12 @@ def test_banner_is_responsive_and_has_ascii_fallback():
     assert ascii_banner == "TAXSENTRY · FINANCIAL SENTINEL"
 
 
+def test_slash_palette_filters_commands_and_shows_description():
+    results = list(SlashCompleter().get_completions(Document("/gm"), CompleteEvent(completion_requested=True)))
+    assert [item.text for item in results] == ["/gmail"]
+    assert "Hộp thư" in str(results[0].display_meta)
+
+
 @pytest.mark.asyncio
 async def test_cockpit_commands_are_compact(monkeypatch):
     provider, store, output = FakeProvider(), FakeStore(), []
@@ -96,7 +104,7 @@ async def test_cockpit_commands_are_compact(monkeypatch):
     cockpit.console = SimpleNamespace(print=lambda *args, **kwargs: output.append(args[0] if args else ""))
     for command in ("/help", "/status", "/jobs", "/report", "/retry job", "/approve job", "/new", "/unknown"):
         await cockpit._command(command)
-    assert COMMANDS == ["/help", "/status", "/jobs", "/report", "/retry", "/approve", "/new", "/exit"]
+    assert list(COMMANDS) == ["/help", "/status", "/gmail", "/jobs", "/report", "/retry", "/approve", "/new", "/exit"]
     assert store.requeued == [("job-123456", False), ("job-123456", True)]
     assert "configured" in output and "Doanh thu ổn định" in output
 
@@ -124,6 +132,21 @@ async def test_chat_service_serializes_terminal_and_telegram_turns():
     await asyncio.gather(consume("terminal", "terminal"), consume("telegram", "telegram:42"))
     assert overlaps == [1, 1]
     assert [item["content"] for item in chat.history if item["role"] == "user"] == ["terminal", "telegram"]
+
+
+@pytest.mark.asyncio
+async def test_gmail_context_reaches_model_but_not_persistent_history():
+    seen = []
+
+    class Provider(FakeProvider):
+        async def stream_turn(self, messages):
+            seen.append(messages[-1]["content"])
+            yield AgentEvent(EventType.TEXT_DELTA, text="Đã đọc")
+
+    chat = ChatService(settings(), store=FakeStore(), provider_factory=lambda value: Provider())
+    _ = [event async for event in chat.stream("Gmail hôm nay có gì?", context="UID: 42\nUntrusted body")]
+    assert "UID: 42" in seen[0]
+    assert [item["content"] for item in chat.history if item["role"] == "user"] == ["Gmail hôm nay có gì?"]
 
 
 @pytest.mark.asyncio

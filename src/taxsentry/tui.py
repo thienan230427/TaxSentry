@@ -13,7 +13,7 @@ from rich.table import Table
 
 from . import __version__
 from .cockpit import Cockpit
-from .config import APP_HOME, backup_v1_profile, ensure_directories, load_config, save_config
+from .config import APP_HOME, backup_v1_profile, describe_config, ensure_directories, load_config, save_config
 from .providers import from_settings, health_check
 from .secrets import get_secret
 from .setup_wizard import authenticate_selection, run_setup_wizard
@@ -27,6 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"TaxSentry {__version__}")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("setup", help="cấu hình provider, Gmail và Telegram")
+    sub.add_parser("status", help="hiển thị cấu hình và trạng thái tích hợp")
     doctor_parser = sub.add_parser("doctor", help="kiểm tra các tích hợp")
     doctor_parser.add_argument("--fix", action="store_true")
     update_parser = sub.add_parser("update", help="cập nhật TaxSentry")
@@ -38,6 +39,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "setup":
         return setup()
+    if args.command == "status":
+        console.print(describe_config(load_config()))
+        return 0
     if args.command == "doctor":
         return doctor(fix=args.fix)
     if args.command == "update":
@@ -92,8 +96,11 @@ def doctor(*, fix: bool = False) -> int:
         except keyring.errors.KeyringError:
             gmail_token = ""
         checks.append(("Gmail App Password", bool(gmail_token), "stored in keyring" if gmail_token else "run `taxsentry setup`"))
-        checks.append(("Trusted senders", bool(settings["gmail"].get("trusted_senders")), str(settings["gmail"].get("trusted_senders", []))))
-        checks.append(("Director email", bool(settings["director"].get("email")), settings["director"].get("email") or "not configured"))
+        marker = settings["gmail"].get("process_after_uid")
+        checks.append(("Gmail sender policy", True, "all senders; automatic processing only after setup marker"))
+        checks.append(("Gmail worker marker", marker is not None, str(marker) if marker is not None else "run `taxsentry setup`"))
+        libreoffice = shutil.which("soffice")
+        checks.append(("LibreOffice", True, libreoffice or "optional; required only for .doc/.xls/.ppt"))
     else:
         checks.append(("Gmail + OCR", True, "SKIP — disabled by setup profile"))
     telegram_required = bool(settings.get("telegram", {}).get("enabled"))

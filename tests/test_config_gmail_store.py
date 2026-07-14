@@ -5,20 +5,14 @@ from copy import deepcopy
 
 from taxsentry import config as config_module
 from taxsentry.config import DEFAULT_SETTINGS
-from taxsentry.gmail import normalize_email, trusted_sender
 from taxsentry.reporting import parse_report
 from taxsentry.store import JobStore
 
 
-def test_trust_boundary_normalizes_sender_address():
-    assert normalize_email("Kế toán <ACCOUNTING@EXAMPLE.COM>") == "accounting@example.com"
-    assert trusted_sender("Kế toán <accounting@example.com>", ["ACCOUNTING@example.com"])
-    assert not trusted_sender("attacker@example.com", ["accounting@example.com"])
-
-
 def test_save_removes_legacy_gmail_oauth_fields(monkeypatch, tmp_path):
     settings = deepcopy(DEFAULT_SETTINGS)
-    settings["gmail"].update({"auth_mode": "oauth", "oauth_client_file": "credentials.json"})
+    settings["gmail"].update({"auth_mode": "oauth", "oauth_client_file": "credentials.json", "trusted_senders": ["old@example.com"]})
+    settings["director"]["email"] = "director@example.com"
     target = tmp_path / "config.json"
     monkeypatch.setattr(config_module, "CONFIG_FILE", target)
     monkeypatch.setattr(config_module, "ensure_directories", lambda: None)
@@ -26,7 +20,9 @@ def test_save_removes_legacy_gmail_oauth_fields(monkeypatch, tmp_path):
     config_module.save_config(settings)
 
     gmail = json.loads(target.read_text(encoding="utf-8"))["gmail"]
-    assert "auth_mode" not in gmail and "oauth_client_file" not in gmail
+    saved = json.loads(target.read_text(encoding="utf-8"))
+    assert "auth_mode" not in gmail and "oauth_client_file" not in gmail and "trusted_senders" not in gmail
+    assert "email" not in saved["director"]
 
 
 def test_save_removes_obsolete_web_and_gateway_fields(monkeypatch, tmp_path):

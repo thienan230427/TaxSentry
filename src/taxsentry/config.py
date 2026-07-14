@@ -20,8 +20,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "version": __version__, "configured": False,
     "agent": {"name": "TaxSentry", "persona": "precise and practical", "language": "vi", "memory_enabled": True},
     "provider": {"kind": "lmstudio", "model": "", "lmstudio_base_url": "http://127.0.0.1:1234/v1", "base_url": "http://127.0.0.1:1234/v1", "api_key": "", "auth_mode": "lmstudio"},
-    "gmail": {"enabled": True, "account": "", "trusted_senders": []},
-    "director": {"email": "", "telegram_chat_ids": []},
+    "gmail": {"enabled": True, "account": "", "process_after_uid": None},
+    "director": {"telegram_chat_ids": []},
     "telegram": {"enabled": False},
     "worker": {"poll_seconds": 60, "max_retries": 3, "max_attachment_mb": 25},
     "update": {"source": "git+https://github.com/thienan230427/TaxSentry.git"},
@@ -84,6 +84,8 @@ def save_config(config: dict[str, Any]) -> None:
     payload.get("provider", {}).pop("api_key", None)
     payload.get("gmail", {}).pop("auth_mode", None)
     payload.get("gmail", {}).pop("oauth_client_file", None)
+    payload.get("gmail", {}).pop("trusted_senders", None)
+    payload.get("director", {}).pop("email", None)
     payload.pop("integrations", None)
     payload.get("worker", {}).pop("gateway", None)
     payload.get("ui", {}).pop("port", None)
@@ -119,7 +121,8 @@ def describe_config(config: dict[str, Any]) -> str:
     provider = config["provider"]
     gmail = config["gmail"]
     gmail_status = (gmail.get("account") or "not connected") if gmail.get("enabled", True) else "disabled"
-    return "\n".join((f"TaxSentry {config.get('version', __version__)}", f"Provider: {provider['kind']} / {provider.get('model') or 'default'}", f"Gmail: {gmail_status}", f"Telegram: {'enabled' if config['telegram'].get('enabled') else 'disabled'}", f"Trusted senders: {len(gmail.get('trusted_senders', []))}", f"Config: {CONFIG_FILE}"))
+    marker = gmail.get("process_after_uid")
+    return "\n".join((f"TaxSentry {config.get('version', __version__)}", f"Provider: {provider['kind']} / {provider.get('model') or 'default'}", f"Gmail: {gmail_status}", "Gmail sender policy: all senders", f"Worker starts after UID: {marker if marker is not None else 'pending initialization'}", f"Telegram: {'enabled' if config['telegram'].get('enabled') else 'disabled'}", f"LibreOffice: {'available' if shutil.which('soffice') else 'optional / not found'}", f"Config: {CONFIG_FILE}"))
 
 
 def build_env_lines(config: dict[str, Any]) -> list[str]:

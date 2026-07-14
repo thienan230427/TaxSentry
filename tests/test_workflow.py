@@ -44,8 +44,8 @@ class FakeGmail:
 
 def settings():
     return {
-        "gmail": {"trusted_senders": ["accounting@example.com"]},
-        "director": {"email": "director@example.com", "telegram_chat_ids": ["1"]},
+        "gmail": {"account": "director@example.com", "process_after_uid": 0},
+        "director": {"telegram_chat_ids": ["1"]},
         "telegram": {"enabled": True},
         "worker": {"max_retries": 1, "max_attachment_mb": 25},
         "ocr": {"languages": ["vie", "eng"], "minimum_confidence": 70},
@@ -63,18 +63,20 @@ def test_e2e_deduplicates_and_delivers(monkeypatch, tmp_path):
         output.write_bytes(b"%PDF")
         return output
     monkeypatch.setattr("taxsentry.workflow.render_pdf", fake_pdf)
+    monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
     workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
     assert asyncio.run(workflow.run_once()) == 1
     assert asyncio.run(workflow.run_once()) == 0
     assert store.recent_jobs()[0]["state"] == "completed"
     assert gmail.labels[-1] == "TaxSentry/Completed"
-    assert gmail.outgoing and telegram.sent
+    assert gmail.outgoing[0][0] == "director@example.com" and telegram.sent
 
 
 def test_low_ocr_confidence_requires_review(monkeypatch, tmp_path):
     message = GmailMessage("m2", "accounting@example.com", "Scan", [GmailAttachment("scan.png", "image/png", b"image")])
     gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "state.db")
     monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: Extraction("unclear", 0.4, "ocr"))
+    monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
     workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
     assert asyncio.run(workflow.run_once()) == 0
     assert store.recent_jobs()[0]["state"] == "needs_review"
@@ -103,6 +105,19 @@ def test_worker_recovers_interrupted_job(monkeypatch, tmp_path):
         return output
 
     monkeypatch.setattr("taxsentry.workflow.render_pdf", fake_pdf)
+    monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
     workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
     assert asyncio.run(workflow.run_once()) == 1
     assert store.get(job["id"])["state"] == "completed"
+
+
+def test_legacy_office_problem_moves_job_to_review_without_retry(monkeypatch, tmp_path):
+    message = GmailMessage("m4", "unknown@example.com", "Legacy", [GmailAttachment("old.doc", "application/msword", b"legacy")])
+    gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "state.db")
+    monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: (_ for _ in ()).throw(ValueError("LibreOffice is required")))
+    workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
+
+    assert asyncio.run(workflow.run_once()) == 0
+    job = store.recent_jobs()[0]
+    assert job["state"] == "needs_review" and job["retries"] == 0
+    assert gmail.labels[-1] == "TaxSentry/NeedsReview"

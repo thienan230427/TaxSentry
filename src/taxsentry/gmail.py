@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import imaplib
+import re
 import smtplib
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
-from email.utils import parseaddr
+from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -17,9 +20,14 @@ from .config import DOWNLOAD_DIR
 from .secrets import get_secret, set_secret
 
 LABELS = ("TaxSentry/Processing", "TaxSentry/Completed", "TaxSentry/NeedsReview", "TaxSentry/Failed")
-ALLOWED_EXTENSIONS = {".xlsx", ".pdf", ".png", ".jpg", ".jpeg"}
+ALLOWED_EXTENSIONS = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".png", ".jpg", ".jpeg"}
 ALLOWED_MIME = {
+    ".doc": {"application/msword", "application/octet-stream"},
+    ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream"},
+    ".xls": {"application/vnd.ms-excel", "application/octet-stream"},
     ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream"},
+    ".ppt": {"application/vnd.ms-powerpoint", "application/octet-stream"},
+    ".pptx": {"application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/octet-stream"},
     ".pdf": {"application/pdf", "application/octet-stream"},
     ".png": {"image/png", "application/octet-stream"},
     ".jpg": {"image/jpeg", "application/octet-stream"},
@@ -44,15 +52,39 @@ class GmailMessage:
     sender: str
     subject: str
     attachments: list[GmailAttachment]
+    recipient: str = ""
+    date: str = ""
+    body: str = ""
 
 
-def normalize_email(value: str) -> str:
-    return parseaddr(value)[1].strip().casefold()
+class _HTMLText(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        if data.strip():
+            self.parts.append(data.strip())
 
 
-def trusted_sender(sender: str, allowlist: list[str]) -> bool:
-    normalized = normalize_email(sender)
-    return bool(normalized and normalized in {normalize_email(item) for item in allowlist})
+def natural_gmail_query(text: str, *, now: datetime | None = None) -> str:
+    """Translate the small, predictable Vietnamese/English inbox vocabulary used by chat."""
+    lowered = text.casefold()
+    parts = ["in:inbox"]
+    if "hôm nay" in lowered or "today" in lowered:
+        parts.append(f"after:{(now or datetime.now()).strftime('%Y/%m/%d')}")
+    if "chưa đọc" in lowered or "unread" in lowered:
+        parts.append("is:unread")
+    if any(word in lowered for word in ("đính kèm", "attachment", "có file")):
+        parts.append("has:attachment")
+    sender = re.search(r"(?:\btừ\b|\bfrom\b)\s+([^,?.]+)", text, re.IGNORECASE)
+    if sender:
+        value = sender.group(1).strip().replace('"', "")
+        if value:
+            parts.append(f'from:"{value}"')
+    if len(parts) == 1:
+        parts.append("newer_than:30d")
+    return " ".join(parts)
 
 
 class GmailClient:
@@ -80,10 +112,38 @@ class GmailClient:
     def messages(self) -> list[GmailMessage]:
         self.authenticate()
         self._imap_select()
-        status, data = self.imap.uid("search", None, "X-GM-RAW", '"has:attachment -label:TaxSentry/Completed"')
+        marker = self.settings.get("gmail", {}).get("process_after_uid")
+        if marker is None:
+            return []
+        status, data = self.imap.uid("search", None, "UID", f"{int(marker) + 1}:*", "X-GM-RAW", '"has:attachment -label:TaxSentry/Completed"')
         if status != "OK":
             raise RuntimeError("Gmail IMAP search failed")
-        return [self._imap_message(uid.decode()) for uid in (data[0] or b"").split()]
+        messages = [self._imap_message(uid.decode()) for uid in (data[0] or b"").split()]
+        return [message for message in messages if message.attachments]
+
+    def latest_uid(self) -> int:
+        self.authenticate()
+        self._imap_select()
+        status, data = self.imap.uid("search", None, "ALL")
+        if status != "OK":
+            raise RuntimeError("Gmail IMAP search failed")
+        return max((int(uid) for uid in (data[0] or b"").split()), default=0)
+
+    def search(self, query: str = "in:inbox newer_than:30d", limit: int = 20) -> list[GmailMessage]:
+        self.authenticate()
+        self._imap_select()
+        status, data = self.imap.uid("search", None, "X-GM-RAW", f'"{query.replace(chr(34), chr(92) + chr(34))}"')
+        if status != "OK":
+            raise RuntimeError("Gmail IMAP search failed")
+        uids = (data[0] or b"").split()[-max(1, min(limit, 20)):]
+        return [self._imap_message(uid.decode()) for uid in reversed(uids)]
+
+    def read(self, uid: str) -> GmailMessage:
+        if not uid.isdigit():
+            raise ValueError("Gmail UID must be numeric")
+        self.authenticate()
+        self._imap_select()
+        return self._imap_message(uid)
 
     def _imap_select(self) -> None:
         status, _ = self.imap.select("INBOX")
@@ -101,7 +161,25 @@ class GmailClient:
             name = Path(part.get_filename() or "").name
             if name and Path(name).suffix.lower() in ALLOWED_EXTENSIONS:
                 attachments.append(GmailAttachment(name, part.get_content_type(), part.get_payload(decode=True) or b""))
-        return GmailMessage(uid, str(message.get("From", "")), str(message.get("Subject", "")), attachments)
+        body = ""
+        selected = message.get_body(preferencelist=("plain", "html")) if message.is_multipart() else message
+        if selected:
+            try:
+                content = selected.get_content()
+                if selected.get_content_type() == "text/html":
+                    parser = _HTMLText()
+                    parser.feed(str(content))
+                    body = "\n".join(parser.parts)
+                else:
+                    body = str(content)
+            except (LookupError, UnicodeError):
+                body = ""
+        raw_date = str(message.get("Date", ""))
+        try:
+            date = parsedate_to_datetime(raw_date).isoformat() if raw_date else ""
+        except (TypeError, ValueError, OverflowError):
+            date = raw_date
+        return GmailMessage(uid, str(message.get("From", "")), str(message.get("Subject", "")), attachments, str(message.get("To", "")), date, body.strip()[:50000])
 
     def save(self, job_id: str, attachment: GmailAttachment, max_mb: int = 25) -> Path:
         validate_attachment(attachment)
@@ -152,13 +230,16 @@ def validate_attachment(attachment: GmailAttachment) -> None:
     if suffix not in ALLOWED_EXTENSIONS or mime not in ALLOWED_MIME[suffix]:
         raise ValueError(f"Unsupported attachment type: {attachment.name} ({attachment.mime_type})")
     valid = False
-    if suffix == ".xlsx":
+    if suffix in {".docx", ".xlsx", ".pptx"}:
         try:
-            with zipfile.ZipFile(BytesIO(attachment.data)) as workbook:
-                names = set(workbook.namelist())
-                valid = {"[Content_Types].xml", "xl/workbook.xml"} <= names and sum(item.file_size for item in workbook.infolist()) <= 200 * 1024 * 1024
+            with zipfile.ZipFile(BytesIO(attachment.data)) as document:
+                names = set(document.namelist())
+                required = {".docx": "word/document.xml", ".xlsx": "xl/workbook.xml", ".pptx": "ppt/presentation.xml"}[suffix]
+                valid = {"[Content_Types].xml", required} <= names and sum(item.file_size for item in document.infolist()) <= 200 * 1024 * 1024
         except zipfile.BadZipFile:
             pass
+    elif suffix in {".doc", ".xls", ".ppt"}:
+        valid = attachment.data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
     elif suffix == ".pdf":
         valid = b"%PDF-" in attachment.data[:1024]
     elif suffix == ".png":

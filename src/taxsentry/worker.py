@@ -9,7 +9,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from .config import RUNTIME_DIR, load_config
+from .config import RUNTIME_DIR, load_config, save_config
+from .gmail import GmailClient
 from .workflow import TaxSentryWorkflow
 
 
@@ -41,6 +42,9 @@ async def run_worker(*, once: bool = False, stop: asyncio.Event | None = None, n
     if not settings.get("gmail", {}).get("enabled", True):
         console.print("[red]Gmail đang tắt / Gmail is disabled. Chạy `taxsentry setup` và chọn Full Agent hoặc Email Agent.[/]")
         return 2
+    if settings["gmail"].get("process_after_uid") is None:
+        settings["gmail"]["process_after_uid"] = GmailClient(settings).latest_uid()
+        save_config(settings)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:

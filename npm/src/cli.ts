@@ -14,7 +14,7 @@ if (args.length === 1 && (args[0] === "--version" || args[0] === "-V")) {
 }
 
 if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
-  console.log(`TaxSentry ${metadata.version}\n\nUsage: taxsentry [command] [options]\n\nCommands: setup, doctor, update\n\nRun taxsentry without a command to open the Financial Sentinel TUI.`);
+  console.log(`TaxSentry ${metadata.version}\n\nUsage: taxsentry [command] [options]\n\nCommands: setup, status, doctor, update\n\nRun taxsentry without a command to open the Financial Sentinel TUI.`);
   process.exit(0);
 }
 

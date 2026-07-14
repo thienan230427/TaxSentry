@@ -1,11 +1,14 @@
 import zipfile
+from contextlib import nullcontext
+from datetime import datetime
 from email.message import EmailMessage
 from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
 
-from taxsentry.gmail import GmailAttachment, GmailClient, validate_attachment
+from taxsentry.extraction import extract
+from taxsentry.gmail import GmailAttachment, GmailClient, natural_gmail_query, validate_attachment
 from taxsentry.store import JobStore
 from taxsentry.telegram import TelegramDirector
 from taxsentry.worker import run_worker
@@ -96,12 +99,61 @@ def test_gmail_imap_reads_attachments_and_applies_workflow_label():
             return "OK", []
 
     imap = Imap()
-    client = GmailClient({"gmail": {"account": "boss@gmail.com"}}, imap=imap)
+    client = GmailClient({"gmail": {"account": "boss@gmail.com", "process_after_uid": 0}}, imap=imap)
     received = client.messages()[0]
     client.label(received.id, "TaxSentry/Completed")
 
     assert received.subject == "Báo cáo" and received.attachments[0].data == b"%PDF-1.7"
     assert len(imap.stores) == len(("TaxSentry/Processing", "TaxSentry/Completed", "TaxSentry/NeedsReview", "TaxSentry/Failed"))
+
+
+def test_gmail_search_caps_results_and_reads_message_body():
+    message = EmailMessage()
+    message["From"], message["To"], message["Subject"] = "bank@example.com", "boss@gmail.com", "Giao dịch"
+    message["Date"] = "Tue, 14 Jul 2026 09:30:00 +0700"
+    message.set_content("Số dư cuối ngày")
+
+    class Imap:
+        def select(self, mailbox): return "OK", []
+        def uid(self, command, uid=None, *args):
+            if command == "search": return "OK", [b"1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25"]
+            return "OK", [(f"{uid} (RFC822)".encode(), message.as_bytes())]
+
+    client = GmailClient({"gmail": {"account": "boss@gmail.com"}}, imap=Imap())
+    found = client.search("in:inbox", limit=99)
+    assert len(found) == 20 and found[0].id == "25" and found[0].body == "Số dư cuối ngày"
+    assert client.read("7").recipient == "boss@gmail.com"
+
+
+def test_natural_gmail_query_maps_common_vietnamese_intents():
+    query = natural_gmail_query("Gmail hôm nay có thư chưa đọc, có file từ MB Bank?", now=datetime(2026, 7, 14))
+    assert query == 'in:inbox after:2026/07/14 is:unread has:attachment from:"MB Bank"'
+
+
+def test_open_xml_office_extracts_text_without_new_dependencies(tmp_path):
+    docx = tmp_path / "memo.docx"
+    with zipfile.ZipFile(docx, "w") as archive:
+        archive.writestr("[Content_Types].xml", "types")
+        archive.writestr("word/document.xml", '<w:document xmlns:w="w"><w:t>Doanh thu tăng</w:t></w:document>')
+    pptx = tmp_path / "brief.pptx"
+    with zipfile.ZipFile(pptx, "w") as archive:
+        archive.writestr("[Content_Types].xml", "types")
+        archive.writestr("ppt/presentation.xml", "presentation")
+        archive.writestr("ppt/slides/slide1.xml", '<a:sld xmlns:a="a"><a:t>Rủi ro thuế</a:t></a:sld>')
+
+    assert extract(docx, ["vie"]).content == "Doanh thu tăng"
+    assert extract(pptx, ["vie"]).content == "Rủi ro thuế"
+    validate_attachment(GmailAttachment("memo.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx.read_bytes()))
+    validate_attachment(GmailAttachment("brief.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", pptx.read_bytes()))
+
+
+def test_legacy_office_requires_libreoffice(monkeypatch, tmp_path):
+    legacy = tmp_path / "old.doc"
+    legacy.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1data")
+    monkeypatch.setattr("taxsentry.extraction.shutil.which", lambda name: None)
+    validate_attachment(GmailAttachment("old.doc", "application/msword", legacy.read_bytes()))
+    with pytest.raises(ValueError, match="LibreOffice"):
+        extract(legacy, ["vie"])
 
 
 class _Bot:
@@ -128,3 +180,27 @@ async def test_telegram_delivery_only_targets_director_ids():
 async def test_worker_rejects_chat_only_profile(monkeypatch):
     monkeypatch.setattr("taxsentry.worker.load_config", lambda: {"gmail": {"enabled": False}})
     assert await run_worker(once=True) == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_initializes_missing_uid_without_processing_history(monkeypatch):
+    settings = {"gmail": {"enabled": True, "account": "boss@gmail.com", "process_after_uid": None}, "worker": {"poll_seconds": 60}}
+    saved = []
+
+    class Gmail:
+        def __init__(self, value): pass
+        def latest_uid(self): return 88
+
+    class Workflow:
+        def __init__(self, value): self.value = value
+        async def run_once(self): return 0
+        async def close(self): pass
+
+    monkeypatch.setattr("taxsentry.worker.load_config", lambda: settings)
+    monkeypatch.setattr("taxsentry.worker.save_config", lambda value: saved.append(value.copy()))
+    monkeypatch.setattr("taxsentry.worker.GmailClient", Gmail)
+    monkeypatch.setattr("taxsentry.worker.TaxSentryWorkflow", Workflow)
+    monkeypatch.setattr("taxsentry.worker.single_instance", lambda: nullcontext())
+
+    assert await run_worker(once=True) == 0
+    assert settings["gmail"]["process_after_uid"] == 88 and saved

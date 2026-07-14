@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const repository = dirname(root);
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+copyFileSync(join(repository, "README.md"), join(root, "README.md"));
 const pythonVersion = readFileSync(join(repository, "pyproject.toml"), "utf8").match(/^version = "([^"]+)"/m)?.[1];
 const moduleVersion = readFileSync(join(repository, "src", "taxsentry", "__init__.py"), "utf8").match(/^__version__ = "([^"]+)"/m)?.[1];
 if (pkg.version !== pythonVersion || pkg.version !== moduleVersion) throw new Error(`Version mismatch: npm=${pkg.version}, pyproject=${pythonVersion}, module=${moduleVersion}`);

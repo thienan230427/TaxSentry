@@ -3,12 +3,12 @@ import pytest
 from taxsentry.tui import _parser, doctor, main
 
 
-@pytest.mark.parametrize(("arguments", "command"), [(["setup"], "setup"), (["doctor", "--fix"], "doctor"), (["update"], "update"), (["update", "--main"], "update")])
+@pytest.mark.parametrize(("arguments", "command"), [(["setup"], "setup"), (["status"], "status"), (["doctor", "--fix"], "doctor"), (["update"], "update"), (["update", "--main"], "update")])
 def test_only_terminal_runtime_commands_are_public(arguments, command):
     assert _parser().parse_args(arguments).command == command
 
 
-@pytest.mark.parametrize("command", ["start", "dashboard", "chat", "gateway", "worker", "status", "jobs", "report", "auth", "service"])
+@pytest.mark.parametrize("command", ["start", "dashboard", "chat", "gateway", "worker", "jobs", "report", "auth", "service"])
 def test_removed_commands_are_rejected(command):
     with pytest.raises(SystemExit):
         _parser().parse_args([command])

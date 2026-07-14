@@ -239,6 +239,7 @@ class SetupSelection:
     codex_auth: str = ""
     gmail_auth: str = ""
     gmail_password: str = ""
+    gmail_reset_uid: bool = False
     telegram_auth: str = ""
     telegram_token: str = ""
 
@@ -389,6 +390,7 @@ def _pick_model(ui: WizardUI, config: dict[str, Any], kind: str, codex_models=()
 
 def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
     candidate = deepcopy(config)
+    gmail_was_enabled = bool(candidate.get("gmail", {}).get("enabled", True))
     profile = ui.choose(
         "Hồ sơ / Profile",
         "Chọn cách dùng TaxSentry / Choose how TaxSentry will be used",
@@ -416,10 +418,9 @@ def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
 
     if candidate["gmail"]["enabled"]:
         gmail = candidate["gmail"]
+        previous_account = str(gmail.get("account", "")).casefold()
         gmail["account"] = ui.text("Gmail", "Tài khoản nhận báo cáo / Report inbox", str(gmail.get("account", "")), _email, "Nhập địa chỉ email hợp lệ / Enter a valid email")
-        senders = ui.text("Trusted Senders", "Email được phép, phân cách dấu phẩy / Allowed emails, comma-separated", ",".join(gmail.get("trusted_senders", [])), lambda value: bool(_csv(value)) and all(_email(item) for item in _csv(value)), "Cần ít nhất một email hợp lệ / At least one valid email is required")
-        gmail["trusted_senders"] = [item.casefold() for item in _csv(senders)]
-        candidate["director"]["email"] = ui.text("Director", "Email Giám đốc / Director email", str(candidate["director"].get("email", "")), _email, "Nhập địa chỉ email hợp lệ / Enter a valid email")
+        selection.gmail_reset_uid = not gmail_was_enabled or previous_account != gmail["account"].casefold() or gmail.get("process_after_uid") is None
         current_poll = int(candidate["worker"].get("poll_seconds", 60))
         poll = ui.choose("Polling", "Chu kỳ quét Gmail / Gmail polling interval", [(30, "30 giây\n30 seconds"), (60, "60 giây — khuyên dùng\n60 seconds — recommended"), (300, "5 phút\n5 minutes"), (0, "Tùy chỉnh\nCustom")], current_poll if current_poll in {30, 60, 300} else 0)
         if poll == 0:
@@ -518,7 +519,10 @@ def authenticate_selection(selection: SetupSelection, console: Console) -> int:
 
     if config["gmail"]["enabled"]:
         try:
-            GmailClient(config).authenticate(app_password=selection.gmail_password, store=False)
+            gmail = GmailClient(config)
+            gmail.authenticate(app_password=selection.gmail_password, store=False)
+            if selection.gmail_reset_uid:
+                config["gmail"]["process_after_uid"] = gmail.latest_uid()
             statuses.append(("Gmail", "OK", config["gmail"]["account"]))
         except Exception as exc:
             statuses.append(("Gmail", "FAIL", f"{exc}; run `taxsentry auth gmail`"))

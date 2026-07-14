@@ -23,7 +23,7 @@ class ChatService:
         self.history: list[dict[str, str]] = [{"role": "system", "content": SYSTEM}]
         self._turn_lock = asyncio.Lock()
 
-    async def stream(self, text: str, *, source: str = "terminal") -> AsyncIterator[AgentEvent]:
+    async def stream(self, text: str, *, source: str = "terminal", context: str = "") -> AsyncIterator[AgentEvent]:
         async with self._turn_lock:
             self.history.append({"role": "user", "content": text})
             if hasattr(self.store, "add_message"):
@@ -31,7 +31,8 @@ class ChatService:
             if source != "terminal" and hasattr(self.store, "event"):
                 self.store.event(None, "chat_source", {"session_id": self.session_id, "source": source})
             chunks: list[str] = []
-            async for event in self.provider.stream_turn(self.history):
+            messages = self.history if not context else [*self.history[:-1], {"role": "user", "content": f"{text}\n\n{context}"}]
+            async for event in self.provider.stream_turn(messages):
                 if event.type == EventType.TEXT_DELTA:
                     chunks.append(event.text)
                 yield event
