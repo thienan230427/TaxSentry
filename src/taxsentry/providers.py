@@ -207,7 +207,7 @@ class CodexAppServerProvider:
             await self.start()
         new_thread = not self.thread_id
         if not self.thread_id:
-            result = await self._request("thread/start", {"cwd": str(self.cwd), "approvalPolicy": "never", "sandbox": "readOnly", "serviceName": "taxsentry" , **({"model": self.model} if self.model else {})})
+            result = await self._request("thread/start", {"cwd": str(self.cwd), "approvalPolicy": "never", "sandbox": "read-only", "serviceName": "taxsentry" , **({"model": self.model} if self.model else {})})
             self.thread_id = result["thread"]["id"]
         prompt = messages[-1]["content"]
         if new_thread and messages and messages[0].get("role") == "system":
@@ -273,6 +273,9 @@ def create_provider(settings: dict[str, Any]):
 
 def _codex_command() -> str:
     command = os.getenv("CODEX_CLI_PATH") or shutil.which("codex")
+    if not command and (local_app_data := os.getenv("LOCALAPPDATA")):
+        launchers = sorted((Path(local_app_data) / "OpenAI" / "Codex" / "bin").glob("*/codex.exe"), key=lambda path: path.stat().st_mtime, reverse=True)
+        command = str(launchers[0]) if launchers else ""
     if not command:
         raise ProviderError("Codex CLI not found. Install Codex or set CODEX_CLI_PATH.")
     return command

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -11,7 +12,7 @@ SYSTEM = "Bạn là TaxSentry, trợ lý CFO và thuế Việt Nam. Xưng em, g�
 
 
 class ChatService:
-    """Shared chat runtime for the terminal and Control Center."""
+    """One chat session shared by the terminal and Telegram."""
 
     def __init__(self, settings: dict[str, Any], store: JobStore | None = None, provider_factory=create_provider):
         self.settings = settings
@@ -20,21 +21,25 @@ class ChatService:
         self.provider = provider_factory(settings)
         self.session_id = self.store.create_session(settings["provider"]["kind"]) if hasattr(self.store, "create_session") else "terminal"
         self.history: list[dict[str, str]] = [{"role": "system", "content": SYSTEM}]
+        self._turn_lock = asyncio.Lock()
 
-    async def stream(self, text: str) -> AsyncIterator[AgentEvent]:
-        self.history.append({"role": "user", "content": text})
-        if hasattr(self.store, "add_message"):
-            self.store.add_message(self.session_id, "user", text)
-        chunks: list[str] = []
-        async for event in self.provider.stream_turn(self.history):
-            if event.type == EventType.TEXT_DELTA:
-                chunks.append(event.text)
-            yield event
-        if chunks:
-            content = "".join(chunks)
-            self.history.append({"role": "assistant", "content": content})
+    async def stream(self, text: str, *, source: str = "terminal") -> AsyncIterator[AgentEvent]:
+        async with self._turn_lock:
+            self.history.append({"role": "user", "content": text})
             if hasattr(self.store, "add_message"):
-                self.store.add_message(self.session_id, "assistant", content)
+                self.store.add_message(self.session_id, "user", text)
+            if source != "terminal" and hasattr(self.store, "event"):
+                self.store.event(None, "chat_source", {"session_id": self.session_id, "source": source})
+            chunks: list[str] = []
+            async for event in self.provider.stream_turn(self.history):
+                if event.type == EventType.TEXT_DELTA:
+                    chunks.append(event.text)
+                yield event
+            if chunks:
+                content = "".join(chunks)
+                self.history.append({"role": "assistant", "content": content})
+                if hasattr(self.store, "add_message"):
+                    self.store.add_message(self.session_id, "assistant", content)
 
     async def switch_provider(self, kind: str) -> None:
         await self.provider.close()
@@ -54,3 +59,5 @@ class ChatService:
 
     async def close(self) -> None:
         await self.provider.close()
+        if hasattr(self.store, "close"):
+            self.store.close()

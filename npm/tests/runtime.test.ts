@@ -59,8 +59,8 @@ test("forwardToPython preserves unicode arguments and exit code", async () => {
     return child;
   }) as never;
 
-  assert.equal(await forwardToPython("python", ["report", "báo cáo tháng 5"], spawn), 7);
-  assert.deepEqual(invocation, ["python", "-m", "taxsentry", "report", "báo cáo tháng 5"]);
+  assert.equal(await forwardToPython("python", ["setup", "báo cáo tháng 5"], spawn), 7);
+  assert.deepEqual(invocation, ["python", "-m", "taxsentry", "setup", "báo cáo tháng 5"]);
 });
 
 test("npm help lists every public Python command without bootstrapping", () => {
@@ -68,6 +68,8 @@ test("npm help lists every public Python command without bootstrapping", () => {
   const result = spawnSync(process.execPath, [cli, "--help"], { encoding: "utf8" });
 
   assert.equal(result.status, 0);
-  for (const command of ["chat", "start", "dashboard", "setup", "doctor", "status", "worker", "gateway", "jobs", "report", "service", "auth", "update"])
+  for (const command of ["setup", "doctor", "update"])
     assert.match(result.stdout, new RegExp(`\\b${command}\\b`));
+  for (const command of ["start", "dashboard", "chat", "gateway", "worker", "service"])
+    assert.doesNotMatch(result.stdout, new RegExp(`\\b${command}\\b`));
 });

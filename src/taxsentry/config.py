@@ -23,14 +23,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "gmail": {"enabled": True, "account": "", "trusted_senders": []},
     "director": {"email": "", "telegram_chat_ids": []},
     "telegram": {"enabled": False},
-    "worker": {"poll_seconds": 60, "max_retries": 3, "max_attachment_mb": 25, "gateway": True},
+    "worker": {"poll_seconds": 60, "max_retries": 3, "max_attachment_mb": 25},
     "update": {"source": "git+https://github.com/thienan230427/TaxSentry.git"},
     "report": {"language": "vi", "minimum_confidence": 0.70},
     "ocr": {"languages": ["vie", "eng"], "minimum_confidence": 70.0},
     "memory": {"max_facts": 50, "max_turns": 12, "session_title": "TaxSentry session"},
     "jobs": {"tracking_enabled": True, "retry_limit": 3, "default_state": "queued", "needs_human_review_on_missing_data": True, "auto_send_email": True, "auto_send_telegram": True},
-    "integrations": {"telegram": {"enabled": False, "bot_token": "", "admin_chat_id": ""}},
-    "ui": {"theme": "sentinel", "port": 8765, "show_banner": True}, "extra_env": {},
+    "ui": {"theme": "sentinel", "show_banner": True}, "extra_env": {},
 }
 
 
@@ -85,7 +84,9 @@ def save_config(config: dict[str, Any]) -> None:
     payload.get("provider", {}).pop("api_key", None)
     payload.get("gmail", {}).pop("auth_mode", None)
     payload.get("gmail", {}).pop("oauth_client_file", None)
-    payload.get("integrations", {}).get("telegram", {}).pop("bot_token", None)
+    payload.pop("integrations", None)
+    payload.get("worker", {}).pop("gateway", None)
+    payload.get("ui", {}).pop("port", None)
     temp = CONFIG_FILE.with_suffix(".tmp")
     temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(temp, CONFIG_FILE)

@@ -1,88 +1,67 @@
 import pytest
 
-from taxsentry.tui import _parser, doctor, main, report
+from taxsentry.tui import _parser, doctor, main
 
 
-@pytest.mark.parametrize(
-    ("arguments", "command"),
-    [
-        (["chat"], "chat"),
-        (["start"], "start"),
-        (["dashboard", "--no-open", "--port", "9000"], "dashboard"),
-        (["gateway"], "gateway"),
-        (["update"], "update"),
-        (["update", "--main"], "update"),
-        (["setup"], "setup"),
-        (["status"], "status"),
-        (["doctor", "--fix"], "doctor"),
-        (["jobs"], "jobs"),
-        (["report", "--send"], "report"),
-        (["worker", "run", "--once"], "worker"),
-        (["auth", "codex", "--device-code"], "auth"),
-        (["service", "status"], "service"),
-    ],
-)
-def test_all_commands_are_public(arguments, command):
-    parser = _parser()
-    assert parser.parse_args(arguments).command == command
+@pytest.mark.parametrize(("arguments", "command"), [(["setup"], "setup"), (["doctor", "--fix"], "doctor"), (["update"], "update"), (["update", "--main"], "update")])
+def test_only_terminal_runtime_commands_are_public(arguments, command):
+    assert _parser().parse_args(arguments).command == command
+
+
+@pytest.mark.parametrize("command", ["start", "dashboard", "chat", "gateway", "worker", "status", "jobs", "report", "auth", "service"])
+def test_removed_commands_are_rejected(command):
+    with pytest.raises(SystemExit):
+        _parser().parse_args([command])
 
 
 def test_update_flag_is_dispatched(monkeypatch):
     calls = []
     monkeypatch.setattr("taxsentry.tui.perform_update", lambda **kwargs: calls.append(kwargs) or (0, "ok"))
-
     assert main(["update", "--main"]) == 0
     assert calls == [{"main": True}]
 
 
-def test_start_dispatches_control_center(monkeypatch):
+def test_bare_command_opens_cockpit(monkeypatch):
     calls = []
-    monkeypatch.setattr("taxsentry.tui.load_config", lambda: {"ui": {"port": 8765}})
-    monkeypatch.setattr("taxsentry.tui.run_dashboard", lambda **kwargs: calls.append(kwargs) or 0)
 
-    assert main(["start", "--no-open", "--port", "9000"]) == 0
-    assert calls == [{"port": 9000, "open_browser": False}]
+    class App:
+        def __init__(self, settings):
+            calls.append(settings)
+
+        async def run(self):
+            return 0
+
+    settings = {"configured": True}
+    monkeypatch.setattr("taxsentry.tui.load_config", lambda: settings)
+    monkeypatch.setattr("taxsentry.tui.Cockpit", App)
+    assert main([]) == 0 and calls == [settings]
+
+
+def test_bare_command_runs_setup_when_unconfigured(monkeypatch):
+    states = iter([{"configured": False}, {"configured": True}])
+    calls = []
+
+    class App:
+        def __init__(self, settings):
+            calls.append(settings)
+
+        async def run(self):
+            return 0
+
+    monkeypatch.setattr("taxsentry.tui.load_config", lambda: next(states))
+    monkeypatch.setattr("taxsentry.tui.setup", lambda: calls.append("setup") or 0)
+    monkeypatch.setattr("taxsentry.tui.Cockpit", App)
+    assert main([]) == 0
+    assert calls[0] == "setup" and calls[1]["configured"] is True
 
 
 def test_doctor_skips_gmail_and_ocr_for_chat_profile(monkeypatch, tmp_path):
     settings = {
         "provider": {"kind": "lmstudio", "model": "", "base_url": "http://localhost"},
-        "gmail": {"enabled": False},
-        "telegram": {"enabled": False},
-        "ocr": {"languages": ["vie", "eng"]},
-        "director": {},
+        "gmail": {"enabled": False}, "telegram": {"enabled": False}, "ocr": {"languages": ["vie", "eng"]}, "director": {},
     }
     monkeypatch.setattr("taxsentry.tui.load_config", lambda: settings)
     monkeypatch.setattr("taxsentry.tui.APP_HOME", tmp_path)
     monkeypatch.setattr("taxsentry.tui.health_check", lambda spec: (True, "ok"))
     monkeypatch.setattr("taxsentry.tui.get_secret", lambda name: pytest.fail("disabled integrations must not read secrets"))
     assert doctor() == 0
-
-
-def test_manual_report_send_requires_confirmation_and_audits(monkeypatch, tmp_path):
-    pdf = tmp_path / "report.pdf"
-    pdf.write_bytes(b"%PDF-1.7")
-    deliveries = []
-
-    class Store:
-        def latest_report(self):
-            return {"job_id": "job-1", "subject": "Tháng 5", "pdf_path": str(pdf), "payload": {"executive_summary": "Ổn định", "performance": [], "tax_risks": [], "missing_data": [], "recommendations": [], "confidence": 0.9}}
-
-        def delivery(self, *args):
-            deliveries.append(args)
-
-    class Gmail:
-        def send_report(self, *args, **kwargs):
-            return "gmail-1"
-
-    class Telegram:
-        async def notify(self, *args):
-            return ["telegram-1"]
-
-    monkeypatch.setattr("taxsentry.tui.JobStore", Store)
-    monkeypatch.setattr("taxsentry.tui.Confirm.ask", lambda *args: True)
-    monkeypatch.setattr("taxsentry.tui.load_config", lambda: {"director": {"email": "director@example.com"}})
-    monkeypatch.setattr("taxsentry.tui.GmailClient", lambda settings: Gmail())
-    monkeypatch.setattr("taxsentry.tui.TelegramDirector", lambda settings: Telegram())
-    assert report(send=True) == 0
-    assert [item[1] for item in deliveries] == ["gmail", "telegram"]

@@ -214,6 +214,27 @@ def test_codex_oauth_completes_before_model_list(monkeypatch):
     assert events.index("login-completed:login-1") < events.index("models")
 
 
+def test_codex_choices_do_not_nest_the_oauth_event_loop(monkeypatch):
+    class Client:
+        async def account(self, refresh=False):
+            return {"account": {"type": "chatgpt"}}
+
+        async def models(self):
+            return []
+
+        async def close(self):
+            pass
+
+    class LoopCheckingUI(FakeUI):
+        def choose(self, *args, **kwargs):
+            asyncio.run(asyncio.sleep(0))
+            return "existing"
+
+    monkeypatch.setattr("taxsentry.setup_wizard.CodexAppServerProvider", Client)
+    account, models = asyncio.run(_codex_session(LoopCheckingUI()))
+    assert account["account"]["type"] == "chatgpt" and models == []
+
+
 def test_codex_oauth_cancel_sends_login_cancel(monkeypatch):
     cancelled = []
 

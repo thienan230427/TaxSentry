@@ -1,23 +1,22 @@
 from __future__ import annotations
 
-import json
+from collections.abc import Callable
 from pathlib import Path
 
+from taxsentry.chat_service import ChatService
 from taxsentry.config import load_config
 from taxsentry.events import EventType
-from taxsentry.gmail import GmailClient
-from taxsentry.providers import create_provider
 from taxsentry.secrets import get_secret
 from taxsentry.store import JobStore
 
-COMMANDS = ("status", "jobs", "latest", "report", "retry", "approve", "cancel")
+COMMANDS = ("status", "jobs", "report", "retry", "approve")
 
 
 def _allowed(update, settings) -> bool:
     return str(update.effective_chat.id) in {str(item) for item in settings["director"].get("telegram_chat_ids", [])}
 
 
-def build_application():
+def build_application(chat: ChatService, notify: Callable[[str], None] | None = None):
     from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
     settings, store = load_config(), JobStore()
@@ -30,11 +29,6 @@ def build_application():
         if _allowed(update, settings):
             jobs = store.recent_jobs(5)
             await update.message.reply_text("\n".join(f"{j['id'][:8]} · {j['state']} · {j['subject']}" for j in jobs) or "Chưa có job.")
-
-    async def latest(update, context):
-        if _allowed(update, settings):
-            report = store.latest_report()
-            await update.message.reply_text(report["payload"]["executive_summary"] if report else "Chưa có báo cáo.")
 
     async def report(update, context):
         if not _allowed(update, settings): return
@@ -53,11 +47,7 @@ def build_application():
             await update.message.reply_text("Không tìm thấy job.")
             return
         try:
-            if action == "cancel":
-                store.transition(job["id"], "failed", error="Cancelled by Director")
-                GmailClient(settings).label(job["gmail_message_id"], "TaxSentry/Failed")
-            else:
-                store.requeue(job["id"], approved=action == "approve")
+            store.requeue(job["id"], approved=action == "approve")
         except ValueError as exc:
             await update.message.reply_text(str(exc))
             return
@@ -69,36 +59,28 @@ def build_application():
     async def approve(update, context):
         await change_job(update, context, "approve")
 
-    async def cancel(update, context):
-        await change_job(update, context, "cancel")
-
-    async def chat(update, context):
+    async def chat_message(update, context):
         if not _allowed(update, settings): return
-        latest_report = store.latest_report()
-        grounding = json.dumps(latest_report["payload"], ensure_ascii=False) if latest_report else "Không có báo cáo"
-        prompt = f"Dữ liệu báo cáo gần nhất: {grounding[:30000]}\n\nCâu hỏi Giám đốc: {update.message.text}\nLuôn nêu độ tin cậy."
+        chat_id = str(update.effective_chat.id)
+        if notify:
+            notify(f"◇ TELEGRAM · {chat_id} › {update.message.text}")
         chunks = []
-        provider = create_provider(settings)
-        try:
-            async for event in provider.stream_turn([{"role": "user", "content": prompt}]):
-                if event.type == EventType.TEXT_DELTA: chunks.append(event.text)
-        finally:
-            await provider.close()
+        async for event in chat.stream(update.message.text, source=f"telegram:{chat_id}"):
+            if event.type == EventType.TEXT_DELTA:
+                chunks.append(event.text)
+            elif event.type == EventType.ERROR:
+                chunks.append(f"Lỗi: {event.text}")
         text = "".join(chunks) or "Em chưa thể trả lời vì provider không có phản hồi."
         for start in range(0, len(text), 4096): await update.message.reply_text(text[start:start + 4096])
 
-    for name, handler in zip(COMMANDS, (status, status, latest, report, retry, approve, cancel), strict=True):
+    for name, handler in zip(COMMANDS, (status, status, report, retry, approve), strict=True):
         app.add_handler(CommandHandler(name, handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_message))
     return app
 
 
-def main() -> None:
-    build_application().run_polling()
-
-
-async def serve(stop) -> None:
-    app = build_application()
+async def serve(stop, chat: ChatService, notify: Callable[[str], None] | None = None) -> None:
+    app = build_application(chat, notify)
     async with app:
         await app.start()
         await app.updater.start_polling()
@@ -107,6 +89,3 @@ async def serve(stop) -> None:
         finally:
             await app.updater.stop()
             await app.stop()
-
-
-if __name__ == "__main__": main()

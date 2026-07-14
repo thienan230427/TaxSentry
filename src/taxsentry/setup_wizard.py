@@ -296,7 +296,8 @@ async def _login_codex(ui: WizardUI, client: CodexAppServerProvider, mode: str) 
             raise
         except Exception as exc:
             ui.message("Codex OAuth", str(exc))
-            action = ui.choose(
+            action = await asyncio.to_thread(
+                ui.choose,
                 "Lỗi đăng nhập / Login failed",
                 "Chọn cách tiếp tục / Choose how to continue",
                 [("retry", "Thử lại\nRetry"), ("device", "Dùng mã thiết bị\nUse device code"), ("cancel", "Hủy\nCancel")],
@@ -319,7 +320,7 @@ async def _codex_session(ui: WizardUI) -> tuple[dict[str, Any], list[tuple[str, 
         if existing:
             values.append(("existing", f"Dùng phiên hiện tại — {identity}{f' ({plan})' if plan else ''}\nUse existing session"))
         values.extend([("browser", "Đăng nhập bằng trình duyệt\nBrowser OAuth"), ("device", "Đăng nhập bằng mã thiết bị\nDevice code login"), ("cancel", "Hủy\nCancel")])
-        mode = ui.choose("Xác thực Codex / Codex Authentication", "Chọn phương thức đăng nhập / Select authentication method", values, "existing" if existing else "browser")
+        mode = await asyncio.to_thread(ui.choose, "Xác thực Codex / Codex Authentication", "Chọn phương thức đăng nhập / Select authentication method", values, "existing" if existing else "browser")
         if mode == "cancel":
             raise Cancelled
         if mode != "existing":
@@ -331,7 +332,8 @@ async def _codex_session(ui: WizardUI) -> tuple[dict[str, Any], list[tuple[str, 
                 return account, await client.models()
             except Exception as exc:
                 ui.message("Danh sách model / Model list", str(exc))
-                action = ui.choose(
+                action = await asyncio.to_thread(
+                    ui.choose,
                     "Không lấy được model / Models unavailable",
                     "Chọn cách tiếp tục / Choose how to continue",
                     [("retry", "Thử lại\nRetry"), ("login", "Đăng nhập lại\nReauthenticate"), ("default", "Dùng mặc định Codex\nUse Codex default"), ("cancel", "Hủy\nCancel")],
@@ -395,7 +397,6 @@ def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
     )
     candidate["gmail"]["enabled"] = profile != "chat"
     candidate["telegram"]["enabled"] = profile == "full"
-    candidate["integrations"]["telegram"]["enabled"] = profile == "full"
 
     kind = ui.choose("Provider", "Chọn AI provider / Select AI provider", [("codex", "Codex / ChatGPT — official App Server"), ("lmstudio", "LM Studio — local OpenAI-compatible server")], candidate["provider"].get("kind", "lmstudio"))
     candidate["provider"]["kind"] = kind
@@ -549,5 +550,5 @@ def authenticate_selection(selection: SetupSelection, console: Console) -> int:
     for row in statuses:
         table.add_row(*row)
     console.print(table)
-    console.print("Next / Tiếp theo: `taxsentry doctor` rồi / then `taxsentry start`")
+    console.print("Next / Tiếp theo: `taxsentry doctor` rồi chạy / then run `taxsentry`")
     return int(failed)

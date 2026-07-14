@@ -15,7 +15,7 @@ const vendor = join(root, "dist", "vendor");
 mkdirSync(vendor, { recursive: true });
 const build = mkdtempSync(join(tmpdir(), "taxsentry-wheel-"));
 try {
-  execFileSync("uv", ["build", "--wheel", repository, "--out-dir", build], {
+  execFileSync("uv", ["build", repository, "--out-dir", build], {
     stdio: "inherit",
     env: { ...process.env, UV_CACHE_DIR: join(tmpdir(), "taxsentry-uv-cache") },
   });

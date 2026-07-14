@@ -1,6 +1,6 @@
 {
   "name": "taxsentry",
-  "version": "2.0.3",
+  "version": "2.0.7",
   "description": "TypeScript launcher for the TaxSentry Python agent",
   "type": "module",
   "bin": {
@@ -13,13 +13,10 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "ui:build": "vite build --config vite.config.ts",
-    "ui:typecheck": "tsc -p ui/tsconfig.json --noEmit",
-    "ui:test": "vitest run --config vitest.config.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && npm run ui:typecheck",
-    "test": "npm run build && node --test dist/tests/*.test.js && npm run ui:test",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/tests/*.test.js",
     "smoke": "node scripts/smoke-install.mjs",
-    "prepack": "npm run ui:build && node scripts/prepack.mjs && npm run build"
+    "prepack": "node scripts/prepack.mjs && npm run build"
   },
   "engines": {
     "node": ">=22"
@@ -38,13 +35,6 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "@types/dompurify": "^3.0.5",
-    "jsdom": "^26.1.0",
-    "lit": "^3.3.1",
-    "marked": "^16.1.1",
-    "dompurify": "^3.2.6",
-    "typescript": "^5.8.0",
-    "vite": "^7.1.0",
-    "vitest": "^3.2.4"
+    "typescript": "^5.8.0"
   }
 }

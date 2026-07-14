@@ -133,3 +133,10 @@ class TaxSentryWorkflow:
     def latest_markdown(self) -> str:
         latest = self.store.latest_report()
         return markdown(latest["payload"]) if latest else "Chưa có báo cáo."
+
+    async def close(self) -> None:
+        close = getattr(self.provider, "close", None)
+        if close:
+            await close()
+        if hasattr(self.store, "close"):
+            self.store.close()

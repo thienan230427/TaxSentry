@@ -1,16 +1,36 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
 
 from taxsentry.bot import telegram_bot
-from taxsentry.cockpit import SYSTEM, Cockpit
+from taxsentry.chat_service import ChatService
+from taxsentry.cockpit import COMMANDS, Cockpit, banner_text
+from taxsentry.events import AgentEvent, EventType
+
+
+def settings(**overrides):
+    value = {
+        "configured": True,
+        "provider": {"kind": "lmstudio", "model": "local"},
+        "gmail": {"enabled": False},
+        "telegram": {"enabled": False},
+        "worker": {"poll_seconds": 60},
+    }
+    value.update(overrides)
+    return value
 
 
 class FakeProvider:
     def __init__(self):
         self.closed = False
+
+    async def stream_turn(self, messages):
+        yield AgentEvent(EventType.TEXT_DELTA, text="Xin chào Sếp")
+        yield AgentEvent(EventType.TURN_COMPLETED)
 
     async def close(self):
         self.closed = True
@@ -33,125 +53,130 @@ class FakeStore:
     def latest_report(self):
         return {"payload": {"executive_summary": "Doanh thu ổn định"}}
 
+    def create_session(self, provider):
+        return "abcd-session"
 
-class FakePrompt:
-    def __init__(self, **kwargs):
+    def add_message(self, *args):
+        pass
+
+    def event(self, *args):
+        pass
+
+    def clear_session(self, *args):
+        pass
+
+    def close(self):
         pass
 
 
-@pytest.mark.asyncio
-async def test_cockpit_switches_provider_and_closes_previous(monkeypatch):
-    old, new = FakeProvider(), FakeProvider()
-    monkeypatch.setattr("taxsentry.cockpit.JobStore", FakeStore)
-    monkeypatch.setattr("taxsentry.cockpit.PromptSession", FakePrompt)
-    monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda settings: new if settings["provider"]["kind"] == "codex" else old)
-    monkeypatch.setattr("taxsentry.cockpit.save_config", lambda settings: None)
-    cockpit = Cockpit({"configured": True, "provider": {"kind": "lmstudio", "model": ""}})
-
-    await cockpit._command("/provider codex")
-
-    assert old.closed
-    assert cockpit.provider is new
+class FakePrompt:
+    def __init__(self, **kwargs):
+        self.app = SimpleNamespace(invalidate=lambda: None)
 
 
-@pytest.mark.asyncio
-async def test_cockpit_approve_and_clear(monkeypatch):
-    provider, store = FakeProvider(), FakeStore()
-    monkeypatch.setattr("taxsentry.cockpit.JobStore", lambda: store)
-    monkeypatch.setattr("taxsentry.cockpit.PromptSession", FakePrompt)
-    monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda settings: provider)
-    cockpit = Cockpit({"configured": True, "provider": {"kind": "lmstudio", "model": ""}})
-    cockpit.history.append({"role": "user", "content": "test"})
-
-    await cockpit._command("/approve job-123")
-    await cockpit._command("/clear")
-
-    assert store.requeued == [("job-123456", True)]
-    assert cockpit.history == [{"role": "system", "content": SYSTEM}]
+def test_banner_is_responsive_and_has_ascii_fallback():
+    full = banner_text(settings(gmail={"enabled": True}, telegram={"enabled": True}), 120)
+    medium = banner_text(settings(), 80)
+    narrow = banner_text(settings(), 60)
+    ascii_banner = banner_text(settings(), 120, unicode=False)
+    assert len(full.splitlines()) == 4 and "╔╦╗" in full and "Telegram" in full
+    assert len(medium.splitlines()) == 3 and medium.startswith("◆ TAXSENTRY")
+    assert narrow == "◆ TAXSENTRY · FINANCIAL SENTINEL"
+    assert ascii_banner == "TAXSENTRY · FINANCIAL SENTINEL"
 
 
 @pytest.mark.asyncio
-async def test_cockpit_command_surface_and_invalid_states(monkeypatch):
+async def test_cockpit_commands_are_compact(monkeypatch):
     provider, store, output = FakeProvider(), FakeStore(), []
     monkeypatch.setattr("taxsentry.cockpit.JobStore", lambda: store)
     monkeypatch.setattr("taxsentry.cockpit.PromptSession", FakePrompt)
-    monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda settings: provider)
-    monkeypatch.setattr("taxsentry.cockpit.describe_config", lambda settings: "configured")
-    cockpit = Cockpit({"configured": True, "provider": {"kind": "lmstudio", "model": ""}})
+    monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda value: provider)
+    monkeypatch.setattr("taxsentry.cockpit.describe_config", lambda value: "configured")
+    cockpit = Cockpit(settings())
     cockpit.console = SimpleNamespace(print=lambda *args, **kwargs: output.append(args[0] if args else ""))
-
-    for command in ("/help", "/status", "/auth", "/jobs", "/latest", "/report", "/provider invalid", "/retry job-123", "/unknown"):
+    for command in ("/help", "/status", "/jobs", "/report", "/retry job", "/approve job", "/new", "/unknown"):
         await cockpit._command(command)
-
-    assert store.requeued == [("job-123456", False)]
-    assert "configured" in output
-    assert "Doanh thu ổn định" in output
-    assert any("Lệnh chưa hỗ trợ" in str(item) for item in output)
-
-    store.job["state"] = "completed"
-    await cockpit._command("/retry job-123")
-    assert any("Không tìm thấy job" in str(item) for item in output)
+    assert COMMANDS == ["/help", "/status", "/jobs", "/report", "/retry", "/approve", "/new", "/exit"]
+    assert store.requeued == [("job-123456", False), ("job-123456", True)]
+    assert "configured" in output and "Doanh thu ổn định" in output
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", ["/exit", "/quit"])
-async def test_cockpit_exit_aliases_close_provider(monkeypatch, command):
+async def test_chat_service_serializes_terminal_and_telegram_turns():
+    active = 0
+    overlaps = []
+
+    class Provider(FakeProvider):
+        async def stream_turn(self, messages):
+            nonlocal active
+            active += 1
+            overlaps.append(active)
+            await asyncio.sleep(0.01)
+            yield AgentEvent(EventType.TEXT_DELTA, text=messages[-1]["content"])
+            active -= 1
+
+    store = FakeStore()
+    chat = ChatService(settings(), store=store, provider_factory=lambda value: Provider())
+
+    async def consume(text, source):
+        return [event async for event in chat.stream(text, source=source)]
+
+    await asyncio.gather(consume("terminal", "terminal"), consume("telegram", "telegram:42"))
+    assert overlaps == [1, 1]
+    assert [item["content"] for item in chat.history if item["role"] == "user"] == ["terminal", "telegram"]
+
+
+@pytest.mark.asyncio
+async def test_exit_closes_provider_without_background_services(monkeypatch):
     provider = FakeProvider()
 
-    class ExitPrompt:
+    class ExitPrompt(FakePrompt):
         async def prompt_async(self, *args, **kwargs):
-            return command
+            return "/exit"
 
     monkeypatch.setattr("taxsentry.cockpit.JobStore", FakeStore)
     monkeypatch.setattr("taxsentry.cockpit.PromptSession", lambda **kwargs: ExitPrompt())
-    monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda settings: provider)
-    cockpit = Cockpit({"configured": True, "provider": {"kind": "lmstudio", "model": ""}})
-
-    assert await cockpit.run() == 0
-    assert provider.closed
+    monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda value: provider)
+    monkeypatch.setattr("taxsentry.cockpit.patch_stdout", lambda **kwargs: nullcontext())
+    cockpit = Cockpit(settings())
+    cockpit._header = lambda: None
+    assert await cockpit.run() == 0 and provider.closed
 
 
 @pytest.mark.asyncio
-async def test_telegram_commands_are_registered_and_authorized(monkeypatch):
+async def test_telegram_uses_allowlist_and_shared_chat(monkeypatch):
     import telegram.ext
 
-    replies, handlers = [], []
+    replies, handlers, sources = [], [], []
 
     class App:
         def add_handler(self, handler):
             handlers.append(handler)
 
     class Builder:
-        def token(self, token):
-            return self
-
-        def build(self):
-            return App()
+        def token(self, token): return self
+        def build(self): return App()
 
     class Application:
         @staticmethod
-        def builder():
-            return Builder()
+        def builder(): return Builder()
 
-    store = FakeStore()
+    class Chat:
+        async def stream(self, text, *, source):
+            sources.append(source)
+            yield AgentEvent(EventType.TEXT_DELTA, text="Đã nhận")
+
     monkeypatch.setattr(telegram.ext, "Application", Application)
     monkeypatch.setattr(telegram.ext, "CommandHandler", lambda name, callback: (name, callback))
     monkeypatch.setattr(telegram.ext, "MessageHandler", lambda filters, callback: ("chat", callback))
     monkeypatch.setattr(telegram_bot, "load_config", lambda: {"director": {"telegram_chat_ids": [42]}})
-    monkeypatch.setattr(telegram_bot, "JobStore", lambda: store)
+    monkeypatch.setattr(telegram_bot, "JobStore", FakeStore)
     monkeypatch.setattr(telegram_bot, "get_secret", lambda name: "token")
+    telegram_bot.build_application(Chat())
+    callback = handlers[-1][1]
 
-    telegram_bot.build_application()
+    async def reply_text(text): replies.append(text)
 
-    assert [handler[0] for handler in handlers[:-1]] == list(telegram_bot.COMMANDS)
-    status = handlers[0][1]
-    message = SimpleNamespace(reply_text=lambda text: replies.append(text))
-
-    async def reply_text(text):
-        replies.append(text)
-
-    message.reply_text = reply_text
-    await status(SimpleNamespace(effective_chat=SimpleNamespace(id=7), message=message), SimpleNamespace(args=[]))
-    assert replies == []
-    await status(SimpleNamespace(effective_chat=SimpleNamespace(id=42), message=message), SimpleNamespace(args=[]))
-    assert replies and "Báo cáo" in replies[0]
+    await callback(SimpleNamespace(effective_chat=SimpleNamespace(id=7), message=SimpleNamespace(text="x", reply_text=reply_text)), None)
+    await callback(SimpleNamespace(effective_chat=SimpleNamespace(id=42), message=SimpleNamespace(text="x", reply_text=reply_text)), None)
+    assert replies == ["Đã nhận"] and sources == ["telegram:42"]

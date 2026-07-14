@@ -2,7 +2,7 @@ import asyncio
 import json
 
 from taxsentry.events import EventType
-from taxsentry.providers import CodexAppServerProvider
+from taxsentry.providers import CodexAppServerProvider, _codex_command
 
 
 class _Reader:
@@ -14,8 +14,12 @@ class _Reader:
 
 
 class _Writer:
+    def __init__(self):
+        self.writes = []
+
     def write(self, data):
         self.data = data
+        self.writes.append(data)
 
     async def drain(self):
         pass
@@ -46,6 +50,22 @@ def test_codex_jsonl_stream_contract():
 
     events = asyncio.run(collect())
     assert [event.type for event in events] == [EventType.TEXT_DELTA, EventType.TURN_COMPLETED]
+
+
+def test_codex_thread_uses_current_read_only_variant():
+    provider = CodexAppServerProvider()
+    provider.process = _Process([
+        {"id": 1, "result": {"thread": {"id": "thr_1"}}},
+        {"id": 2, "result": {"turn": {"id": "turn_1"}}},
+        {"method": "turn/completed", "params": {"turn": {"status": "completed"}}},
+    ])
+
+    async def collect():
+        return [event async for event in provider.stream_turn([{"role": "user", "content": "Chào"}])]
+
+    asyncio.run(collect())
+    request = json.loads(provider.process.stdin.writes[0])
+    assert request["method"] == "thread/start" and request["params"]["sandbox"] == "read-only"
 
 
 def test_codex_account_and_model_catalog_contract():
@@ -88,3 +108,13 @@ def test_codex_login_cancel_uses_login_id():
     asyncio.run(provider.cancel_login("login-123"))
     assert b'"method": "account/login/cancel"' in provider.process.stdin.data
     assert b'"loginId": "login-123"' in provider.process.stdin.data
+
+
+def test_codex_finds_desktop_launcher_when_path_is_stale(monkeypatch, tmp_path):
+    launcher = tmp_path / "OpenAI" / "Codex" / "bin" / "release" / "codex.exe"
+    launcher.parent.mkdir(parents=True)
+    launcher.touch()
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr("taxsentry.providers.shutil.which", lambda _: None)
+    assert _codex_command() == str(launcher)

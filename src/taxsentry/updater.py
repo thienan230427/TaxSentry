@@ -14,7 +14,7 @@ PACKAGE = "taxsentry-agent"
 MAIN_SOURCE = "git+https://github.com/thienan230427/TaxSentry.git@main"
 PACKAGE_FILE = Path(__file__).resolve()
 PYTHON = Path(sys.executable).resolve()
-SERVICE_HINT = "Nếu service đang chạy: `taxsentry service stop` rồi `taxsentry service start`."
+RESTART_HINT = "Đóng TUI đang chạy rồi mở lại `taxsentry` để nạp bản mới."
 
 
 def _run(command: list[str], *, cwd: Path | None = None, capture: bool = False):
@@ -73,7 +73,7 @@ def _git_update(root: Path, *, main: bool) -> tuple[int, str]:
     synced = _run([uv, "sync", "--locked"], cwd=root)
     if synced.returncode:
         return synced.returncode, "Đã kéo code nhưng đồng bộ dependency thất bại; chạy lại `uv sync --locked`."
-    return 0, f"TaxSentry đã fast-forward và đồng bộ dependency. {SERVICE_HINT}"
+    return 0, f"TaxSentry đã fast-forward và đồng bộ dependency. {RESTART_HINT}"
 
 
 def _npm_update(*, main: bool) -> tuple[int, str]:
@@ -94,7 +94,7 @@ def _npm_update(*, main: bool) -> tuple[int, str]:
         ])
         if result.returncode:
             return result.returncode, "Cập nhật core từ GitHub main thất bại; runtime hiện tại được giữ lại."
-        return 0, f"TaxSentry core đã cập nhật từ GitHub main. {SERVICE_HINT}"
+        return 0, f"TaxSentry core đã cập nhật từ GitHub main. {RESTART_HINT}"
 
     npm = shutil.which("npm")
     if not npm:
@@ -115,7 +115,7 @@ def _npm_update(*, main: bool) -> tuple[int, str]:
     result = _run([npm, "install", "-g", "taxsentry@latest"])
     if result.returncode:
         return result.returncode, "npm update thất bại; bản đang cài được giữ lại."
-    return 0, f"TaxSentry npm đã cập nhật lên {latest}; lần chạy sau sẽ nạp wheel mới. {SERVICE_HINT}"
+    return 0, f"TaxSentry npm đã cập nhật lên {latest}; lần chạy sau sẽ nạp wheel mới. {RESTART_HINT}"
 
 
 def _uv_update(*, main: bool) -> tuple[int, str]:
@@ -127,7 +127,7 @@ def _uv_update(*, main: bool) -> tuple[int, str]:
     if result.returncode:
         return result.returncode, "uv tool update thất bại; kiểm tra kết nối mạng và quyền ghi."
     channel = "GitHub main" if main else "kênh ổn định của uv tool"
-    return 0, f"TaxSentry đã cập nhật từ {channel}. {SERVICE_HINT}"
+    return 0, f"TaxSentry đã cập nhật từ {channel}. {RESTART_HINT}"
 
 
 def perform_update(*, main: bool = False) -> tuple[int, str]:

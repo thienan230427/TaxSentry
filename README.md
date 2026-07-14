@@ -18,7 +18,7 @@ TaxSentry is a Python-first AI agent for Vietnamese finance and tax-reporting wo
 - Tracks job state, retries transient failures, and recovers interrupted work after a restart.
 - Prevents duplicate Gmail processing and duplicate outbound email delivery.
 - Generates PDF reports and delivers them through Gmail and Telegram.
-- Includes an interactive terminal cockpit, Telegram gateway, and native background service integration.
+- Runs one Financial Sentinel TUI with the Gmail worker and Telegram gateway in the same process.
 - Stores sensitive credentials in the operating system keyring instead of `config.json`.
 - Runs on Windows, macOS, and Linux.
 
@@ -106,13 +106,6 @@ It lists only integrations implemented by TaxSentry. After Codex is selected, au
 
 Existing configuration and credentials are selected by default when setup is run again. Before saving, the wizard shows a summary with **Save & Authenticate**, **Back**, and **Cancel**. Cancelling leaves the current configuration unchanged. Provider, App Password, and bot-token checks finish before configuration or new secrets are committed; a failed check leaves the previous profile intact.
 
-```powershell
-taxsentry auth gmail
-taxsentry auth telegram
-taxsentry auth codex
-taxsentry auth status
-```
-
 - Gmail uses IMAP/SMTP with a 16-character Google App Password stored in the OS keyring. OAuth and `credentials.json` are not used.
 - Google App Passwords require 2-Step Verification. Create one from [Google Account App Passwords](https://myaccount.google.com/apppasswords), then paste it into `taxsentry setup`.
 - The Telegram bot token is stored in the OS keyring and is never written to `config.json`.
@@ -139,68 +132,40 @@ Important configuration keys:
 ## Command-line reference
 
 ```text
-taxsentry                       Open the local Web Control Center
-taxsentry chat                  Open the terminal cockpit
-taxsentry start [--no-open]     Open the local Web Control Center
-taxsentry dashboard             Alias for `taxsentry start`
+taxsentry                       Open the Financial Sentinel TUI
 taxsentry setup                 Create or update the local profile
-taxsentry status                Show the current configuration summary
 taxsentry doctor [--fix]        Validate dependencies and integrations
-taxsentry gateway               Run the Telegram gateway in the foreground
-taxsentry worker run            Run the worker continuously
-taxsentry worker run --once     Process one polling cycle and exit
-taxsentry worker run --gateway  Run the worker and Telegram gateway together
-taxsentry jobs                  List recent jobs
-taxsentry report                Print the latest report as JSON
-taxsentry report --send         Confirm and resend the latest report
-taxsentry auth gmail            Authenticate Gmail
-taxsentry auth telegram         Store the Telegram bot token
-taxsentry auth codex            Authenticate through Codex App Server
-taxsentry auth dashboard --show Show the local operator token
-taxsentry auth dashboard --rotate Rotate the token and invalidate sessions
-taxsentry auth status           Show authentication and configuration status
-taxsentry auth logout           Remove TaxSentry Gmail and Telegram secrets
-taxsentry service <action>      Manage the native background service
 taxsentry update                Update from the stable channel
 taxsentry update --main         Update the Python core from GitHub main
 ```
 
-Service actions are `install`, `start`, `stop`, `status`, `logs`, and `remove`.
+## Financial Sentinel TUI
 
-## Web Control Center
+Running `taxsentry` opens a compact terminal interface. When enabled, Gmail polling and the Telegram gateway start with the TUI and stop when it exits. Terminal and authorized Telegram messages share one agent session.
 
-`taxsentry start` serves the Finance Command Center at `http://127.0.0.1:8765` and opens a browser with a 60-second, single-use login code. The dashboard exposes Overview, Chat, Jobs, Reports, Connections, and Settings while the Python core remains the source of truth. It binds only to loopback; operator tokens stay in the OS keyring and authenticated mutations require a CSRF token.
-
-## Terminal cockpit
-
-The interactive cockpit accepts normal chat messages and the following slash commands:
+The TUI accepts normal chat messages and these slash commands:
 
 | Command | Description |
 | --- | --- |
 | `/help` | List available commands |
-| `/status`, `/auth` | Show configuration and authentication status |
+| `/status` | Show configuration and integration status |
 | `/jobs` | List recent jobs |
-| `/latest`, `/report` | Show the latest report summary |
-| `/provider [codex\|lmstudio]` | Switch the active AI provider |
+| `/report` | Show the latest report summary |
 | `/retry [job]` | Requeue a failed or review-pending job |
 | `/approve [job]` | Approve and requeue a review-pending job |
-| `/clear` | Clear the current conversation context |
+| `/new` | Start a new conversation session |
 | `/exit` | Exit the cockpit |
-
-`/quit` is a hidden alias for `/exit`.
 
 ## Telegram commands
 
 Only chat IDs listed in `director.telegram_chat_ids` are authorized. The gateway supports:
 
 - `/status` and `/jobs` — list recent job states.
-- `/latest` — show the latest executive summary.
 - `/report` — download the latest PDF report.
 - `/retry <job>` — retry a failed or review-pending job.
 - `/approve <job>` — approve a review-pending job.
-- `/cancel <job>` — cancel a job and mark it as failed.
 
-Authorized users may also send plain-text questions grounded in the latest report.
+Authorized users may also send plain-text questions through the same session used by the terminal.
 
 ## Updating TaxSentry
 
@@ -216,25 +181,7 @@ The updater detects npm global installations, uv tools, and Git clones:
 - A uv tool uses `uv tool upgrade` for stable updates.
 - `--main` is an explicit opt-in to the latest GitHub `main` code.
 
-The updater never stashes, resets, or overwrites local Git changes. It preserves all data under `~/.taxsentry` and does not restart a running service automatically. After an update, restart the service when applicable:
-
-```powershell
-taxsentry service stop
-taxsentry service start
-```
-
-## Background service
-
-```powershell
-taxsentry service install
-taxsentry service start
-taxsentry service status
-taxsentry service logs
-taxsentry service stop
-taxsentry service remove
-```
-
-TaxSentry uses Task Scheduler on Windows, a LaunchAgent on macOS, and a user-level systemd service on Linux.
+The updater never stashes, resets, or overwrites local Git changes. It preserves all data under `~/.taxsentry`. Close and reopen the TUI after an update.
 
 ## Local data
 
@@ -284,7 +231,8 @@ npm run smoke
 The real-image OCR test is skipped automatically when Tesseract is unavailable. If the default temporary directory is restricted on Windows, use:
 
 ```powershell
-uv run pytest -q --basetemp=D:\TaxSentry\tmp-pytest
+$env:TAXSENTRY_HOME='D:\TaxSentry\tmp-test-home'
+uv run pytest -q --basetemp=D:\TaxSentry\tmp-pytest -p no:cacheprovider
 ```
 
 GitHub Actions validates Python 3.11–3.13 and runs the npm launcher checks, package inspection, and smoke installation across Windows, macOS, and Ubuntu.

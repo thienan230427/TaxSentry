@@ -1,13 +1,11 @@
 import zipfile
 from email.message import EmailMessage
 from io import BytesIO
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from taxsentry.gmail import GmailAttachment, GmailClient, validate_attachment
-from taxsentry.service_control import artifact
 from taxsentry.store import JobStore
 from taxsentry.telegram import TelegramDirector
 from taxsentry.worker import run_worker
@@ -40,14 +38,6 @@ def test_approval_is_consumed_and_delivery_is_idempotent(tmp_path):
     assert store.delivered(job["id"], "gmail")
     with pytest.raises(ValueError):
         store.transition(job["id"], "completed")
-
-
-@pytest.mark.parametrize("system", ["Windows", "Darwin", "Linux"])
-def test_native_service_runs_worker_with_gateway(monkeypatch, system):
-    monkeypatch.setattr("taxsentry.service_control.platform.system", lambda: system)
-    path, content = artifact()
-    assert isinstance(path, Path)
-    assert "worker" in content and "--gateway" in content
 
 
 def test_gmail_delivery_uses_stable_message_id(tmp_path):
