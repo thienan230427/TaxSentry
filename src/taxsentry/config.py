@@ -29,7 +29,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ocr": {"languages": ["vie", "eng"], "minimum_confidence": 70.0},
     "memory": {"max_facts": 50, "max_turns": 12, "session_title": "TaxSentry session"},
     "jobs": {"tracking_enabled": True, "retry_limit": 3, "default_state": "queued", "needs_human_review_on_missing_data": True, "auto_send_email": True, "auto_send_telegram": True},
-    "ui": {"theme": "sentinel", "show_banner": True}, "extra_env": {},
+    "ui": {"theme": "sentinel", "language": "vi", "show_banner": True}, "extra_env": {},
 }
 
 
@@ -72,7 +72,13 @@ def load_config() -> dict[str, Any]:
         return get_empty_config()
     try:
         loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        return _merge(get_empty_config(), loaded if isinstance(loaded, dict) else {})
+        config = _merge(get_empty_config(), loaded if isinstance(loaded, dict) else {})
+        if isinstance(loaded, dict) and "language" not in loaded.get("ui", {}):
+            fallback = loaded.get("agent", {}).get("language", "vi")
+            config["ui"]["language"] = fallback if fallback in {"vi", "en"} else "vi"
+        elif config["ui"].get("language") not in {"vi", "en"}:
+            config["ui"]["language"] = "vi"
+        return config
     except (OSError, json.JSONDecodeError):
         return get_empty_config()
 
@@ -120,9 +126,15 @@ def write_env_file(config: dict[str, Any]) -> Path:
 def describe_config(config: dict[str, Any]) -> str:
     provider = config["provider"]
     gmail = config["gmail"]
-    gmail_status = (gmail.get("account") or "not connected") if gmail.get("enabled", True) else "disabled"
+    en = config.get("ui", {}).get("language") == "en"
+    disabled, pending = ("disabled", "pending initialization") if en else ("đã tắt", "chờ khởi tạo")
+    gmail_status = (gmail.get("account") or ("not connected" if en else "chưa kết nối")) if gmail.get("enabled", True) else disabled
     marker = gmail.get("process_after_uid")
-    return "\n".join((f"TaxSentry {config.get('version', __version__)}", f"Provider: {provider['kind']} / {provider.get('model') or 'default'}", f"Gmail: {gmail_status}", "Gmail sender policy: all senders", f"Worker starts after UID: {marker if marker is not None else 'pending initialization'}", f"Telegram: {'enabled' if config['telegram'].get('enabled') else 'disabled'}", f"LibreOffice: {'available' if shutil.which('soffice') else 'optional / not found'}", f"Config: {CONFIG_FILE}"))
+    if en:
+        rows = (f"TaxSentry {config.get('version', __version__)}", f"Provider: {provider['kind']} / {provider.get('model') or 'default'}", f"Gmail: {gmail_status}", "Gmail sender policy: all senders", f"Worker starts after UID: {marker if marker is not None else pending}", f"Telegram: {'enabled' if config['telegram'].get('enabled') else disabled}", f"LibreOffice: {'available' if shutil.which('soffice') else 'optional / not found'}", f"Config: {CONFIG_FILE}")
+    else:
+        rows = (f"TaxSentry {config.get('version', __version__)}", f"Provider: {provider['kind']} / {provider.get('model') or 'mặc định'}", f"Gmail: {gmail_status}", "Chính sách Gmail: mọi người gửi", f"Worker bắt đầu sau UID: {marker if marker is not None else pending}", f"Telegram: {'đã bật' if config['telegram'].get('enabled') else disabled}", f"LibreOffice: {'sẵn sàng' if shutil.which('soffice') else 'tùy chọn / không tìm thấy'}", f"Cấu hình: {CONFIG_FILE}")
+    return "\n".join(rows)
 
 
 def build_env_lines(config: dict[str, Any]) -> list[str]:

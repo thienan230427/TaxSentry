@@ -38,6 +38,15 @@ def test_save_removes_obsolete_web_and_gateway_fields(monkeypatch, tmp_path):
     assert "integrations" not in saved and "port" not in saved["ui"] and "gateway" not in saved["worker"]
 
 
+def test_old_config_ui_language_falls_back_to_agent_language(monkeypatch, tmp_path):
+    target = tmp_path / "config.json"
+    target.write_text(json.dumps({"agent": {"language": "en"}, "ui": {"theme": "sentinel"}}), encoding="utf-8")
+    monkeypatch.setattr(config_module, "CONFIG_FILE", target)
+    assert config_module.load_config()["ui"]["language"] == "en"
+    target.write_text(json.dumps({"agent": {"language": "fr"}, "ui": {"language": "fr"}}), encoding="utf-8")
+    assert config_module.load_config()["ui"]["language"] == "vi"
+
+
 def test_store_deduplicates_gmail_messages_and_tracks_state(tmp_path):
     store = JobStore(tmp_path / "state.db")
     job = store.create_job("gmail-1", "accounting@example.com", "Báo cáo tháng")

@@ -4,41 +4,25 @@ import asyncio
 import re
 import sys
 import webbrowser
-from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable
 
 import keyring
-from prompt_toolkit import PromptSession
-from prompt_toolkit.application import Application
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout
-from prompt_toolkit.styles import Style
-from prompt_toolkit.validation import Validator
-from prompt_toolkit.widgets import Box, Label, RadioList
 from rich.console import Console
 from rich.table import Table
-from rich.text import Text
+from textual import on
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, VerticalScroll
+from textual.widgets import Button, Input, Label, ProgressBar, Select, Static
 
 from .config import save_config
 from .gmail import GmailClient
 from .providers import CodexAppServerProvider, from_settings, lmstudio_models
 from .secrets import get_secret, set_secret
+from .ui_text import language
 
-STYLE = Style.from_dict(
-    {
-        "marker": "#22d3ee bold",
-        "title": "bold",
-        "description": "#64748b",
-        "option": "#cbd5e1",
-        "option.selected": "#22d3ee bold",
-        "option.checked": "#22c55e bold",
-        "hint": "#64748b",
-        "prompt": "#22d3ee bold",
-        "validation-toolbar": "bg:#7f1d1d #ffffff",
-    }
-)
 EMAIL = re.compile(r"^[^\s@]+@[^\s@]+$")
 
 
@@ -47,190 +31,33 @@ class Cancelled(Exception):
 
 
 class WizardUI:
+    """Compatibility surface for the pure collection tests."""
+
     def __init__(self, console: Console):
-        if not sys.stdin.isatty() or not sys.stdout.isatty():
-            raise RuntimeError("`taxsentry setup` cần terminal tương tác / requires an interactive terminal.")
         self.console = console
-        self.unicode = self._supports_unicode()
-        self.marker, self.done, self.line = ("◆", "✓", "│") if self.unicode else (">", "+", "|")
-        self.console.print()
-        self.console.print(Text(f"{self.marker} TaxSentry Setup", style="bold cyan"))
-        self.console.print(Text("  Cấu hình trợ lý của bạn", style="bold"))
-        self.console.print(Text("  Configure your assistant", style="dim"))
 
     @staticmethod
     def _supports_unicode() -> bool:
         try:
-            "◆✓│".encode(sys.stdout.encoding or "ascii")
+            "◆✓│".encode(getattr(sys.stdout, "encoding", None) or "ascii")
             return True
         except (LookupError, UnicodeEncodeError):
             return False
 
-    @staticmethod
-    def _parts(value: str) -> tuple[str, str]:
-        parts = value.split(" / ", 1)
-        return parts[0], parts[1] if len(parts) == 2 else ""
-
-    @staticmethod
-    def _option(label: str):
-        primary, _, secondary = label.partition("\n")
-        result = [("class:option", primary)]
-        if secondary:
-            result += [("", "\n   "), ("class:description", secondary)]
-        return result
-
-    def _heading(self, title: str, text: str, prompt: str = ""):
-        primary, secondary = self._parts(title)
-        description, english = self._parts(text)
-        result = [
-            ("class:marker", f"{self.marker} "),
-            ("class:title", primary),
-        ]
-        if secondary:
-            result += [("class:description", f"  {secondary}")]
-        result += [("", "\n"), ("class:marker", f"{self.line} "), ("", description)]
-        if english:
-            result += [("", "\n"), ("class:marker", f"{self.line} "), ("class:description", english)]
-        if prompt:
-            result += [("", "\n"), ("class:marker", f"{self.line} "), ("class:prompt", f"{prompt}: ")]
-        return result
-
-    def _complete(self, title: str, value: str) -> None:
-        primary, _ = self._parts(title)
-        line = Text()
-        line.append(f"{self.done} ", style="green bold")
-        line.append(primary, style="bold")
-        line.append("  ", style="dim")
-        line.append(value.splitlines()[0] or "Mặc định", style="cyan")
-        self.console.print(line)
-
     def choose(self, title: str, text: str, values, default):
-        labels = dict(values)
-        choices = [(value, self._option(label)) for value, label in values]
-        radio = RadioList(
-            choices,
-            default=default,
-            show_numbers=True,
-            select_on_focus=True,
-            open_character="",
-            select_character=self.marker,
-            close_character="",
-            show_cursor=False,
-            show_scrollbar=True,
-            container_style="class:option",
-            default_style="class:option",
-            selected_style="class:option.selected",
-            checked_style="class:option.checked",
-        )
-        keys = KeyBindings()
-
-        @keys.add("enter", eager=True)
-        def accept(event) -> None:
-            event.app.exit(result=radio.current_value)
-
-        @keys.add("escape", eager=True)
-        @keys.add("c-c", eager=True)
-        def cancel(event) -> None:
-            event.app.exit(exception=Cancelled())
-
-        app = Application(
-            layout=Layout(
-                HSplit(
-                    [
-                        Label(self._heading(title, text), dont_extend_height=True),
-                        Box(radio, padding_left=2, padding_top=1, padding_bottom=1),
-                        Label("  1-9 chọn nhanh  ↑↓ di chuyển  Enter chọn  Esc hủy", style="class:hint", dont_extend_height=True),
-                    ]
-                ),
-                focused_element=radio,
-            ),
-            key_bindings=keys,
-            style=STYLE,
-            full_screen=False,
-            erase_when_done=True,
-        )
-        value = app.run()
-        self._complete(title, labels[value])
-        return value
+        raise RuntimeError("Use SetupWizardApp for interactive setup")
 
     async def wait(self, awaitable, timeout: float = 300):
-        keys = KeyBindings()
-
-        @keys.add("escape", eager=True)
-        @keys.add("c-c", eager=True)
-        def cancel(event) -> None:
-            event.app.exit(result=False)
-
-        app = Application(
-            layout=Layout(
-                HSplit(
-                    [
-                        Label(self._heading("Đăng nhập Codex / Codex Login", "Đang chờ xác thực trên trình duyệt / Waiting for browser authentication"), dont_extend_height=True),
-                        Label("  Esc hoặc Ctrl+C để hủy / to cancel", style="class:hint", dont_extend_height=True),
-                    ]
-                )
-            ),
-            key_bindings=keys,
-            style=STYLE,
-            full_screen=False,
-            erase_when_done=True,
-        )
-        task = asyncio.create_task(awaitable)
-        app_task = asyncio.create_task(app.run_async())
-        done, _ = await asyncio.wait({task, app_task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
-        if task in done:
-            if not app_task.done():
-                app.exit(result=True)
-            await app_task
-            return await task
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
-        if app_task.done():
-            await app_task
-        else:
-            app.exit(result=False)
-            await app_task
-        if not done:
-            raise TimeoutError("Codex OAuth timeout")
-        raise Cancelled
+        return await asyncio.wait_for(awaitable, timeout)
 
     def text(self, title: str, prompt: str, default: str = "", validate: Callable[[str], bool] | None = None, error: str = "Giá trị không hợp lệ / Invalid value", *, password: bool = False) -> str:
-        keys = KeyBindings()
-
-        @keys.add("escape", eager=True)
-        def cancel(event) -> None:
-            event.app.exit(exception=Cancelled())
-
-        validator = None
-        if validate:
-            validator = Validator.from_callable(
-                lambda value: validate(value.strip()), error_message=error, move_cursor_to_end=True
-            )
-        session = PromptSession(
-            self._heading(title, "Nhập giá trị / Enter a value", prompt),
-            is_password=password,
-            validator=validator,
-            validate_while_typing=False,
-            key_bindings=keys,
-            style=STYLE,
-            erase_when_done=True,
-        )
-        try:
-            value = session.prompt(default=default).strip()
-        except (EOFError, KeyboardInterrupt) as exc:
-            raise Cancelled from exc
-        self._complete(title, "••••••" if password else value)
-        return value
+        raise RuntimeError("Use SetupWizardApp for interactive setup")
 
     def message(self, title: str, text: str) -> None:
-        self.console.print(Text(f"! {title}: {text}", style="bold red"))
+        self.console.print(f"[red]! {title}: {text}[/]")
 
     def summary(self, rows: list[tuple[str, str]]) -> None:
-        table = Table("Mục", "Lựa chọn", title="Xác nhận cấu hình", title_style="bold cyan", border_style="cyan")
-        for name, value in rows:
-            table.add_row(name, value)
-        self.console.print(table)
+        return None
 
 
 @dataclass
@@ -242,6 +69,282 @@ class SetupSelection:
     gmail_reset_uid: bool = False
     telegram_auth: str = ""
     telegram_token: str = ""
+    validated: bool = False
+
+
+class SetupWizardApp(App[SetupSelection | None]):
+    TITLE = "TaxSentry Setup"
+    BINDINGS = [Binding("escape", "back", "Back"), Binding("ctrl+c", "cancel", "Cancel", priority=True)]
+    CSS = """
+    Screen { background: #080b10; color: #d6dae1; layout: vertical; }
+    #wizard-title { height: 2; padding: 0 2; background: #121720; color: #d4af37; text-style: bold; content-align: left middle; }
+    #progress { height: 1; margin: 0 2; color: #22d3ee; }
+    #step-title { height: 2; margin: 1 2 0 2; color: #f1f5f9; text-style: bold; }
+    #content { height: 1fr; margin: 0 2; padding: 1 2; border-left: tall #334155; scrollbar-color: #334155; }
+    #content Label { width: 100%; height: auto; margin-top: 1; color: #94a3b8; }
+    #content Input, #content Select { width: 100%; margin-bottom: 1; }
+    #summary { width: 100%; height: auto; color: #cbd5e1; }
+    #error { height: auto; min-height: 1; margin: 0 2; color: #f87171; }
+    #navigation { height: 3; padding: 0 2; align-horizontal: right; }
+    #navigation Button { min-width: 12; margin-left: 1; }
+    """
+
+    def __init__(self, config: dict[str, Any]):
+        super().__init__()
+        self.original = deepcopy(config)
+        self.candidate = deepcopy(config)
+        self.candidate.setdefault("ui", {})["language"] = language(config)
+        self.selection = SetupSelection(self.candidate)
+        self.step = 0
+        self.steps = ("language", "profile", "provider", "model", "services", "confirm")
+        self.model_options: list[tuple[str, str, tuple[str, ...]]] = []
+        self.gmail_was_enabled = bool(config.get("gmail", {}).get("enabled", True))
+
+    @property
+    def en(self) -> bool:
+        return self.candidate["ui"].get("language") == "en"
+
+    def compose(self) -> ComposeResult:
+        yield Static(("◆" if WizardUI._supports_unicode() else "*") + " TAXSENTRY · SETUP", id="wizard-title")
+        yield ProgressBar(total=len(self.steps), show_eta=False, show_percentage=False, id="progress")
+        yield Static("", id="step-title")
+        yield VerticalScroll(id="content")
+        yield Static("", id="error")
+        with Horizontal(id="navigation"):
+            yield Button("Back", id="back")
+            yield Button("Cancel", id="cancel")
+            yield Button("Next", id="next", variant="primary")
+
+    async def on_mount(self) -> None:
+        await self._render_step()
+
+    def _label(self, vi: str, en: str) -> str:
+        return en if self.en else vi
+
+    async def _render_step(self) -> None:
+        content = self.query_one("#content", VerticalScroll)
+        await content.remove_children()
+        self.query_one("#error", Static).update("")
+        self.query_one("#progress", ProgressBar).update(progress=self.step + 1)
+        self.query_one("#back", Button).disabled = self.step == 0
+        self.query_one("#back", Button).label = self._label("Quay lại", "Back")
+        self.query_one("#cancel", Button).label = self._label("Hủy", "Cancel")
+        key = self.steps[self.step]
+        widgets: list[Any] = []
+        if key == "language":
+            title = "Language / Ngôn ngữ"
+            widgets = [
+                Label("Chọn ngôn ngữ giao diện / Choose the interface language"),
+                Select([("Tiếng Việt", "vi"), ("English", "en")], value=self.candidate["ui"].get("language", "vi"), allow_blank=False, id="language"),
+            ]
+        elif key == "profile":
+            title = self._label("Hồ sơ sử dụng", "Usage profile")
+            widgets = [
+                Label(self._label("Chọn các dịch vụ TaxSentry sẽ bật", "Choose which TaxSentry services to enable")),
+                Select(
+                    [("Full Agent — AI + Gmail + Telegram", "full"), ("Email Agent — AI + Gmail", "email"), ("Chat Only — terminal AI", "chat")],
+                    value=_profile(self.candidate), allow_blank=False, id="profile",
+                ),
+            ]
+        elif key == "provider":
+            title = "AI Provider"
+            kind = self.candidate["provider"].get("kind", "lmstudio")
+            widgets = [
+                Label(self._label("Chọn provider và phương thức xác thực", "Choose a provider and authentication method")),
+                Select([("Codex / ChatGPT", "codex"), ("LM Studio", "lmstudio")], value=kind, allow_blank=False, id="provider"),
+                Label("LM Studio Base URL", id="base-url-label"),
+                Input(str(self.candidate["provider"].get("lmstudio_base_url", "http://127.0.0.1:1234/v1")), id="base-url"),
+                Label(self._label("Xác thực Codex", "Codex authentication"), id="codex-auth-label"),
+                Select(
+                    [
+                        (self._label("Phiên hiện tại", "Existing session"), "existing"),
+                        (self._label("Đăng nhập trình duyệt", "Browser OAuth"), "browser"),
+                        (self._label("Mã thiết bị", "Device code"), "device"),
+                    ],
+                    value="existing", allow_blank=False, id="codex-auth",
+                ),
+            ]
+        elif key == "model":
+            title = "Model"
+            current = str(self.candidate["provider"].get("model", ""))
+            options = [(self._label("Mặc định provider", "Provider default"), "")]
+            options += [(f"{label} · {model_id}", model_id) for model_id, label, _ in self.model_options]
+            valid = {value for _, value in options}
+            widgets = [
+                Label(self._label("Chọn model đã phát hiện hoặc nhập model ID", "Select a discovered model or enter a model ID")),
+                Select(options, value=current if current in valid else "", allow_blank=False, id="model-select"),
+                Label(self._label("Model ID tùy chỉnh (để trống để dùng lựa chọn trên)", "Custom model ID (leave blank to use the selection above)")),
+                Input(current if current not in valid else "", id="model-custom"),
+            ]
+        elif key == "services":
+            title = self._label("Dịch vụ", "Services")
+            if self.candidate["gmail"].get("enabled"):
+                widgets += [
+                    Label("Gmail"),
+                    Input(str(self.candidate["gmail"].get("account", "")), placeholder="name@gmail.com", id="gmail-account"),
+                    Label(self._label("Chu kỳ quét (giây, tối thiểu 10)", "Polling interval (seconds, minimum 10)")),
+                    Input(str(self.candidate["worker"].get("poll_seconds", 60)), id="poll"),
+                    Label(self._label("App Password mới (để trống để giữ secret hiện tại)", "New App Password (leave blank to keep the current secret)")),
+                    Input("", password=True, id="gmail-password"),
+                ]
+            if self.candidate["telegram"].get("enabled"):
+                widgets += [
+                    Label("Telegram Chat IDs"),
+                    Input(",".join(map(str, self.candidate["director"].get("telegram_chat_ids", []))), id="telegram-chats"),
+                    Label(self._label("Bot token mới (để trống để giữ secret hiện tại)", "New bot token (leave blank to keep the current secret)")),
+                    Input("", password=True, id="telegram-token"),
+                ]
+            if not widgets:
+                widgets = [Label(self._label("Hồ sơ Chat Only không cần dịch vụ bổ sung.", "The Chat Only profile needs no additional services."))]
+        else:
+            title = self._label("Xác nhận", "Confirm")
+            profile = _profile(self.candidate)
+            provider = self.candidate["provider"]
+            summary = [
+                f"{self._label('Hồ sơ', 'Profile')}: {profile}",
+                f"Provider: {provider['kind']} / {provider.get('model') or 'default'}",
+                f"Gmail: {self.candidate['gmail'].get('account') if self.candidate['gmail'].get('enabled') else 'disabled'}",
+                f"Telegram: {', '.join(self.candidate['director'].get('telegram_chat_ids', [])) if self.candidate['telegram'].get('enabled') else 'disabled'}",
+                f"{self._label('Ngôn ngữ', 'Language')}: {self.candidate['ui']['language']}",
+            ]
+            widgets = [Static("\n".join(summary), id="summary", markup=False)]
+        self.query_one("#step-title", Static).update(f"{self.step + 1}/{len(self.steps)} · {title}")
+        self.query_one("#next", Button).label = self._label("Lưu & xác thực", "Save & validate") if key == "confirm" else self._label("Tiếp", "Next")
+        await content.mount(*widgets)
+        if key == "provider":
+            self._show_provider_fields(str(self._select("#provider")))
+        focusable = list(content.query("Input, Select"))
+        if focusable:
+            focusable[0].focus()
+
+    def _show_provider_fields(self, kind: str) -> None:
+        for selector in ("#base-url-label", "#base-url"):
+            self.query_one(selector).display = kind == "lmstudio"
+        for selector in ("#codex-auth-label", "#codex-auth"):
+            self.query_one(selector).display = kind == "codex"
+
+    @on(Select.Changed, "#provider")
+    def provider_changed(self, event: Select.Changed) -> None:
+        self._show_provider_fields(str(event.value))
+
+    def _select(self, selector: str) -> Any:
+        return self.query_one(selector, Select).value
+
+    async def _save_step(self) -> bool:
+        key = self.steps[self.step]
+        error = ""
+        try:
+            if key == "language":
+                self.candidate["ui"]["language"] = str(self._select("#language"))
+            elif key == "profile":
+                profile = str(self._select("#profile"))
+                self.candidate["gmail"]["enabled"] = profile != "chat"
+                self.candidate["telegram"]["enabled"] = profile == "full"
+            elif key == "provider":
+                kind = str(self._select("#provider"))
+                self.candidate["provider"].update({"kind": kind, "auth_mode": kind})
+                if kind == "lmstudio":
+                    base_url = self.query_one("#base-url", Input).value.strip()
+                    if not base_url.startswith(("http://", "https://")):
+                        raise ValueError(self._label("URL phải bắt đầu bằng http:// hoặc https://", "URL must begin with http:// or https://"))
+                    self.candidate["provider"].update({"lmstudio_base_url": base_url, "base_url": base_url})
+                    try:
+                        models = await asyncio.to_thread(lmstudio_models, from_settings(self.candidate))
+                        self.model_options = [(item, item, ()) for item in models]
+                    except Exception as exc:
+                        self.model_options = []
+                        self.notify(str(exc), severity="warning")
+                else:
+                    mode = str(self._select("#codex-auth"))
+                    self.selection.codex_auth = mode
+                    await self._prepare_codex(mode)
+            elif key == "model":
+                custom = self.query_one("#model-custom", Input).value.strip()
+                self.candidate["provider"]["model"] = custom or str(self._select("#model-select"))
+            elif key == "services":
+                if self.candidate["gmail"].get("enabled"):
+                    account = self.query_one("#gmail-account", Input).value.strip()
+                    poll = self.query_one("#poll", Input).value.strip()
+                    if not _email(account):
+                        raise ValueError(self._label("Địa chỉ Gmail không hợp lệ", "Invalid Gmail address"))
+                    if not poll.isdigit() or int(poll) < 10:
+                        raise ValueError(self._label("Polling phải là số từ 10 trở lên", "Polling must be a number of at least 10"))
+                    previous = str(self.original.get("gmail", {}).get("account", "")).casefold()
+                    self.candidate["gmail"]["account"] = account
+                    self.candidate["worker"]["poll_seconds"] = int(poll)
+                    self.selection.gmail_password = self.query_one("#gmail-password", Input).value
+                    self.selection.gmail_auth = "replace" if self.selection.gmail_password else "existing"
+                    self.selection.gmail_reset_uid = not self.gmail_was_enabled or previous != account.casefold() or self.candidate["gmail"].get("process_after_uid") is None
+                if self.candidate["telegram"].get("enabled"):
+                    chats = _csv(self.query_one("#telegram-chats", Input).value)
+                    if not chats or not all(re.fullmatch(r"-?\d+", item) for item in chats):
+                        raise ValueError(self._label("Chat ID phải là số nguyên", "Chat IDs must be integers"))
+                    self.candidate["director"]["telegram_chat_ids"] = chats
+                    self.selection.telegram_token = self.query_one("#telegram-token", Input).value.strip()
+                    self.selection.telegram_auth = "replace" if self.selection.telegram_token else "existing"
+            elif key == "confirm":
+                self.candidate["configured"] = True
+                statuses = await preflight_selection(self.selection)
+                failed = next((row for row in statuses if row[1] == "FAIL"), None)
+                if failed:
+                    self.step = 2 if failed[0] == "Provider" else 4
+                    await self._render_step()
+                    self.query_one("#error", Static).update(f"{failed[0]}: {failed[2]}")
+                    return False
+                self.selection.validated = True
+                self.exit(self.selection)
+                return False
+        except Exception as exc:
+            error = str(exc)
+        if error:
+            self.query_one("#error", Static).update(error)
+            return False
+        return True
+
+    async def _prepare_codex(self, mode: str) -> None:
+        client = CodexAppServerProvider()
+        try:
+            account = await client.account()
+            if mode != "existing":
+                result = await client.start_login(device_code=mode == "device")
+                url = str(result.get("authUrl") or result.get("verificationUrl") or "")
+                if not url:
+                    raise RuntimeError("Codex returned no login URL")
+                self.query_one("#error", Static).update(f"Open: {url}" + (f" · Code: {result.get('userCode')}" if result.get("userCode") else ""))
+                try:
+                    webbrowser.open(url)
+                except Exception:
+                    pass
+                await client.wait_login(str(result.get("loginId") or ""))
+                account = await client.account(refresh=True)
+                self.selection.codex_auth = "existing"
+            if not account.get("account") and account.get("requiresOpenaiAuth", True):
+                raise RuntimeError(self._label("Không tìm thấy phiên Codex", "No Codex session found"))
+            self.model_options = await client.models()
+        finally:
+            await client.close()
+
+    @on(Button.Pressed, "#next")
+    async def next_step(self) -> None:
+        if await self._save_step() and self.step < len(self.steps) - 1:
+            self.step += 1
+            await self._render_step()
+
+    @on(Button.Pressed, "#back")
+    async def back_button(self) -> None:
+        await self.action_back()
+
+    @on(Button.Pressed, "#cancel")
+    def cancel_button(self) -> None:
+        self.action_cancel()
+
+    async def action_back(self) -> None:
+        if self.step > 0:
+            self.step -= 1
+            await self._render_step()
+
+    def action_cancel(self) -> None:
+        self.exit(None)
 
 
 def _profile(config: dict[str, Any]) -> str:
@@ -451,9 +554,12 @@ def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
     return selection
 
 
-def run_setup_wizard(config: dict[str, Any], console: Console, ui: WizardUI | None = None) -> SetupSelection | None:
+def run_setup_wizard(config: dict[str, Any], console: Console | None, ui: WizardUI | None = None) -> SetupSelection | None:
+    if ui is None:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            raise RuntimeError("`taxsentry setup` requires an interactive terminal.")
+        return SetupWizardApp(config).run()
     try:
-        ui = ui or WizardUI(console)
         while True:
             selection = _collect(config, ui)
             selected = selection.config
@@ -502,57 +608,79 @@ async def _telegram_auth(token: str) -> str:
         return f"@{identity.username}" if getattr(identity, "username", None) else str(identity.id)
 
 
-def authenticate_selection(selection: SetupSelection, console: Console) -> int:
+async def preflight_selection(selection: SetupSelection) -> list[tuple[str, str, str]]:
     statuses: list[tuple[str, str, str]] = []
-    failed = False
     config = selection.config
     try:
         if config["provider"]["kind"] == "codex":
-            detail = asyncio.run(_codex_auth(selection.codex_auth, config["provider"].get("model", ""), console))
+            client = CodexAppServerProvider(model=config["provider"].get("model", ""))
+            try:
+                state = await client.account(refresh=True)
+                if not state.get("account") and state.get("requiresOpenaiAuth", True):
+                    raise RuntimeError("No Codex credentials found")
+                detail = "connected"
+            finally:
+                await client.close()
         else:
-            models = lmstudio_models(from_settings(config))
+            models = await asyncio.to_thread(lmstudio_models, from_settings(config))
             detail = f"connected ({len(models)} models)"
         statuses.append(("Provider", "OK", detail))
     except Exception as exc:
         statuses.append(("Provider", "FAIL", str(exc)))
-        failed = True
 
     if config["gmail"]["enabled"]:
         try:
             gmail = GmailClient(config)
-            gmail.authenticate(app_password=selection.gmail_password, store=False)
+            await asyncio.to_thread(gmail.authenticate, app_password=selection.gmail_password, store=False)
             if selection.gmail_reset_uid:
-                config["gmail"]["process_after_uid"] = gmail.latest_uid()
+                config["gmail"]["process_after_uid"] = await asyncio.to_thread(gmail.latest_uid)
             statuses.append(("Gmail", "OK", config["gmail"]["account"]))
         except Exception as exc:
-            statuses.append(("Gmail", "FAIL", f"{exc}; run `taxsentry auth gmail`"))
-            failed = True
+            statuses.append(("Gmail", "FAIL", str(exc)))
     else:
         statuses.append(("Gmail", "SKIP", "disabled"))
 
     if config["telegram"]["enabled"]:
         try:
             token = selection.telegram_token if selection.telegram_auth == "replace" else get_secret("telegram:bot-token")
-            detail = asyncio.run(_telegram_auth(token))
+            detail = await _telegram_auth(token)
             statuses.append(("Telegram", "OK", detail))
         except Exception as exc:
-            statuses.append(("Telegram", "FAIL", f"{exc}; run `taxsentry auth telegram`"))
-            failed = True
+            statuses.append(("Telegram", "FAIL", str(exc)))
     else:
         statuses.append(("Telegram", "SKIP", "disabled"))
+    return statuses
 
+
+def commit_selection(selection: SetupSelection) -> None:
+    config = selection.config
+    if config["gmail"]["enabled"] and selection.gmail_password:
+        account = config["gmail"]["account"]
+        set_secret(f"gmail-app-password:{account}", "".join(selection.gmail_password.split()))
+    if config["telegram"]["enabled"] and selection.telegram_auth == "replace":
+        set_secret("telegram:bot-token", selection.telegram_token)
+    config["configured"] = True
+    save_config(config)
+
+
+def authenticate_selection(selection: SetupSelection, console: Console) -> int:
+    statuses = (
+        [("Provider", "OK", "validated"), ("Gmail", "OK" if selection.config["gmail"]["enabled"] else "SKIP", selection.config["gmail"].get("account") or "disabled"), ("Telegram", "OK" if selection.config["telegram"]["enabled"] else "SKIP", "validated" if selection.config["telegram"]["enabled"] else "disabled")]
+        if selection.validated
+        else asyncio.run(preflight_selection(selection))
+    )
+    failed = any(status == "FAIL" for _, status, _ in statuses)
     if not failed:
-        if config["gmail"]["enabled"] and selection.gmail_password:
-            account = config["gmail"]["account"]
-            set_secret(f"gmail-app-password:{account}", "".join(selection.gmail_password.split()))
-        if config["telegram"]["enabled"] and selection.telegram_auth == "replace":
-            set_secret("telegram:bot-token", selection.telegram_token)
-        config["configured"] = True
-        save_config(config)
+        try:
+            commit_selection(selection)
+        except Exception as exc:
+            statuses.append(("Save", "FAIL", str(exc)))
+            failed = True
 
-    table = Table("Service", "Status", "Detail", title="Setup result / Kết quả cấu hình")
+    en = selection.config.get("ui", {}).get("language") == "en"
+    table = Table("Service" if en else "Dịch vụ", "Status" if en else "Trạng thái", "Detail" if en else "Chi tiết", title="Setup result" if en else "Kết quả cấu hình")
     for row in statuses:
         table.add_row(*row)
     console.print(table)
-    console.print("Next / Tiếp theo: `taxsentry doctor` rồi chạy / then run `taxsentry`")
+    console.print("Next: run `taxsentry doctor`, then `taxsentry`." if en else "Tiếp theo: chạy `taxsentry doctor`, sau đó `taxsentry`.")
     return int(failed)

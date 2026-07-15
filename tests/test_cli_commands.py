@@ -28,7 +28,7 @@ def test_bare_command_opens_cockpit(monkeypatch):
         def __init__(self, settings):
             calls.append(settings)
 
-        async def run(self):
+        def run(self):
             return 0
 
     settings = {"configured": True}
@@ -45,7 +45,7 @@ def test_bare_command_runs_setup_when_unconfigured(monkeypatch):
         def __init__(self, settings):
             calls.append(settings)
 
-        async def run(self):
+        def run(self):
             return 0
 
     monkeypatch.setattr("taxsentry.tui.load_config", lambda: next(states))

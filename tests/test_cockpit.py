@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
-from prompt_toolkit.completion import CompleteEvent
-from prompt_toolkit.document import Document
+from textual.widgets import Markdown, Static
 
 from taxsentry.bot import telegram_bot
 from taxsentry.chat_service import ChatService
-from taxsentry.cockpit import COMMANDS, Cockpit, SlashCompleter, banner_text
+from taxsentry.cockpit import (
+    COMMANDS,
+    Cockpit,
+    Composer,
+    SlashCompleter,
+    ToolCard,
+    ToolOverlay,
+    banner_text,
+    redact,
+    safe_text,
+    tool_text,
+)
 from taxsentry.events import AgentEvent, EventType
 
 
@@ -71,42 +80,113 @@ class FakeStore:
         pass
 
 
-class FakePrompt:
-    def __init__(self, **kwargs):
-        self.app = SimpleNamespace(invalidate=lambda: None)
-
-
 def test_banner_is_responsive_and_has_ascii_fallback():
     full = banner_text(settings(gmail={"enabled": True}, telegram={"enabled": True}), 120)
     medium = banner_text(settings(), 80)
     narrow = banner_text(settings(), 60)
     ascii_banner = banner_text(settings(), 120, unicode=False)
-    assert len(full.splitlines()) == 4 and "╔╦╗" in full and "Telegram" in full
-    assert len(medium.splitlines()) == 3 and medium.startswith("◆ TAXSENTRY")
-    assert narrow == "◆ TAXSENTRY · FINANCIAL SENTINEL"
-    assert ascii_banner == "TAXSENTRY · FINANCIAL SENTINEL"
+    assert full.startswith("◆ TAXSENTRY") and "lmstudio/local" in full
+    assert medium.startswith("◆ TAXSENTRY") and narrow.startswith("◆ TAXSENTRY")
+    assert ascii_banner.startswith("* TAXSENTRY")
 
 
 def test_slash_palette_filters_commands_and_shows_description():
-    results = list(SlashCompleter().get_completions(Document("/gm"), CompleteEvent(completion_requested=True)))
-    assert [item.text for item in results] == ["/gmail"]
-    assert "Hộp thư" in str(results[0].display_meta)
+    assert SlashCompleter.matches("/gm") == ["/gmail"]
+
+
+def test_tool_output_is_redacted_and_bounded():
+    preview, full, truncated = tool_text({"token": "secret", "output": "x" * 5000})
+    assert "secret" not in full and "[REDACTED]" in full
+    assert truncated and len(preview) < len(full)
+    assert redact({"nested": {"api_key": "bad"}})["nested"]["api_key"] == "[REDACTED]"
+    assert redact({"API-Key": "bad"})["API-Key"] == "[REDACTED]"
+    assert safe_text("safe\x1b[31m red\x00") == "safe red"
 
 
 @pytest.mark.asyncio
 async def test_cockpit_commands_are_compact(monkeypatch):
-    provider, store, output = FakeProvider(), FakeStore(), []
+    provider, store = FakeProvider(), FakeStore()
     monkeypatch.setattr("taxsentry.cockpit.JobStore", lambda: store)
-    monkeypatch.setattr("taxsentry.cockpit.PromptSession", FakePrompt)
     monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda value: provider)
     monkeypatch.setattr("taxsentry.cockpit.describe_config", lambda value: "configured")
     cockpit = Cockpit(settings())
-    cockpit.console = SimpleNamespace(print=lambda *args, **kwargs: output.append(args[0] if args else ""))
-    for command in ("/help", "/status", "/jobs", "/report", "/retry job", "/approve job", "/new", "/unknown"):
-        await cockpit._command(command)
+    async with cockpit.run_test(size=(80, 24)) as pilot:
+        for command in ("/help", "/status", "/jobs", "/report", "/retry job", "/approve job", "/new", "/unknown"):
+            await cockpit._command(command)
+        await pilot.pause()
+        assert len(cockpit.query(Markdown)) >= 9
     assert list(COMMANDS) == ["/help", "/status", "/gmail", "/jobs", "/report", "/retry", "/approve", "/new", "/exit"]
     assert store.requeued == [("job-123456", False), ("job-123456", True)]
-    assert "configured" in output and "Doanh thu ổn định" in output
+
+
+@pytest.mark.asyncio
+async def test_cockpit_reflows_and_streams_markdown(monkeypatch):
+    monkeypatch.setattr("taxsentry.cockpit.JobStore", FakeStore)
+    monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda value: FakeProvider())
+    cockpit = Cockpit(settings())
+    async with cockpit.run_test(size=(120, 40)) as pilot:
+        await cockpit._turn("hello")
+        await pilot.resize_terminal(60, 20)
+        await pilot.pause()
+        assert cockpit.size.width == 60
+        assert "TAXSENTRY" in str(cockpit.query_one("#topbar", Static).render())
+        assert any("Xin chào" in str(widget.source) for widget in cockpit.query(Markdown))
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        assert "Gmail" in str(cockpit.query_one("#footer", Static).render())
+        await cockpit._message("TaxSentry", "| A | B |\n|---|---|\n| tiếng Việt | `code` |\n\nhttps://example.com/" + "x" * 200, "assistant")
+        await pilot.resize_terminal(50, 20)
+        await pilot.pause()
+        assert cockpit.query_one("#transcript").max_scroll_x == 0
+        assert "60" in str(cockpit.query_one("#activity", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_composer_submit_multiline_history_palette_and_latest(monkeypatch):
+    monkeypatch.setattr("taxsentry.cockpit.JobStore", FakeStore)
+    monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda value: FakeProvider())
+    cockpit = Cockpit(settings())
+    submitted = []
+
+    async def capture(value):
+        submitted.append(value)
+
+    cockpit._turn = capture
+    async with cockpit.run_test(size=(80, 24)) as pilot:
+        composer = cockpit.query_one(Composer)
+        composer.focus()
+        await pilot.press("h", "i", "shift+enter", "t", "h", "e", "r", "e")
+        assert composer.text == "hi\nthere"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert submitted == ["hi\nthere"]
+        cockpit.input_history[:] = ["first", "second"]
+        cockpit.history_index = 2
+        await pilot.press("up")
+        assert composer.text.rstrip("\n") == "second"
+        composer.text = "/gm"
+        await pilot.pause()
+        assert cockpit.query_one("#command-palette", Static).has_class("visible")
+        await pilot.press("escape")
+        assert not cockpit.query_one("#command-palette", Static).has_class("visible")
+        cockpit.query_one("#new-content", Static).add_class("visible")
+        await pilot.press("end")
+        assert not cockpit.query_one("#new-content", Static).has_class("visible")
+
+
+@pytest.mark.asyncio
+async def test_tool_card_opens_full_overlay(monkeypatch):
+    monkeypatch.setattr("taxsentry.cockpit.JobStore", FakeStore)
+    monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda value: FakeProvider())
+    cockpit = Cockpit(settings())
+    async with cockpit.run_test(size=(80, 24)) as pilot:
+        card = ToolCard("lookup", "preview", "full output", True, 0.2)
+        await cockpit.query_one("#transcript").mount(card)
+        card.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(cockpit.screen, ToolOverlay)
+        await pilot.press("escape")
 
 
 @pytest.mark.asyncio
@@ -152,18 +232,12 @@ async def test_gmail_context_reaches_model_but_not_persistent_history():
 @pytest.mark.asyncio
 async def test_exit_closes_provider_without_background_services(monkeypatch):
     provider = FakeProvider()
-
-    class ExitPrompt(FakePrompt):
-        async def prompt_async(self, *args, **kwargs):
-            return "/exit"
-
     monkeypatch.setattr("taxsentry.cockpit.JobStore", FakeStore)
-    monkeypatch.setattr("taxsentry.cockpit.PromptSession", lambda **kwargs: ExitPrompt())
     monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda value: provider)
-    monkeypatch.setattr("taxsentry.cockpit.patch_stdout", lambda **kwargs: nullcontext())
     cockpit = Cockpit(settings())
-    cockpit._header = lambda: None
-    assert await cockpit.run() == 0 and provider.closed
+    cockpit.exit = lambda *args, **kwargs: None
+    await cockpit.action_exit_app()
+    assert provider.closed
 
 
 @pytest.mark.asyncio

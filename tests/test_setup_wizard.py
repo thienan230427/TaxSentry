@@ -6,11 +6,13 @@ from io import StringIO
 
 import pytest
 from rich.console import Console
+from textual.widgets import Input, Select
 
 from taxsentry.config import DEFAULT_SETTINGS
 from taxsentry.setup_wizard import (
     Cancelled,
     SetupSelection,
+    SetupWizardApp,
     WizardUI,
     _codex_session,
     _collect,
@@ -50,76 +52,38 @@ def config():
     return deepcopy(DEFAULT_SETTINGS)
 
 
-def inline_ui():
-    output = StringIO()
-    ui = WizardUI.__new__(WizardUI)
-    ui.console = Console(file=output, force_terminal=False, width=50)
-    ui.unicode = True
-    ui.marker, ui.done, ui.line = "◆", "✓", "│"
-    return ui, output
+@pytest.mark.asyncio
+async def test_textual_wizard_language_step_and_back_navigation():
+    app = SetupWizardApp(config())
+    async with app.run_test(size=(60, 20)) as pilot:
+        app.query_one("#language", Select).value = "en"
+        await pilot.click("#next")
+        await pilot.pause()
+        assert app.candidate["ui"]["language"] == "en" and app.step == 1
+        await pilot.click("#back")
+        await pilot.pause()
+        assert app.step == 0 and app.size.width == 60
 
 
-def test_inline_menu_is_transient_and_supports_keyboard_cancel(monkeypatch):
-    ui, output = inline_ui()
-    captured = {}
-    radio_options = {}
-    from prompt_toolkit.widgets import RadioList
-
-    def radio(*args, **kwargs):
-        radio_options.update(kwargs)
-        return RadioList(*args, **kwargs)
-
-    class InlineApplication:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-        def run(self):
-            return "chat"
-
-    monkeypatch.setattr("taxsentry.setup_wizard.Application", InlineApplication)
-    monkeypatch.setattr("taxsentry.setup_wizard.RadioList", radio)
-    assert ui.choose("Hồ sơ / Profile", "Chọn hồ sơ / Choose a profile", [("chat", "Chat Only\nTerminal cockpit")], "chat") == "chat"
-
-    keys = {getattr(key, "value", key) for binding in captured["key_bindings"].bindings for key in binding.keys}
-    assert captured["full_screen"] is False and captured["erase_when_done"] is True
-    assert {"c-m", "escape", "c-c"} <= keys
-    assert radio_options["show_numbers"] is True
-    assert "✓ Hồ sơ  Chat Only" in output.getvalue()
+@pytest.mark.asyncio
+async def test_textual_wizard_masks_secrets_and_never_summarizes_them():
+    app = SetupWizardApp(config())
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.step = 4
+        await app._render_step()
+        password = app.query_one("#gmail-password", Input)
+        password.value = "super-secret"
+        assert password.password is True
+        app.step = 5
+        await app._render_step()
+        await pilot.pause()
+        assert "super-secret" not in str(app.query_one("#summary").render())
 
 
-def test_password_input_is_erased_and_never_echoed(monkeypatch):
-    ui, output = inline_ui()
-    options = {}
-
-    class Session:
-        def __init__(self, *args, **kwargs):
-            options.update(kwargs)
-
-        def prompt(self, **kwargs):
-            return "super-secret"
-
-    monkeypatch.setattr("taxsentry.setup_wizard.PromptSession", Session)
-    assert ui.text("Telegram", "Bot token", password=True) == "super-secret"
-    assert options["is_password"] is True and options["erase_when_done"] is True
-    assert "super-secret" not in output.getvalue() and "••••••" in output.getvalue()
-
-
-def test_login_wait_supports_escape_and_ctrl_c(monkeypatch):
-    ui, _ = inline_ui()
-    captured = {}
-
-    class WaitApplication:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-        async def run_async(self):
-            return False
-
-    monkeypatch.setattr("taxsentry.setup_wizard.Application", WaitApplication)
-    with pytest.raises(Cancelled):
-        asyncio.run(ui.wait(asyncio.sleep(10)))
-    keys = {getattr(key, "value", key) for binding in captured["key_bindings"].bindings for key in binding.keys}
-    assert {"escape", "c-c"} <= keys
+def test_wait_uses_timeout_and_propagates_cancel():
+    ui = WizardUI(Console(file=StringIO()))
+    with pytest.raises(TimeoutError):
+        asyncio.run(ui.wait(asyncio.sleep(1), timeout=0.001))
 
 
 def test_unicode_symbols_fall_back_for_ascii_terminal(monkeypatch):
