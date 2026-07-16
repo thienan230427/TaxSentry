@@ -16,6 +16,8 @@ try {
     npm_config_cache: join(temp, "npm-cache"),
     TAXSENTRY_HOME: join(temp, "home"),
     PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring",
+    PYTHONUTF8: "1",
+    PYTHONIOENCODING: "utf-8",
   };
   const packOutput = execFileSync(process.execPath, [npmCli, "pack", "--json"], { cwd: root, env, encoding: "utf8" });
   const jsonStart = packOutput.lastIndexOf("\n[");

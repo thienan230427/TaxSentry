@@ -71,7 +71,11 @@ export function forwardToPython(
   spawnProcess: typeof spawn = spawn,
 ): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawnProcess(python, ["-m", "taxsentry", ...args], { stdio: "inherit", shell: false });
+    const child = spawnProcess(python, ["-m", "taxsentry", ...args], {
+      stdio: "inherit",
+      shell: false,
+      env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
+    });
     const forward = (signal: NodeJS.Signals) => {
       try {
         child.kill(signal);

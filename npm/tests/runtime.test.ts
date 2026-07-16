@@ -51,8 +51,10 @@ test("ensureRuntime installs once and reinstalls only on version drift", () => {
 
 test("forwardToPython preserves unicode arguments and exit code", async () => {
   let invocation: string[] = [];
-  const spawn = ((command: string, args: string[]) => {
+  let environment: NodeJS.ProcessEnv | undefined;
+  const spawn = ((command: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
     invocation = [command, ...args];
+    environment = options.env;
     const child = new EventEmitter() as EventEmitter & { kill: () => boolean };
     child.kill = () => true;
     queueMicrotask(() => child.emit("close", 7, null));
@@ -61,6 +63,8 @@ test("forwardToPython preserves unicode arguments and exit code", async () => {
 
   assert.equal(await forwardToPython("python", ["setup", "báo cáo tháng 5"], spawn), 7);
   assert.deepEqual(invocation, ["python", "-m", "taxsentry", "setup", "báo cáo tháng 5"]);
+  assert.equal(environment?.PYTHONUTF8, "1");
+  assert.equal(environment?.PYTHONIOENCODING, "utf-8");
 });
 
 test("npm help lists every public Python command without bootstrapping", () => {
