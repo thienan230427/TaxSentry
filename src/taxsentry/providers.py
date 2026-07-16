@@ -126,9 +126,15 @@ class CodexAppServerProvider:
         await self._notify("initialized", {})
 
     async def close(self) -> None:
-        if self.process and self.process.returncode is None:
-            self.process.terminate()
-            await self.process.wait()
+        process, self.process = self.process, None
+        self.thread_id = ""
+        if process and process.returncode is None:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
 
     async def start_login(self, *, device_code: bool = False) -> dict[str, Any]:
         if not self.process:
@@ -240,6 +246,7 @@ class CodexAppServerProvider:
             elif method in {"turn/failed", "error"}:
                 yield AgentEvent(EventType.ERROR, text=str(payload.get("error") or payload))
                 return
+        raise ProviderError("Codex app-server closed before the turn completed.")
 
     async def _send_request(self, method: str, params: dict[str, Any]) -> int:
         self._request_id += 1
@@ -272,10 +279,11 @@ def create_provider(settings: dict[str, Any]):
 
 
 def _codex_command() -> str:
-    command = os.getenv("CODEX_CLI_PATH") or shutil.which("codex")
+    command = os.getenv("CODEX_CLI_PATH") or ""
     if not command and (local_app_data := os.getenv("LOCALAPPDATA")):
         launchers = sorted((Path(local_app_data) / "OpenAI" / "Codex" / "bin").glob("*/codex.exe"), key=lambda path: path.stat().st_mtime, reverse=True)
         command = str(launchers[0]) if launchers else ""
+    command = command or shutil.which("codex") or ""
     if not command:
         raise ProviderError("Codex CLI not found. Install Codex or set CODEX_CLI_PATH.")
     return command

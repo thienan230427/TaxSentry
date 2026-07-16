@@ -9,19 +9,20 @@ from typing import Any
 
 from .config import MEMORY_DB, ensure_directories
 
-STATES = ("queued", "fetching", "extracting", "analyzing", "needs_review", "rendering", "delivering", "completed", "failed")
+STATES = ("queued", "fetching", "extracting", "analyzing", "needs_review", "rendering", "delivering", "completed", "failed", "cancelled")
 TRANSITIONS = {
-    "queued": {"fetching", "failed"},
-    "fetching": {"extracting", "failed"},
-    "extracting": {"analyzing", "needs_review", "failed"},
-    "analyzing": {"needs_review", "rendering", "failed"},
-    "needs_review": {"failed"},
-    "rendering": {"delivering", "failed"},
-    "delivering": {"completed", "failed"},
+    "queued": {"fetching", "failed", "cancelled"},
+    "fetching": {"extracting", "failed", "cancelled"},
+    "extracting": {"analyzing", "needs_review", "failed", "cancelled"},
+    "analyzing": {"needs_review", "rendering", "failed", "cancelled"},
+    "needs_review": {"failed", "cancelled"},
+    "rendering": {"delivering", "failed", "cancelled"},
+    "delivering": {"completed", "failed", "cancelled"},
     "completed": set(),
     "failed": set(),
+    "cancelled": set(),
 }
-REQUEUEABLE = {"fetching", "extracting", "analyzing", "needs_review", "rendering", "delivering", "failed"}
+REQUEUEABLE = {"fetching", "extracting", "analyzing", "needs_review", "rendering", "delivering", "failed", "cancelled"}
 
 
 class JobStore:
@@ -77,13 +78,26 @@ class JobStore:
         row = self.connection.execute("SELECT * FROM jobs WHERE id LIKE ? ORDER BY created_at DESC LIMIT 1", (f"{prefix}%",)).fetchone()
         return dict(row) if row else None
 
-    def requeue(self, job_id: str, *, approved: bool = False) -> None:
+    def requeue(self, job_id: str, *, approved: bool = False, reset_retries: bool = True) -> None:
         job = self.get(job_id)
         if not job or job["state"] not in REQUEUEABLE or (approved and job["state"] != "needs_review"):
             raise ValueError("Only interrupted, failed, or needs-review jobs can be requeued")
-        self.connection.execute("UPDATE jobs SET state='queued', retries=0, error='', updated_at=? WHERE id=?", (self.now(), job_id))
-        self.event(job_id, "approved" if approved else "retry_requested", {})
+        retries = 0 if reset_retries else int(job["retries"])
+        error = "" if reset_retries else str(job["error"])
+        self.connection.execute("UPDATE jobs SET state='queued', retries=?, error=?, updated_at=? WHERE id=?", (retries, error, self.now(), job_id))
+        kind = "approved" if approved else "retry_requested" if reset_retries else "retry_scheduled"
+        self.event(job_id, kind, {"retries": retries})
         self.connection.commit()
+
+    def request_cancel(self, job_id: str) -> None:
+        job = self.get(job_id)
+        if not job or job["state"] in {"completed", "failed", "cancelled"}:
+            raise ValueError("Only active jobs can be cancelled")
+        self.event(job_id, "cancel_requested", {})
+
+    def cancel_requested(self, job_id: str) -> bool:
+        row = self.connection.execute("SELECT kind FROM events WHERE job_id=? AND kind IN ('cancel_requested', 'cancelled') ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone()
+        return bool(row and row["kind"] == "cancel_requested")
 
     def is_approved(self, job_id: str) -> bool:
         row = self.connection.execute("SELECT kind FROM events WHERE job_id=? AND kind IN ('approved', 'approval_consumed') ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone()
@@ -129,6 +143,11 @@ class JobStore:
 
     def recent_jobs(self, limit: int = 10) -> list[dict[str, Any]]:
         return [dict(row) for row in self.connection.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))]
+
+    def state_counts(self) -> dict[str, int]:
+        counts = {state: 0 for state in STATES}
+        counts.update({row["state"]: int(row["total"]) for row in self.connection.execute("SELECT state, COUNT(*) total FROM jobs GROUP BY state")})
+        return counts
 
     def latest_report(self) -> dict[str, Any] | None:
         row = self.connection.execute("SELECT reports.*, jobs.subject, jobs.sender FROM reports JOIN jobs ON jobs.id=reports.job_id ORDER BY reports.created_at DESC LIMIT 1").fetchone()

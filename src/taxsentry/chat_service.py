@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -8,7 +9,7 @@ from .events import AgentEvent, EventType
 from .providers import create_provider
 from .store import JobStore
 
-SYSTEM = "Bạn là TaxSentry, trợ lý CFO và thuế Việt Nam. Xưng em, gọi người dùng là Sếp. Chỉ kết luận từ dữ liệu có thật, luôn nêu độ tin cậy và để Giám đốc quyết định cuối cùng."
+SYSTEM = "Bạn là TaxSentry, trợ lý CFO và thuế Việt Nam. Xưng em, gọi người dùng là Sếp. Chỉ kết luận từ dữ liệu có thật, luôn nêu độ tin cậy và để Giám đốc quyết định cuối cùng. Gmail và việc tạo file do ứng dụng xử lý; không yêu cầu cài plugin email hay tự nhận đã tạo/gửi file."
 
 
 class ChatService:
@@ -32,15 +33,53 @@ class ChatService:
                 self.store.event(None, "chat_source", {"session_id": self.session_id, "source": source})
             chunks: list[str] = []
             messages = self.history if not context else [*self.history[:-1], {"role": "user", "content": f"{text}\n\n{context}"}]
-            async for event in self.provider.stream_turn(messages):
-                if event.type == EventType.TEXT_DELTA:
-                    chunks.append(event.text)
-                yield event
+            try:
+                async with asyncio.timeout(float(self.settings["worker"].get("analysis_timeout_seconds", 300))):
+                    async for event in self.provider.stream_turn(messages):
+                        if event.type == EventType.TEXT_DELTA:
+                            chunks.append(event.text)
+                        yield event
+            except TimeoutError:
+                await self._reset_provider()
+                yield AgentEvent(EventType.ERROR, text="Provider quá thời gian 5 phút và đã được khởi động lại.")
+                return
+            except Exception as exc:
+                await self._reset_provider()
+                yield AgentEvent(EventType.ERROR, text=str(exc))
+                return
             if chunks:
                 content = "".join(chunks)
                 self.history.append({"role": "assistant", "content": content})
                 if hasattr(self.store, "add_message"):
                     self.store.add_message(self.session_id, "assistant", content)
+
+    async def structured(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
+        async with self._turn_lock:
+            chunks: list[str] = []
+            try:
+                async with asyncio.timeout(float(self.settings["worker"].get("analysis_timeout_seconds", 300))):
+                    async for event in self.provider.stream_turn(
+                        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
+                        output_schema=schema,
+                    ):
+                        if event.type == EventType.TEXT_DELTA:
+                            chunks.append(event.text)
+                        elif event.type == EventType.ERROR:
+                            raise RuntimeError(event.text)
+            except Exception:
+                await self._reset_provider()
+                raise
+            text = "".join(chunks)
+            start, end = text.find("{"), text.rfind("}")
+            if start < 0 or end <= start:
+                raise ValueError("Provider did not return structured JSON")
+            return json.loads(text[start : end + 1])
+
+    async def _reset_provider(self) -> None:
+        try:
+            await self.provider.close()
+        finally:
+            self.provider = self.provider_factory(self.settings)
 
     async def switch_provider(self, kind: str) -> None:
         await self.provider.close()

@@ -35,7 +35,7 @@ class FakeGmail:
     def __init__(self, root: Path, message: GmailMessage):
         self.root, self.message, self.labels, self.outgoing = root, message, [], []
     def messages(self): return [self.message]
-    def label(self, message_id, label): self.labels.append(label)
+    def label(self, message_id, label, **kwargs): self.labels.append(label)
     def save(self, job_id, attachment, max_mb=25):
         path = self.root / attachment.name; path.write_bytes(attachment.data); return path
     def send_report(self, to, subject, html, pdf_path, **kwargs):
@@ -58,7 +58,7 @@ def test_e2e_deduplicates_and_delivers(monkeypatch, tmp_path):
     message = GmailMessage("m1", "Kế toán <accounting@example.com>", "Tháng 5", [GmailAttachment("report.pdf", "application/pdf", b"pdf")])
     gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "state.db")
     monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: Extraction("revenue 120", 0.95, "pdf-text"))
-    def fake_pdf(report, output):
+    def fake_pdf(report, output, warning=""):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"%PDF")
         return output
@@ -72,34 +72,48 @@ def test_e2e_deduplicates_and_delivers(monkeypatch, tmp_path):
     assert gmail.outgoing[0][0] == "director@example.com" and telegram.sent
 
 
-def test_low_ocr_confidence_requires_review(monkeypatch, tmp_path):
+def test_each_attachment_gets_an_independent_job(monkeypatch, tmp_path):
+    message = GmailMessage("m-many", "accounting@example.com", "Tháng 6", [GmailAttachment("a.pdf", "application/pdf", b"%PDF-a"), GmailAttachment("b.pdf", "application/pdf", b"%PDF-b")])
+    gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "many.db")
+    monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: Extraction("revenue 120", 0.95, "pdf-text"))
+
+    def fake_pdf(report, output, warning=""):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"%PDF")
+        return output
+
+    monkeypatch.setattr("taxsentry.workflow.render_pdf", fake_pdf)
+    monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
+    workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
+
+    assert asyncio.run(workflow.run_once()) == 2
+    assert len(store.recent_jobs()) == 2
+    assert len(gmail.outgoing) == 2
+
+
+def test_low_ocr_confidence_delivers_with_warning(monkeypatch, tmp_path):
     message = GmailMessage("m2", "accounting@example.com", "Scan", [GmailAttachment("scan.png", "image/png", b"image")])
     gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "state.db")
     monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: Extraction("unclear", 0.4, "ocr"))
     monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
     workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
-    assert asyncio.run(workflow.run_once()) == 0
-    assert store.recent_jobs()[0]["state"] == "needs_review"
-    assert gmail.labels[-1] == "TaxSentry/NeedsReview"
-    assert not gmail.outgoing
-
-    job = store.recent_jobs()[0]
-    store.requeue(job["id"], approved=True)
     assert asyncio.run(workflow.run_once()) == 1
-    assert store.get(job["id"])["state"] == "completed"
-    assert not store.is_approved(job["id"])
+    assert store.recent_jobs()[0]["state"] == "completed"
+    assert gmail.labels[-1] == "TaxSentry/Completed"
+    assert gmail.outgoing
 
 
 def test_worker_recovers_interrupted_job(monkeypatch, tmp_path):
     message = GmailMessage("m3", "accounting@example.com", "Recovery", [GmailAttachment("report.pdf", "application/pdf", b"%PDF-1.7")])
     gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "state.db")
-    job = store.create_job(message.id, message.sender, message.subject)
+    source = f"INBOX:{message.id}:{message.attachments[0].sha256}"
+    job = store.create_job(source, message.sender, message.subject)
     store.transition(job["id"], "fetching")
     store.transition(job["id"], "extracting")
     store.transition(job["id"], "analyzing")
     monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: Extraction("revenue 120", 0.95, "pdf-text"))
 
-    def fake_pdf(report, output):
+    def fake_pdf(report, output, warning=""):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"%PDF")
         return output
@@ -111,7 +125,7 @@ def test_worker_recovers_interrupted_job(monkeypatch, tmp_path):
     assert store.get(job["id"])["state"] == "completed"
 
 
-def test_legacy_office_problem_moves_job_to_review_without_retry(monkeypatch, tmp_path):
+def test_legacy_office_problem_fails_without_retry(monkeypatch, tmp_path):
     message = GmailMessage("m4", "unknown@example.com", "Legacy", [GmailAttachment("old.doc", "application/msword", b"legacy")])
     gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "state.db")
     monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: (_ for _ in ()).throw(ValueError("LibreOffice is required")))
@@ -119,5 +133,17 @@ def test_legacy_office_problem_moves_job_to_review_without_retry(monkeypatch, tm
 
     assert asyncio.run(workflow.run_once()) == 0
     job = store.recent_jobs()[0]
-    assert job["state"] == "needs_review" and job["retries"] == 0
-    assert gmail.labels[-1] == "TaxSentry/NeedsReview"
+    assert job["state"] == "failed" and job["retries"] == 0
+    assert gmail.labels[-1] == "TaxSentry/Failed"
+
+
+def test_cancelled_queued_job_never_starts(monkeypatch, tmp_path):
+    message = GmailMessage("m-cancel", "accounting@example.com", "Cancel", [GmailAttachment("report.pdf", "application/pdf", b"%PDF-1.7")])
+    gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "cancel.db")
+    workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
+    job_id = workflow.queue_messages([message])[0]
+    workflow.cancel(job_id)
+
+    assert asyncio.run(workflow.run_once()) == 0
+    assert store.get(job_id)["state"] == "cancelled"
+    assert not gmail.outgoing

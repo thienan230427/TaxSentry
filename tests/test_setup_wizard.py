@@ -6,7 +6,7 @@ from io import StringIO
 
 import pytest
 from rich.console import Console
-from textual.widgets import Input, Select
+from textual.widgets import Input, Static
 
 from taxsentry.config import DEFAULT_SETTINGS
 from taxsentry.setup_wizard import (
@@ -52,15 +52,29 @@ def config():
     return deepcopy(DEFAULT_SETTINGS)
 
 
+def test_interactive_wizard_runs_inline_without_clearing_scrollback(monkeypatch):
+    captured = {}
+
+    def run(app, **kwargs):
+        captured.update(kwargs)
+
+    tty = type("TTY", (), {"isatty": lambda self: True})()
+    monkeypatch.setattr("taxsentry.setup_wizard.sys.stdin", tty)
+    monkeypatch.setattr("taxsentry.setup_wizard.sys.stdout", tty)
+    monkeypatch.setattr(SetupWizardApp, "run", run)
+
+    assert run_setup_wizard(config(), console=None) is None
+    assert captured == {"inline": True, "inline_no_clear": True}
+
+
 @pytest.mark.asyncio
 async def test_textual_wizard_language_step_and_back_navigation():
     app = SetupWizardApp(config())
     async with app.run_test(size=(60, 20)) as pilot:
-        app.query_one("#language", Select).value = "en"
-        await pilot.click("#next")
+        await pilot.press("down", "enter")
         await pilot.pause()
         assert app.candidate["ui"]["language"] == "en" and app.step == 1
-        await pilot.click("#back")
+        await pilot.press("escape")
         await pilot.pause()
         assert app.step == 0 and app.size.width == 60
 
@@ -69,15 +83,63 @@ async def test_textual_wizard_language_step_and_back_navigation():
 async def test_textual_wizard_masks_secrets_and_never_summarizes_them():
     app = SetupWizardApp(config())
     async with app.run_test(size=(80, 24)) as pilot:
-        app.step = 4
+        app.steps = ["gmail_password", "confirm"]
+        app.step = 0
         await app._render_step()
-        password = app.query_one("#gmail-password", Input)
-        password.value = "super-secret"
+        password = app.query_one("#answer", Input)
+        password.value = "abcd efgh ijkl mnop"
         assert password.password is True
-        app.step = 5
-        await app._render_step()
+        await pilot.press("enter")
         await pilot.pause()
-        assert "super-secret" not in str(app.query_one("#summary").render())
+        rendered = "\n".join(str(item.render()) for item in app.query(Static))
+        assert "abcd efgh ijkl mnop" not in rendered
+        assert "abcd efgh ijkl mnop" not in "\n".join(app.history)
+
+
+@pytest.mark.asyncio
+async def test_quick_setup_first_run_disables_integrations_but_returning_keeps_them():
+    first = SetupWizardApp(config())
+    async with first.run_test():
+        first.step = 1
+        await first._accept("quick")
+        assert first.candidate["gmail"]["enabled"] is False
+        assert first.candidate["telegram"]["enabled"] is False
+
+    current = config()
+    current["configured"] = True
+    current["gmail"]["enabled"] = True
+    current["telegram"]["enabled"] = True
+    returning = SetupWizardApp(current)
+    async with returning.run_test():
+        await returning._accept("quick")
+        assert returning.candidate["gmail"]["enabled"] is True
+        assert returning.candidate["telegram"]["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_full_setup_builds_only_the_enabled_service_questions():
+    app = SetupWizardApp(config())
+    async with app.run_test():
+        await app._accept("vi")
+        await app._accept("full")
+        await app._accept("email")
+        assert "gmail_account" in app.steps and "gmail_password" in app.steps
+        assert "telegram_chats" not in app.steps and "telegram_token" not in app.steps
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("section", "expected"),
+    [("language", "language"), ("provider", "provider_detail"), ("gmail", "gmail_enabled"), ("telegram", "telegram_enabled"), ("poll", "poll")],
+)
+async def test_returning_setup_can_target_each_section(section, expected):
+    current = config()
+    current["configured"] = True
+    app = SetupWizardApp(current)
+    async with app.run_test():
+        await app._accept("section")
+        await app._accept(section)
+        assert expected in app.steps
 
 
 def test_wait_uses_timeout_and_propagates_cancel():
@@ -271,7 +333,7 @@ def test_successful_gmail_setup_records_current_uid(monkeypatch):
     monkeypatch.setattr("taxsentry.setup_wizard.save_config", lambda value: saved.append(value))
 
     assert authenticate_selection(selection, Console(file=StringIO())) == 0
-    assert saved[0]["gmail"]["process_after_uid"] == 42
+    assert saved[0]["gmail"]["process_after_uids"] == {"INBOX": 42}
 
 
 def test_setup_cancel_does_not_write_config(monkeypatch):

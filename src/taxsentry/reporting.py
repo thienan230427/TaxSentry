@@ -9,10 +9,44 @@ REPORT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "executive_summary": {"type": "string"},
-        "performance": {"type": "array", "items": {"type": "object"}},
-        "tax_risks": {"type": "array", "items": {"type": "object"}},
+        "performance": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "metric": {"type": "string"},
+                    "value": {"type": "string"},
+                    "assessment": {"type": "string"},
+                },
+                "required": ["metric", "value", "assessment"],
+                "additionalProperties": False,
+            },
+        },
+        "tax_risks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "severity": {"type": "string"},
+                    "title": {"type": "string"},
+                    "evidence": {"type": "string"},
+                    "regulation": {"type": "string"},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": ["severity", "title", "evidence", "regulation", "confidence"],
+                "additionalProperties": False,
+            },
+        },
         "missing_data": {"type": "array", "items": {"type": "string"}},
-        "recommendations": {"type": "array", "items": {"type": "object"}},
+        "recommendations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"priority": {"type": "string"}, "action": {"type": "string"}},
+                "required": ["priority", "action"],
+                "additionalProperties": False,
+            },
+        },
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
     },
     "required": ["executive_summary", "performance", "tax_risks", "missing_data", "recommendations", "confidence"],
@@ -28,12 +62,23 @@ def parse_report(text: str) -> dict[str, Any]:
     missing = [key for key in REPORT_SCHEMA["required"] if key not in report]
     if missing:
         raise ValueError(f"Report is missing: {', '.join(missing)}")
+    for key in ("performance", "tax_risks", "missing_data", "recommendations"):
+        if not isinstance(report[key], list):
+            raise ValueError(f"Report field must be an array: {key}")
+    for key in ("performance", "tax_risks", "recommendations"):
+        required = REPORT_SCHEMA["properties"][key]["items"]["required"]
+        for index, item in enumerate(report[key]):
+            if not isinstance(item, dict) or any(name not in item for name in required):
+                raise ValueError(f"Invalid {key} item at index {index}")
     report["confidence"] = max(0.0, min(1.0, float(report["confidence"])))
     return report
 
 
-def markdown(report: dict[str, Any]) -> str:
-    lines = ["# Báo cáo Đánh giá Hiệu quả Kinh doanh & Rủi ro Thuế", "", "## Tóm tắt điều hành", str(report["executive_summary"]), "", "## Hiệu quả kinh doanh"]
+def markdown(report: dict[str, Any], warning: str = "") -> str:
+    lines = ["# Báo cáo Đánh giá Hiệu quả Kinh doanh & Rủi ro Thuế"]
+    if warning:
+        lines.extend(["", f"> CẢNH BÁO ĐỘ TIN CẬY: {warning}"])
+    lines.extend(["", "## Tóm tắt điều hành", str(report["executive_summary"]), "", "## Hiệu quả kinh doanh"])
     for item in report["performance"]:
         lines.append(f"- **{item.get('metric', 'Chỉ số')}**: {item.get('value', 'n/a')} — {item.get('assessment', '')}")
     lines.extend(["", "## Rủi ro thuế"])
@@ -48,14 +93,15 @@ def markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def html_summary(report: dict[str, Any]) -> str:
-    return f"<h2>TaxSentry — Báo cáo mới</h2><p>{html.escape(str(report['executive_summary']))}</p><p><b>Độ tin cậy:</b> {float(report['confidence']):.0%}</p><p>Chi tiết nằm trong PDF đính kèm.</p>"
+def html_summary(report: dict[str, Any], warning: str = "") -> str:
+    notice = f"<p><b>Cảnh báo:</b> {html.escape(warning)}</p>" if warning else ""
+    return f"<h2>TaxSentry — Báo cáo mới</h2>{notice}<p>{html.escape(str(report['executive_summary']))}</p><p><b>Độ tin cậy:</b> {float(report['confidence']):.0%}</p><p>Chi tiết nằm trong PDF đính kèm.</p>"
 
 
-def render_pdf(report: dict[str, Any], output: Path) -> Path:
+def render_pdf(report: dict[str, Any], output: Path, warning: str = "") -> Path:
     from .core.pdf_generator import TaxSentryPDFGenerator
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    if not TaxSentryPDFGenerator().generate(markdown(report), str(output)):
+    if not TaxSentryPDFGenerator().generate(markdown(report, warning), str(output)):
         raise RuntimeError("Unable to render PDF report")
     return output

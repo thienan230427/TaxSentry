@@ -13,14 +13,11 @@ from taxsentry.cockpit import (
     Cockpit,
     Composer,
     SlashCompleter,
-    ToolCard,
-    ToolOverlay,
     banner_text,
-    redact,
     safe_text,
-    tool_text,
 )
 from taxsentry.events import AgentEvent, EventType
+from taxsentry.gmail import GmailAttachment, GmailMessage
 
 
 def settings(**overrides):
@@ -94,12 +91,7 @@ def test_slash_palette_filters_commands_and_shows_description():
     assert SlashCompleter.matches("/gm") == ["/gmail"]
 
 
-def test_tool_output_is_redacted_and_bounded():
-    preview, full, truncated = tool_text({"token": "secret", "output": "x" * 5000})
-    assert "secret" not in full and "[REDACTED]" in full
-    assert truncated and len(preview) < len(full)
-    assert redact({"nested": {"api_key": "bad"}})["nested"]["api_key"] == "[REDACTED]"
-    assert redact({"API-Key": "bad"})["API-Key"] == "[REDACTED]"
+def test_agent_text_drops_terminal_control_sequences():
     assert safe_text("safe\x1b[31m red\x00") == "safe red"
 
 
@@ -114,8 +106,8 @@ async def test_cockpit_commands_are_compact(monkeypatch):
         for command in ("/help", "/status", "/jobs", "/report", "/retry job", "/approve job", "/new", "/unknown"):
             await cockpit._command(command)
         await pilot.pause()
-        assert len(cockpit.query(Markdown)) >= 9
-    assert list(COMMANDS) == ["/help", "/status", "/gmail", "/jobs", "/report", "/retry", "/approve", "/new", "/exit"]
+        assert len(cockpit.query(Markdown)) == 8
+    assert list(COMMANDS) == ["/help", "/status", "/gmail", "/create", "/cancel", "/jobs", "/report", "/retry", "/approve", "/new", "/exit"]
     assert store.requeued == [("job-123456", False), ("job-123456", True)]
 
 
@@ -129,7 +121,7 @@ async def test_cockpit_reflows_and_streams_markdown(monkeypatch):
         await pilot.resize_terminal(60, 20)
         await pilot.pause()
         assert cockpit.size.width == 60
-        assert "TAXSENTRY" in str(cockpit.query_one("#topbar", Static).render())
+        assert "TaxSentry" in str(cockpit.query_one("#topbar", Static).render())
         assert any("Xin chào" in str(widget.source) for widget in cockpit.query(Markdown))
         await pilot.resize_terminal(100, 30)
         await pilot.pause()
@@ -138,7 +130,7 @@ async def test_cockpit_reflows_and_streams_markdown(monkeypatch):
         await pilot.resize_terminal(50, 20)
         await pilot.pause()
         assert cockpit.query_one("#transcript").max_scroll_x == 0
-        assert "60" in str(cockpit.query_one("#activity", Static).render())
+        assert "TaxSentry" in str(cockpit.query_one("#topbar", Static).render())
 
 
 @pytest.mark.asyncio
@@ -175,18 +167,41 @@ async def test_composer_submit_multiline_history_palette_and_latest(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_tool_card_opens_full_overlay(monkeypatch):
+async def test_palette_is_capped_and_routine_notice_stays_out_of_transcript(monkeypatch):
     monkeypatch.setattr("taxsentry.cockpit.JobStore", FakeStore)
     monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda value: FakeProvider())
     cockpit = Cockpit(settings())
     async with cockpit.run_test(size=(80, 24)) as pilot:
-        card = ToolCard("lookup", "preview", "full output", True, 0.2)
-        await cockpit.query_one("#transcript").mount(card)
-        card.focus()
-        await pilot.press("enter")
+        before = len(cockpit.query(Markdown))
+        await cockpit.notice("background worker ready")
+        cockpit.query_one(Composer).text = "/"
         await pilot.pause()
-        assert isinstance(cockpit.screen, ToolOverlay)
-        await pilot.press("escape")
+        assert len(cockpit.palette_matches) == 6
+        assert len(str(cockpit.query_one("#command-palette", Static).render()).splitlines()) == 6
+        assert len(cockpit.query(Markdown)) == before
+        assert "background worker ready" in str(cockpit.query_one("#activity", Static).render())
+        cockpit._clear_notice()
+        assert "background worker ready" not in str(cockpit.query_one("#activity", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_internal_agent_events_do_not_render_logs(monkeypatch):
+    class Provider(FakeProvider):
+        async def stream_turn(self, messages):
+            yield AgentEvent(EventType.TOOL_STARTED, name="userMessage", data={"content": messages})
+            yield AgentEvent(EventType.TOOL_COMPLETED, name="userMessage", data={"content": messages})
+            yield AgentEvent(EventType.TEXT_DELTA, text="Chỉ hiện câu trả lời")
+            yield AgentEvent(EventType.TOOL_COMPLETED, name="agentMessage", data={"text": "raw"})
+            yield AgentEvent(EventType.TURN_COMPLETED)
+
+    monkeypatch.setattr("taxsentry.cockpit.JobStore", FakeStore)
+    monkeypatch.setattr("taxsentry.cockpit.create_provider", lambda value: Provider())
+    cockpit = Cockpit(settings())
+    async with cockpit.run_test(size=(80, 24)):
+        await cockpit._turn("hello")
+        rendered = "\n".join(str(widget.source) for widget in cockpit.query(Markdown))
+        assert "Chỉ hiện câu trả lời" in rendered
+        assert "userMessage" not in rendered and "agentMessage" not in rendered
 
 
 @pytest.mark.asyncio
@@ -212,6 +227,21 @@ async def test_chat_service_serializes_terminal_and_telegram_turns():
     await asyncio.gather(consume("terminal", "terminal"), consume("telegram", "telegram:42"))
     assert overlaps == [1, 1]
     assert [item["content"] for item in chat.history if item["role"] == "user"] == ["terminal", "telegram"]
+
+
+@pytest.mark.asyncio
+async def test_chat_timeout_resets_a_hung_provider():
+    class Provider(FakeProvider):
+        async def stream_turn(self, messages):
+            await asyncio.sleep(1)
+            yield AgentEvent(EventType.TURN_COMPLETED)
+
+    provider = Provider()
+    value = settings(worker={"analysis_timeout_seconds": 0.01})
+    chat = ChatService(value, store=FakeStore(), provider_factory=lambda config: provider)
+    events = [event async for event in chat.stream("hello")]
+    assert events[-1].type == EventType.ERROR
+    assert provider.closed
 
 
 @pytest.mark.asyncio
@@ -277,3 +307,51 @@ async def test_telegram_uses_allowlist_and_shared_chat(monkeypatch):
     await callback(SimpleNamespace(effective_chat=SimpleNamespace(id=7), message=SimpleNamespace(text="x", reply_text=reply_text)), None)
     await callback(SimpleNamespace(effective_chat=SimpleNamespace(id=42), message=SimpleNamespace(text="x", reply_text=reply_text)), None)
     assert replies == ["Đã nhận"] and sources == ["telegram:42"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_gmail_search_requires_confirmation_then_queues(monkeypatch):
+    import telegram.ext
+
+    replies, handlers, processed = [], [], []
+    message = GmailMessage("42", "bank@example.com", "Báo cáo", [GmailAttachment("report.pdf", "application/pdf", b"%PDF-1.7")])
+
+    class App:
+        bot_data = {}
+        def add_handler(self, handler): handlers.append(handler)
+
+    class Builder:
+        def token(self, token): return self
+        def build(self): return App()
+
+    class Application:
+        @staticmethod
+        def builder(): return Builder()
+
+    class Gmail:
+        def search(self, query, limit): return [message]
+
+    class Workflow:
+        store, gmail = FakeStore(), Gmail()
+        def queue_messages(self, messages): return ["job-123456"]
+        async def process_messages(self, messages):
+            processed.extend(messages)
+            return 1
+
+    monkeypatch.setattr(telegram.ext, "Application", Application)
+    monkeypatch.setattr(telegram.ext, "CommandHandler", lambda name, callback: (name, callback))
+    monkeypatch.setattr(telegram.ext, "MessageHandler", lambda filters, callback: ("chat", callback))
+    monkeypatch.setattr(telegram_bot, "load_config", lambda: {"director": {"telegram_chat_ids": [42]}})
+    monkeypatch.setattr(telegram_bot, "get_secret", lambda name: "token")
+    telegram_bot.build_application(SimpleNamespace(), workflow=Workflow())
+    commands = dict(handlers[:-1])
+
+    async def reply_text(text): replies.append(text)
+    update = SimpleNamespace(effective_chat=SimpleNamespace(id=42), message=SimpleNamespace(reply_text=reply_text))
+    await commands["gmail"](update, SimpleNamespace(args=["search", "has:attachment"]))
+    await commands["gmail"](update, SimpleNamespace(args=["process", "42"]))
+    await asyncio.sleep(0)
+
+    assert replies[0].startswith("Đã nhận")
+    assert any("Xác nhận" in reply for reply in replies)
+    assert processed == [message]

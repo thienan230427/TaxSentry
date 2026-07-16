@@ -55,6 +55,8 @@ class GmailMessage:
     recipient: str = ""
     date: str = ""
     body: str = ""
+    mailbox: str = "INBOX"
+    gmail_id: str = ""
 
 
 class _HTMLText(HTMLParser):
@@ -70,7 +72,7 @@ class _HTMLText(HTMLParser):
 def natural_gmail_query(text: str, *, now: datetime | None = None) -> str:
     """Translate the small, predictable Vietnamese/English inbox vocabulary used by chat."""
     lowered = text.casefold()
-    parts = ["in:inbox"]
+    parts = ["in:anywhere"]
     if "hôm nay" in lowered or "today" in lowered:
         parts.append(f"after:{(now or datetime.now()).strftime('%Y/%m/%d')}")
     if "chưa đọc" in lowered or "unread" in lowered:
@@ -111,50 +113,114 @@ class GmailClient:
 
     def messages(self) -> list[GmailMessage]:
         self.authenticate()
-        self._imap_select()
-        marker = self.settings.get("gmail", {}).get("process_after_uid")
-        if marker is None:
-            return []
-        status, data = self.imap.uid("search", None, "UID", f"{int(marker) + 1}:*", "X-GM-RAW", '"has:attachment -label:TaxSentry/Completed"')
+        markers = self.settings.get("gmail", {}).setdefault("process_after_uids", {})
+        legacy_marker = self.settings.get("gmail", {}).get("process_after_uid")
+        if not markers and legacy_marker is not None:
+            markers["INBOX"] = int(legacy_marker)
+        messages: list[GmailMessage] = []
+        for mailbox in self.mailboxes():
+            marker = markers.get(mailbox)
+            if marker is None:
+                continue
+            self._imap_select(mailbox)
+            status, data = self.imap.uid(
+                "search",
+                None,
+                "UID",
+                f"{int(marker) + 1}:*",
+                "X-GM-RAW",
+                '"has:attachment -in:sent -in:drafts -label:TaxSentry/Completed -label:TaxSentry/Failed"',
+            )
+            if status != "OK":
+                raise RuntimeError(f"Gmail IMAP search failed: {mailbox}")
+            uids = (data[0] or b"").split()
+            if uids:
+                markers[mailbox] = max(int(uid) for uid in uids)
+            messages.extend(self._imap_message(uid.decode(), mailbox) for uid in uids)
+        unique: dict[str, GmailMessage] = {}
+        for message in messages:
+            unique.setdefault(message.gmail_id or f"{message.mailbox}:{message.id}", message)
+        return [message for message in unique.values() if message.attachments]
+
+    def mailboxes(self) -> list[str]:
+        self.authenticate()
+        if not hasattr(self.imap, "list"):
+            return ["INBOX"]
+        status, data = self.imap.list()
         if status != "OK":
-            raise RuntimeError("Gmail IMAP search failed")
-        messages = [self._imap_message(uid.decode()) for uid in (data[0] or b"").split()]
-        return [message for message in messages if message.attachments]
+            return ["INBOX"]
+        found: dict[str, str] = {}
+        for raw in data or []:
+            text = raw.decode(errors="replace") if isinstance(raw, bytes) else str(raw)
+            match = re.search(r'\s(?:"((?:\\.|[^"])*)"|([^\s]+))$', text)
+            if not match:
+                continue
+            mailbox = (match.group(1) or match.group(2) or "").replace(r'\"', '"')
+            lowered = text.casefold()
+            if r"\all" in lowered:
+                found["all"] = mailbox
+            elif r"\junk" in lowered:
+                found["junk"] = mailbox
+            elif r"\trash" in lowered:
+                found["trash"] = mailbox
+        return [found[key] for key in ("all", "junk", "trash") if key in found] or ["INBOX"]
+
+    def latest_uids(self) -> dict[str, int]:
+        self.authenticate()
+        latest: dict[str, int] = {}
+        for mailbox in self.mailboxes():
+            self._imap_select(mailbox)
+            status, data = self.imap.uid("search", None, "ALL")
+            if status != "OK":
+                raise RuntimeError(f"Gmail IMAP search failed: {mailbox}")
+            latest[mailbox] = max((int(uid) for uid in (data[0] or b"").split()), default=0)
+        return latest
 
     def latest_uid(self) -> int:
         self.authenticate()
-        self._imap_select()
+        self._imap_select("INBOX")
         status, data = self.imap.uid("search", None, "ALL")
         if status != "OK":
             raise RuntimeError("Gmail IMAP search failed")
         return max((int(uid) for uid in (data[0] or b"").split()), default=0)
 
-    def search(self, query: str = "in:inbox newer_than:30d", limit: int = 20) -> list[GmailMessage]:
+    def search(self, query: str = "in:anywhere newer_than:30d", limit: int = 20) -> list[GmailMessage]:
         self.authenticate()
-        self._imap_select()
-        status, data = self.imap.uid("search", None, "X-GM-RAW", f'"{query.replace(chr(34), chr(92) + chr(34))}"')
-        if status != "OK":
-            raise RuntimeError("Gmail IMAP search failed")
-        uids = (data[0] or b"").split()[-max(1, min(limit, 20)):]
-        return [self._imap_message(uid.decode()) for uid in reversed(uids)]
+        found: list[GmailMessage] = []
+        escaped = query.replace(chr(34), chr(92) + chr(34))
+        for mailbox in self.mailboxes():
+            self._imap_select(mailbox)
+            status, data = self.imap.uid("search", None, "X-GM-RAW", f'"{escaped}"')
+            if status != "OK":
+                raise RuntimeError(f"Gmail IMAP search failed: {mailbox}")
+            uids = (data[0] or b"").split()[-max(1, min(limit, 20)):]
+            found.extend(self._imap_message(uid.decode(), mailbox) for uid in reversed(uids))
+        unique: dict[str, GmailMessage] = {}
+        for message in found:
+            unique.setdefault(message.gmail_id or f"{message.mailbox}:{message.id}", message)
+        return list(unique.values())[: max(1, min(limit, 20))]
 
-    def read(self, uid: str) -> GmailMessage:
+    def read(self, uid: str, mailbox: str = "INBOX") -> GmailMessage:
         if not uid.isdigit():
             raise ValueError("Gmail UID must be numeric")
         self.authenticate()
-        self._imap_select()
-        return self._imap_message(uid)
+        self._imap_select(mailbox)
+        return self._imap_message(uid, mailbox)
 
-    def _imap_select(self) -> None:
-        status, _ = self.imap.select("INBOX")
+    def _imap_select(self, mailbox: str = "INBOX") -> None:
+        escaped = mailbox.replace("\\", "\\\\").replace('"', '\\"')
+        status, _ = self.imap.select(f'"{escaped}"')
         if status != "OK":
-            raise RuntimeError("Gmail IMAP inbox is unavailable")
+            raise RuntimeError(f"Gmail IMAP mailbox is unavailable: {mailbox}")
 
-    def _imap_message(self, uid: str) -> GmailMessage:
-        status, data = self.imap.uid("fetch", uid, "(RFC822)")
+    def _imap_message(self, uid: str, mailbox: str = "INBOX") -> GmailMessage:
+        status, data = self.imap.uid("fetch", uid, "(RFC822 X-GM-MSGID)")
         if status != "OK":
             raise RuntimeError(f"Gmail IMAP fetch failed: {uid}")
-        raw = next((item[1] for item in data if isinstance(item, tuple)), b"")
+        item = next((item for item in data if isinstance(item, tuple)), (b"", b""))
+        metadata, raw = item[0], item[1]
+        match = re.search(rb"X-GM-MSGID\s+(\d+)", metadata if isinstance(metadata, bytes) else b"")
+        gmail_id = match.group(1).decode() if match else ""
         message = BytesParser(policy=policy.default).parsebytes(raw)
         attachments = []
         for part in message.walk():
@@ -179,7 +245,7 @@ class GmailClient:
             date = parsedate_to_datetime(raw_date).isoformat() if raw_date else ""
         except (TypeError, ValueError, OverflowError):
             date = raw_date
-        return GmailMessage(uid, str(message.get("From", "")), str(message.get("Subject", "")), attachments, str(message.get("To", "")), date, body.strip()[:50000])
+        return GmailMessage(uid, str(message.get("From", "")), str(message.get("Subject", "")), attachments, str(message.get("To", "")), date, body.strip()[:50000], mailbox, gmail_id)
 
     def save(self, job_id: str, attachment: GmailAttachment, max_mb: int = 25) -> Path:
         validate_attachment(attachment)
@@ -191,9 +257,9 @@ class GmailClient:
         path.write_bytes(attachment.data)
         return path
 
-    def label(self, message_id: str, label: str) -> None:
+    def label(self, message_id: str, label: str, *, mailbox: str = "INBOX") -> None:
         self.authenticate()
-        self._imap_select()
+        self._imap_select(mailbox)
         for name in LABELS:
             operation = "+X-GM-LABELS" if name == label else "-X-GM-LABELS"
             status, _ = self.imap.uid("store", message_id, operation, f'("{name}")')

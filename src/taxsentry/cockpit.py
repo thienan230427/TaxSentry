@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
+import shlex
 import sys
-import time
+from pathlib import Path
 from typing import Any
 
 from rich.text import Text
@@ -13,10 +13,10 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
-from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Markdown, Static, TextArea
+from textual.widgets import Label, Markdown, Static, TextArea
 
 from . import __version__
+from .artifacts import ArtifactService, detect_artifact_kind
 from .bot.telegram_bot import serve as serve_telegram
 from .chat_service import ChatService
 from .config import describe_config, load_config
@@ -24,14 +24,18 @@ from .events import EventType
 from .gmail import GmailClient, GmailMessage, natural_gmail_query
 from .providers import create_provider
 from .store import JobStore
+from .telegram import TelegramDirector
 from .ui_text import language
 from .ui_text import text as ui_text
 from .worker import run_worker
+from .workflow import TaxSentryWorkflow
 
 COMMANDS = {
     "/help": "Danh mục lệnh và phím tắt",
     "/status": "Trạng thái provider, Gmail, Telegram và Office",
     "/gmail": "Hộp thư: /gmail [search <query> | read <uid>]",
+    "/create": "Tạo file: /create <docx|xlsx|pptx|pdf> <yêu cầu>",
+    "/cancel": "Hủy job đang chạy: /cancel <job>",
     "/jobs": "Các job Gmail gần đây",
     "/report": "Tóm tắt báo cáo mới nhất",
     "/retry": "Chạy lại job lỗi: /retry [job]",
@@ -43,6 +47,8 @@ COMMANDS_EN = {
     "/help": "Commands and keyboard shortcuts",
     "/status": "Provider, Gmail, Telegram, and Office status",
     "/gmail": "Inbox: /gmail [search <query> | read <uid>]",
+    "/create": "Create file: /create <docx|xlsx|pptx|pdf> <request>",
+    "/cancel": "Cancel an active job: /cancel <job>",
     "/jobs": "Recent Gmail jobs",
     "/report": "Latest report summary",
     "/retry": "Retry a failed job: /retry [job]",
@@ -50,8 +56,6 @@ COMMANDS_EN = {
     "/new": "Start a new conversation",
     "/exit": "Exit TaxSentry safely",
 }
-SECRET_KEYS = ("password", "token", "secret", "api_key", "authorization", "cookie")
-TOOL_PREVIEW = 4_000
 ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 
 
@@ -81,28 +85,9 @@ def banner_text(settings: dict[str, Any], width: int, unicode: bool = True) -> s
     return f"{mark} TAXSENTRY · {provider['kind']}/{model}"
 
 
-def redact(value: Any, key: str = "") -> Any:
-    normalized_key = re.sub(r"[^a-z0-9]+", "_", key.casefold())
-    if any(secret in normalized_key for secret in SECRET_KEYS):
-        return "[REDACTED]"
-    if isinstance(value, dict):
-        return {str(item_key): redact(item, str(item_key)) for item_key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [redact(item) for item in value]
-    return value
-
-
 def safe_text(value: str) -> str:
     value = ANSI_ESCAPE.sub("", value)
     return "".join(character for character in value if character in "\n\t" or ord(character) >= 32)
-
-
-def tool_text(data: dict[str, Any]) -> tuple[str, str, bool]:
-    full = json.dumps(redact(data), ensure_ascii=False, indent=2, default=str)
-    if len(full) <= TOOL_PREVIEW:
-        return full, full, False
-    return f"{full[:TOOL_PREVIEW]}\n… ({len(full) - TOOL_PREVIEW} more characters)", full, True
-
 
 class Composer(TextArea):
     class Submitted(Message):
@@ -117,6 +102,11 @@ class Composer(TextArea):
 
     class PaletteClosed(Message):
         pass
+
+    class PaletteRequested(Message):
+        def __init__(self, direction: int) -> None:
+            self.direction = direction
+            super().__init__()
 
     def __init__(self) -> None:
         super().__init__(soft_wrap=True, compact=True, id="composer", placeholder="Nhập yêu cầu… / Type a message…")
@@ -137,6 +127,10 @@ class Composer(TextArea):
             event.stop()
             self.post_message(self.PaletteClosed())
             return
+        if event.key in {"up", "down"} and self.text.strip().startswith("/"):
+            event.stop()
+            self.post_message(self.PaletteRequested(-1 if event.key == "up" else 1))
+            return
         if event.key in {"up", "down"} and "\n" not in self.text.strip("\n"):
             event.stop()
             self.post_message(self.HistoryRequested(-1 if event.key == "up" else 1))
@@ -147,88 +141,44 @@ class Composer(TextArea):
 class MessageBlock(Vertical):
     def __init__(self, role: str, body: str = "", *, classes: str = "") -> None:
         super().__init__(classes=f"message {classes}")
-        self.role, self.body = role, body
+        self.role, self.body, self.kind = role, body, classes.split()[-1] if classes else "assistant"
 
     def compose(self) -> ComposeResult:
-        yield Label(self.role, classes="role")
+        glyph = {"user": ">", "assistant": "◆" if supports_unicode() else "*", "error": "!"}.get(self.kind, "◆" if supports_unicode() else "*")
+        yield Label(glyph, classes="glyph")
         yield Markdown(self.body, classes="body")
-
-
-class ToolCard(Static):
-    can_focus = True
-    BINDINGS = [Binding("enter", "details", "Details", show=False)]
-
-    def __init__(self, name: str, preview: str, full: str, truncated: bool, elapsed: float, *, failed: bool = False) -> None:
-        suffix = "\n[Enter/click: full output]" if truncated else ""
-        status = ("✕" if failed else "✓") if supports_unicode() else ("ERROR" if failed else "OK")
-        super().__init__(f"{name}  {status} {elapsed:.1f}s\n{preview}{suffix}", markup=False, classes=f"tool-card {'failed' if failed else ''}")
-        self.full = full
-
-    def on_click(self) -> None:
-        self.app.push_screen(ToolOverlay(self.full))
-
-    def action_details(self) -> None:
-        self.app.push_screen(ToolOverlay(self.full))
-
-
-class ToolOverlay(ModalScreen[None]):
-    BINDINGS = [Binding("escape", "close", "Close")]
-
-    def __init__(self, content: str) -> None:
-        super().__init__()
-        self.content = content
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="tool-overlay"):
-            yield Label("Tool details", id="tool-overlay-title")
-            yield TextArea(self.content, read_only=True, soft_wrap=True, show_line_numbers=False)
-            yield Button("Close / Đóng", id="close-tool", variant="primary")
-
-    @on(Button.Pressed, "#close-tool")
-    def close_button(self) -> None:
-        self.dismiss(None)
-
-    def action_close(self) -> None:
-        self.dismiss(None)
 
 
 class Cockpit(App[int]):
     TITLE = "TaxSentry"
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
-        Binding("ctrl+c", "exit_app", "Exit", priority=True),
+        Binding("ctrl+c", "interrupt", "Interrupt / Exit", priority=True),
+        Binding("ctrl+o", "details", "Job details", priority=True),
         Binding("end", "latest", "Latest", priority=True),
         Binding("f1", "help", "Help"),
         Binding("tab", "complete_command", "Complete", show=False),
     ]
     CSS = """
-    Screen { background: #080b10; color: #d6dae1; layout: vertical; }
-    #topbar { height: 1; padding: 0 1; background: #121720; color: #d4af37; text-style: bold; }
-    #transcript { height: 1fr; padding: 1 2 0 2; scrollbar-color: #334155; scrollbar-color-hover: #22d3ee; }
-    .message { width: 100%; height: auto; margin-bottom: 1; layout: vertical; border-left: tall #334155; padding-left: 1; }
-    .message.user { border-left: tall #60a5fa; }
-    .message.assistant { border-left: tall #d4af37; }
-    .message.system { border-left: tall #64748b; }
-    .role { width: 100%; height: 1; color: #94a3b8; text-style: bold; }
-    .user .role { color: #60a5fa; }
-    .assistant .role { color: #d4af37; }
+    Screen { background: ansi_default; color: ansi_default; layout: vertical; }
+    #topbar { height: 1; padding: 0 1; background: transparent; color: #d4af37; text-style: bold; }
+    #transcript { height: 1fr; padding: 1 1 0 1; scrollbar-color: #4b5563; scrollbar-color-hover: #d4af37; }
+    .message { width: 100%; height: auto; margin-bottom: 1; layout: grid; grid-size: 2 1; grid-columns: 2 1fr; }
+    .glyph { width: 2; height: 1; color: #d4af37; text-style: bold; }
+    .user .glyph { color: #e8cf75; }
+    .error .glyph { color: #ef4444; }
+    .error .body { color: #ef4444; }
     .body { width: 100%; height: auto; padding: 0; background: transparent; }
-    .tool-card { width: 100%; height: auto; margin: 0 0 1 0; padding: 1; color: #b8c3d1; background: #101722; border-left: tall #22d3ee; }
-    .tool-card:focus { background: #172337; border-left: tall #d4af37; }
-    .tool-card.failed { border-left: tall #f87171; }
-    #activity { height: 1; padding: 0 2; color: #22d3ee; }
-    #new-content { display: none; height: 1; padding: 0 2; color: #fbbf24; background: #17130a; }
+    #activity { height: 1; padding: 0 1; color: #9ca3af; }
+    #details { display: none; height: auto; max-height: 8; padding: 0 1; color: #d1d5db; border-top: solid #4b5563; }
+    #details.visible { display: block; }
+    #new-content { display: none; height: 1; padding: 0 1; color: #d4af37; background: transparent; }
     #new-content.visible { display: block; }
-    #command-palette { display: none; height: auto; max-height: 8; margin: 0 2; padding: 0 1; color: #cbd5e1; background: #111827; border-left: tall #60a5fa; }
+    #command-palette { display: none; height: auto; max-height: 6; margin: 0 1; padding: 0 1; color: ansi_default; background: transparent; border-top: solid #4b5563; }
     #command-palette.visible { display: block; }
-    #footer { height: 1; padding: 0 1; background: #111827; color: #94a3b8; }
-    #composer { min-height: 3; height: auto; max-height: 6; margin: 0 1 1 1; border: tall #334155; background: #0d121a; color: #f1f5f9; }
-    #composer:focus { border: tall #22d3ee; }
-    ToolOverlay { align: center middle; background: #000000 60%; }
-    #tool-overlay { width: 90%; height: 85%; padding: 1; background: #0d121a; border: round #d4af37; }
-    #tool-overlay-title { height: 1; color: #d4af37; text-style: bold; }
-    #tool-overlay TextArea { height: 1fr; border: none; }
-    #close-tool { width: 18; min-width: 12; height: 3; align-horizontal: right; }
+    #footer { height: 1; padding: 0 1; background: transparent; color: #9ca3af; }
+    #composer { min-height: 1; height: auto; max-height: 6; margin: 0 1; padding: 0; border: none; border-top: solid #4b5563; background: transparent; color: ansi_default; }
+    #composer:focus { border-top: solid #d4af37; }
     """
 
     def __init__(self, settings: dict[str, Any] | None = None):
@@ -240,19 +190,27 @@ class Cockpit(App[int]):
         self.history = self.chat.history
         self.state = "IDLE"
         self.stop = asyncio.Event()
-        self.tool_started: dict[str, tuple[float, dict[str, Any]]] = {}
         self.gmail = GmailClient(self.settings) if self.settings.get("gmail", {}).get("enabled", True) else None
+        self.telegram = TelegramDirector(self.settings)
+        self.workflow = TaxSentryWorkflow(self.settings, gmail=self.gmail, store=self.store, telegram=self.telegram) if self.gmail else None
+        self.artifacts = ArtifactService(self.settings, self.chat, self.telegram)
         self.tasks: list[asyncio.Task] = []
+        self.active_task: asyncio.Task | None = None
+        self.gmail_results: list[GmailMessage] = []
         self.input_history: list[str] = []
         self.history_index = 0
         self._closed = False
         self._pulse_index = 0
+        self._notice_text = ""
+        self._notice_timer = None
         self.palette_matches: list[str] = []
+        self.palette_index = 0
 
     def compose(self) -> ComposeResult:
         yield Static("", id="topbar")
         yield VerticalScroll(id="transcript")
         yield Static("", id="activity")
+        yield Static("", id="details")
         yield Static(ui_text(self.settings, "new_content"), id="new-content")
         yield Static("", id="command-palette")
         yield Static("", id="footer")
@@ -261,12 +219,12 @@ class Cockpit(App[int]):
     async def on_mount(self) -> None:
         self.query_one(Composer).focus()
         self._update_chrome(self.size.width)
-        await self._message(ui_text(self.settings, "system"), f"TaxSentry v{__version__} · {ui_text(self.settings, 'ready')}", "system")
+        await self.notice(f"TaxSentry v{__version__} · {ui_text(self.settings, 'ready')}")
         self.set_interval(0.3, self._pulse)
         if self.settings.get("gmail", {}).get("enabled", True):
-            self.tasks.append(asyncio.create_task(self._guard("Gmail", run_worker(stop=self.stop, notify=self._worker_notice))))
+            self.tasks.append(asyncio.create_task(self._guard("Gmail", run_worker(stop=self.stop, notify=self._worker_notice, workflow=self.workflow, settings=self.settings))))
         if self.settings.get("telegram", {}).get("enabled", False):
-            self.tasks.append(asyncio.create_task(self._guard("Telegram", serve_telegram(self.stop, self.chat, self.notice))))
+            self.tasks.append(asyncio.create_task(self._guard("Telegram", serve_telegram(self.stop, self.chat, self.notice, workflow=self.workflow, artifacts=self.artifacts))))
 
     def on_resize(self, event: events.Resize) -> None:
         self._update_chrome(event.size.width)
@@ -274,20 +232,20 @@ class Cockpit(App[int]):
     def _update_chrome(self, width: int) -> None:
         provider = self.settings["provider"]
         model = str(provider.get("model") or "default")
-        gmail = "Gmail ●" if self.settings.get("gmail", {}).get("enabled", True) else "Gmail ○"
-        telegram = "Telegram ●" if self.settings.get("telegram", {}).get("enabled", False) else "Telegram ○"
-        pulse = "." * (self._pulse_index + 1)
-        working = f"{ui_text(self.settings, 'processing')}{pulse}" if self.state != "IDLE" else ""
+        gmail = "Gmail off" if not self.settings.get("gmail", {}).get("enabled", True) else ""
+        telegram = "Telegram off" if not self.settings.get("telegram", {}).get("enabled", False) else ""
+        frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏" if supports_unicode() else "|/-\\"
+        working = f"{frames[self._pulse_index % len(frames)]} {ui_text(self.settings, 'processing')}" if self.state == "THINKING" else ""
+        attention = " · ".join(item for item in (gmail, telegram) if item)
         if width < 60:
-            header, footer = f"{'◆' if supports_unicode() else '*'} TAXSENTRY v{__version__}", f"{self.state} · Ctrl+C"
-            activity = ui_text(self.settings, "narrow") if self.state == "IDLE" else working
+            header, footer = f"TaxSentry · {self.state}", f"{model} · {self.state} · F1"
         elif width < 100:
-            header, footer = f"{'◆' if supports_unicode() else '*'} TAXSENTRY · {provider['kind']}/{model}", f"{self.state} · / {ui_text(self.settings, 'commands')} · Ctrl+C"
-            activity = working
+            header, footer = f"TaxSentry · {model} · {self.state}", f"{model} · {self.state} · F1 help"
         else:
-            header = f"{'◆' if supports_unicode() else '*'} TAXSENTRY · FINANCIAL SENTINEL · v{__version__}"
-            footer = f"{provider['kind']}/{model} │ {gmail} │ {telegram} │ {ui_text(self.settings, 'session')} {self.chat.session_id[:8]} │ {self.state} │ / {ui_text(self.settings, 'commands')}"
-            activity = working
+            header = f"TaxSentry {__version__} · {provider['kind']}/{model} · {self.state}"
+            counts = self.store.state_counts() if hasattr(self.store, "state_counts") else {name: 0 for name in ("queued", "fetching", "extracting", "analyzing", "rendering", "delivering", "failed")}
+            footer = f"{model} · {self.state} · Q {counts['queued']} · RUN {sum(counts[name] for name in ('fetching', 'extracting', 'analyzing', 'rendering', 'delivering'))} · FAIL {counts['failed']} · F1" + (f" · {attention}" if attention else "")
+        activity = self._notice_text or working
         for widget_id, value in (("#topbar", header), ("#footer", footer), ("#activity", activity)):
             try:
                 self.query_one(widget_id, Static).update(Text(value, overflow="ellipsis"))
@@ -295,8 +253,8 @@ class Cockpit(App[int]):
                 pass
 
     def _pulse(self) -> None:
-        if self.state != "IDLE":
-            self._pulse_index = (self._pulse_index + 1) % 3
+        if self.state == "THINKING":
+            self._pulse_index += 1
             self._update_chrome(self.size.width)
 
     async def _guard(self, name: str, task) -> None:
@@ -306,12 +264,12 @@ class Cockpit(App[int]):
             raise
         except Exception as exc:
             self.state = "ERROR"
-            await self._message(ui_text(self.settings, "system"), f"{name}: {exc}", "system")
+            await self._message(ui_text(self.settings, "error"), f"{name}: {exc}", "error")
             self._update_chrome(self.size.width)
 
     @on(Composer.Submitted)
     async def submitted(self, event: Composer.Submitted) -> None:
-        text = event.value
+        text = self.palette_matches[self.palette_index] if self.palette_matches else event.value
         self.input_history.append(text)
         self.history_index = len(self.input_history)
         self._hide_palette()
@@ -328,12 +286,20 @@ class Cockpit(App[int]):
         if not value.startswith("/") or " " in value:
             self._hide_palette()
             return
-        matches = SlashCompleter.matches(value)
+        matches = SlashCompleter.matches(value)[:6]
         self.palette_matches = matches
+        self.palette_index = min(self.palette_index, max(0, len(matches) - 1))
         palette = self.query_one("#command-palette", Static)
         descriptions = COMMANDS_EN if self.lang == "en" else COMMANDS
-        palette.update("\n".join(f"{name:<12} {descriptions[name]}" for name in matches))
+        palette.update("\n".join(f"{'›' if index == self.palette_index else ' '} {name:<10} {descriptions[name]}" for index, name in enumerate(matches)))
         palette.set_class(bool(matches), "visible")
+
+    @on(Composer.PaletteRequested)
+    def palette_requested(self, event: Composer.PaletteRequested) -> None:
+        if not self.palette_matches:
+            return
+        self.palette_index = (self.palette_index + event.direction) % len(self.palette_matches)
+        self.composer_changed(type("Changed", (), {"text_area": self.query_one(Composer)})())
 
     @on(Composer.PaletteClosed)
     def palette_closed(self) -> None:
@@ -356,6 +322,7 @@ class Cockpit(App[int]):
         try:
             self.query_one("#command-palette", Static).remove_class("visible")
             self.palette_matches = []
+            self.palette_index = 0
         except Exception:
             pass
 
@@ -375,51 +342,48 @@ class Cockpit(App[int]):
         value = composer.text.strip()
         matches = SlashCompleter.matches(value) if value.startswith("/") else []
         if matches:
-            composer.text = matches[0]
-            composer.move_cursor((0, len(matches[0])))
+            command = matches[min(self.palette_index, len(matches) - 1)]
+            composer.text = command
+            composer.move_cursor((0, len(command)))
 
     async def _turn(self, value: str) -> None:
         await self._message(ui_text(self.settings, "boss"), value, "user")
-        self._set_state("THINKING")
-        context = ""
+        kind = detect_artifact_kind(value)
+        if kind and re.search(r"\b(tạo|viết|xuất|làm|create|make|export)\b", value, re.IGNORECASE):
+            if self.gmail and re.search(r"\b(?:gmail|email)\b|hòm thư", value, re.IGNORECASE):
+                await self._gmail_context(natural_gmail_query(value), include_context=False)
+                await self._message("TaxSentry", f"Em đã liệt kê nguồn. Sếp xác nhận bằng `/create {kind} <yêu cầu có chữ Gmail>`.", "assistant")
+                return
+            self._launch(self._create_artifact(kind, value), "CREATE")
+            return
         if self.gmail and re.search(r"\b(?:gmail|email)\b|hòm thư", value, re.IGNORECASE):
-            try:
-                context = await self._gmail_context(natural_gmail_query(value))
-            except Exception as exc:
-                await self._message(ui_text(self.settings, "system"), f"Gmail: {exc}", "system")
-
+            await self._gmail_context(natural_gmail_query(value), include_context=False)
+            await self._message("TaxSentry", "Sếp xác nhận xử lý bằng `/gmail process <UID hoặc all>`.", "assistant")
+            return
+        self._set_state("THINKING")
         block = MessageBlock(ui_text(self.settings, "assistant"), classes="assistant")
         await self.query_one("#transcript", VerticalScroll).mount(block)
         markdown = block.query_one(Markdown)
         stream = Markdown.get_stream(markdown)
         try:
-            async for event in self.chat.stream(value, context=context):
+            self.active_task = asyncio.current_task()
+            async for event in self.chat.stream(value):
                 if event.type == EventType.TEXT_DELTA:
                     transcript = self.query_one("#transcript", VerticalScroll)
                     follow = transcript.is_vertical_scroll_end
                     await stream.write(safe_text(event.text))
                     self._follow_output(follow)
-                elif event.type == EventType.TOOL_STARTED:
-                    self._set_state("TOOL")
-                    self.tool_started[event.name] = (time.perf_counter(), event.data)
-                elif event.type == EventType.TOOL_COMPLETED:
-                    started, initial = self.tool_started.pop(event.name, (time.perf_counter(), {}))
-                    preview, full, truncated = tool_text({**initial, **event.data})
-                    transcript = self.query_one("#transcript", VerticalScroll)
-                    follow = transcript.is_vertical_scroll_end
-                    failed = any(key.casefold() in {"error", "exception", "failed"} for key in event.data)
-                    card = ToolCard(event.name, preview, full, truncated, time.perf_counter() - started, failed=failed)
-                    await transcript.mount(card)
-                    self._follow_output(follow)
                 elif event.type == EventType.ERROR:
                     self._set_state("ERROR")
-                    await self._message(ui_text(self.settings, "error"), event.text, "system")
+                    await self._message(ui_text(self.settings, "error"), event.text, "error")
         finally:
             await stream.stop()
+            self.active_task = None
         if self.state != "ERROR":
             self._set_state("IDLE")
 
     async def _message(self, role: str, body: str, classes: str = "system") -> None:
+        classes = "error" if classes == "error" else (classes if classes in {"user", "assistant"} else "assistant")
         transcript = self.query_one("#transcript", VerticalScroll)
         follow = transcript.is_vertical_scroll_end
         await transcript.mount(MessageBlock(role, body, classes=classes))
@@ -444,10 +408,19 @@ class Cockpit(App[int]):
         self._update_chrome(self.size.width)
 
     async def notice(self, message: str) -> None:
-        await self._message(ui_text(self.settings, "system"), message, "system")
+        self._notice_text = safe_text(message).replace("\n", " ")
+        if self._notice_timer is not None:
+            self._notice_timer.stop()
+        self._notice_timer = self.set_timer(4, self._clear_notice)
+        self._update_chrome(self.size.width)
+
+    def _clear_notice(self) -> None:
+        self._notice_text = ""
+        self._notice_timer = None
+        self._update_chrome(self.size.width)
 
     def _worker_notice(self, message: str) -> None:
-        self.call_later(self._message, ui_text(self.settings, "system"), f"Worker · {message}", "system")
+        self.call_later(self.notice, f"Worker · {message}")
 
     async def _command(self, value: str) -> None:
         command, *args = value.split()
@@ -459,6 +432,24 @@ class Cockpit(App[int]):
         elif command == "/gmail":
             await self._gmail_command(args)
             return
+        elif command == "/create":
+            kind = detect_artifact_kind(args[0]) if args else ""
+            request = " ".join(args[1:]).strip()
+            if not kind or not request:
+                body = "Dùng: /create <docx|xlsx|pptx|pdf> <yêu cầu>"
+            else:
+                self._launch(self._create_artifact(kind, request), "CREATE")
+                body = f"✓ Đã nhận yêu cầu tạo {kind.upper()}."
+        elif command == "/cancel":
+            job = self.store.resolve(args[0] if args else "")
+            if not job or not self.workflow:
+                body = "Không tìm thấy job."
+            else:
+                try:
+                    self.workflow.cancel(job["id"])
+                    body = f"✓ Đã yêu cầu hủy job {job['id'][:8]}."
+                except ValueError as exc:
+                    body = str(exc)
         elif command == "/jobs":
             rows = ["| Job | State | Subject | Retry |", "|---|---|---|---|"]
             for job in self.store.recent_jobs():
@@ -489,26 +480,40 @@ class Cockpit(App[int]):
             await self._message(ui_text(self.settings, "system"), ui_text(self.settings, "gmail_disabled"), "system")
             return
         try:
+            if args and args[0].casefold() == "process":
+                if not self.workflow:
+                    return
+                wanted = {item.casefold() for item in args[1:]}
+                selected = self.gmail_results if not wanted or "all" in wanted else [message for message in self.gmail_results if message.id.casefold() in wanted]
+                if not selected:
+                    await self._message("Gmail", "Không có thư phù hợp. Hãy tìm kiếm trước.", "assistant")
+                    return
+                jobs = self.workflow.queue_messages(selected)
+                await self._message("Gmail", "✓ Đã nhận · " + ", ".join(job[:8] for job in jobs), "assistant")
+                self._launch(self._process_gmail(selected), "GMAIL")
+                return
             if args and args[0].casefold() == "read":
                 if len(args) != 2:
                     await self._message(ui_text(self.settings, "system"), "Usage: /gmail read <uid>", "system")
                     return
-                message = await asyncio.to_thread(self.gmail.read, args[1])
+                cached = next((item for item in self.gmail_results if item.id == args[1]), None)
+                message = cached or await asyncio.to_thread(self.gmail.read, args[1])
                 files = ", ".join(item.name for item in message.attachments) or "none"
                 body = f"### {message.subject}\n\n- From: {message.sender}\n- To: {message.recipient}\n- Date: {message.date}\n- Files: {files}\n\n{message.body[:12000]}"
                 await self._message("Gmail", body, "system")
                 return
             if args and args[0].casefold() != "search":
-                await self._message(ui_text(self.settings, "system"), "Usage: /gmail [search <query> | read <uid>]", "system")
+                await self._message(ui_text(self.settings, "system"), "Usage: /gmail [search <query> | read <uid> | process <uid|all>]", "system")
                 return
-            query = " ".join(args[1:]) if args else "in:inbox newer_than:30d"
-            await self._gmail_context(query or "in:inbox newer_than:30d", include_context=False)
+            query = " ".join(args[1:]) if args else "in:anywhere newer_than:30d"
+            await self._gmail_context(query or "in:anywhere newer_than:30d", include_context=False)
         except Exception as exc:
-            await self._message(ui_text(self.settings, "error"), f"Gmail: {exc}", "system")
+            await self._message(ui_text(self.settings, "error"), f"Gmail: {exc}", "error")
 
     async def _gmail_context(self, query: str, *, include_context: bool = True) -> str:
         assert self.gmail
         messages = await asyncio.to_thread(self.gmail.search, query, 20)
+        self.gmail_results = messages
         await self._gmail_table(messages, query)
         if not include_context:
             return ""
@@ -527,6 +532,71 @@ class Cockpit(App[int]):
             rows.append("| — | — | — | No results | 0 |")
         await self._message("Gmail", "\n".join(rows), "system")
 
+    def _launch(self, coroutine, state: str) -> None:
+        if self.active_task and not self.active_task.done():
+            raise RuntimeError("TaxSentry đang xử lý một tác vụ. Ctrl+C để ngắt.")
+        self._set_state(state)
+        self.active_task = asyncio.create_task(coroutine)
+
+        def done(task: asyncio.Task) -> None:
+            self.active_task = None
+            self._set_state("IDLE" if not task.cancelled() and not task.exception() else "ERROR")
+
+        self.active_task.add_done_callback(done)
+
+    async def _process_gmail(self, messages: list[GmailMessage]) -> None:
+        try:
+            completed = await self.workflow.process_messages(messages) if self.workflow else 0
+            await self._message("Gmail", f"✓ Hoàn tất {completed} báo cáo.", "assistant")
+        except asyncio.CancelledError:
+            await self._message("Gmail", "Đã ngắt tác vụ.", "error")
+            raise
+        except Exception as exc:
+            await self._message("Gmail", str(exc), "error")
+            raise
+
+    async def _create_artifact(self, kind: str, request: str) -> None:
+        try:
+            tokens = shlex.split(request, posix=False)
+            template = None
+            if "--template" in tokens:
+                index = tokens.index("--template")
+                if index + 1 >= len(tokens):
+                    raise ValueError("Thiếu đường dẫn sau --template")
+                template = Path(tokens[index + 1].strip('"')).expanduser()
+                del tokens[index : index + 2]
+            paths = [Path(token.strip('"')) for token in tokens if Path(token.strip('"')).expanduser().is_file()]
+            messages = self.gmail_results if re.search(r"\b(?:gmail|email)\b|hòm thư", request, re.IGNORECASE) else []
+            source = await self.artifacts.source_text(paths=paths, messages=messages) if paths or messages else ""
+            path = await self.artifacts.create(kind, request, source_text=source, template=template)
+            await self._message("TaxSentry", f"✓ Đã tạo `{path}` và gửi qua Telegram theo cấu hình.", "assistant")
+        except asyncio.CancelledError:
+            await self._message("TaxSentry", "Đã ngắt tạo file.", "error")
+            raise
+        except Exception as exc:
+            await self._message("TaxSentry", f"Tạo file lỗi: {exc}", "error")
+            raise
+
+    async def action_interrupt(self) -> None:
+        if self.active_task and not self.active_task.done():
+            self.active_task.cancel()
+            await self.notice("Đã gửi tín hiệu ngắt. Nhấn Ctrl+C lần nữa để thoát.")
+            return
+        await self.action_exit_app()
+
+    def action_details(self) -> None:
+        panel = self.query_one("#details", Static)
+        if panel.has_class("visible"):
+            panel.remove_class("visible")
+            return
+        job = self.store.resolve()
+        if not job:
+            panel.update("Chưa có job.")
+        else:
+            events = self.store.job_events(job["id"])[-6:]
+            panel.update("\n".join([f"{job['id'][:8]} · {job['state']} · {job['subject']}", *(f"{event['created_at'][11:19]}  {event['kind']}" for event in events)]))
+        panel.add_class("visible")
+
     async def action_help(self) -> None:
         await self._command("/help")
 
@@ -539,6 +609,8 @@ class Cockpit(App[int]):
             task.cancel()
         if self.tasks:
             await asyncio.gather(*self.tasks, return_exceptions=True)
+        if self.workflow:
+            await self.workflow.close()
         await self.chat.close()
         self.exit(0)
 
@@ -549,4 +621,6 @@ class Cockpit(App[int]):
                 task.cancel()
             if self.tasks:
                 await asyncio.gather(*self.tasks, return_exceptions=True)
+            if self.workflow:
+                await self.workflow.close()
             await self.chat.close()

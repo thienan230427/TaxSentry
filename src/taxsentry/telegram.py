@@ -21,15 +21,17 @@ class TelegramDirector:
             self.bot = Bot(token)
         return self.bot
 
-    async def notify(self, text: str, pdf: Path | None = None) -> list[str]:
+    async def notify(self, text: str, document: Path | None = None) -> list[str]:
         if not self.settings.get("telegram", {}).get("enabled"):
             return []
+        if document and document.stat().st_size > 50 * 1024 * 1024:
+            raise ValueError("Telegram Bot API chỉ nhận file tối đa 50 MB.")
         bot, sent = await self._client(), []
         for chat_id in self.settings["director"].get("telegram_chat_ids", []):
             message = await bot.send_message(chat_id=chat_id, text=text[:4096])
             sent.append(str(getattr(message, "message_id", "")))
-            if pdf:
-                with pdf.open("rb") as file:
-                    document = await bot.send_document(chat_id=chat_id, document=file, filename=pdf.name)
-                    sent.append(str(getattr(document, "message_id", "")))
+            if document:
+                with document.open("rb") as file:
+                    uploaded = await bot.send_document(chat_id=chat_id, document=file, filename=document.name)
+                    sent.append(str(getattr(uploaded, "message_id", "")))
         return sent

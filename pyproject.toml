@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taxsentry-agent"
-version = "2.0.8"
+version = "2.0.11"
 description = "Python-first AI agent for Vietnamese business and tax reporting workflows"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -13,7 +13,8 @@ authors = [{ name = "TaxSentry Team" }]
 dependencies = [
   "keyring>=25.0", "openai>=1.0", "openpyxl>=3.1", "pdfplumber>=0.11",
   "pillow>=10.0", "pymupdf>=1.24", "pytesseract>=0.3.13",
-  "python-telegram-bot>=21.0", "reportlab>=4.0", "rich>=13.0", "textual>=8.2.8,<9",
+  "python-docx>=1.1", "python-pptx>=1.0", "python-telegram-bot>=21.0",
+  "reportlab>=4.0", "rich>=13.0", "textual>=8.2.8,<9",
 ]
 
 [project.optional-dependencies]

@@ -125,9 +125,22 @@ def test_gmail_search_caps_results_and_reads_message_body():
     assert client.read("7").recipient == "boss@gmail.com"
 
 
+def test_gmail_discovers_all_spam_and_trash_mailboxes():
+    class Imap:
+        def list(self):
+            return "OK", [
+                b'(\\HasNoChildren \\All) "/" "[Gmail]/All Mail"',
+                b'(\\HasNoChildren \\Junk) "/" "[Gmail]/Spam"',
+                b'(\\HasNoChildren \\Trash) "/" "[Gmail]/Trash"',
+            ]
+
+    client = GmailClient({"gmail": {"account": "boss@gmail.com"}}, imap=Imap())
+    assert client.mailboxes() == ["[Gmail]/All Mail", "[Gmail]/Spam", "[Gmail]/Trash"]
+
+
 def test_natural_gmail_query_maps_common_vietnamese_intents():
     query = natural_gmail_query("Gmail hôm nay có thư chưa đọc, có file từ MB Bank?", now=datetime(2026, 7, 14))
-    assert query == 'in:inbox after:2026/07/14 is:unread has:attachment from:"MB Bank"'
+    assert query == 'in:anywhere after:2026/07/14 is:unread has:attachment from:"MB Bank"'
 
 
 def test_open_xml_office_extracts_text_without_new_dependencies(tmp_path):
@@ -192,7 +205,7 @@ async def test_worker_initializes_missing_uid_without_processing_history(monkeyp
         def latest_uid(self): return 88
 
     class Workflow:
-        def __init__(self, value): self.value = value
+        def __init__(self, value, **kwargs): self.value = value
         async def run_once(self): return 0
         async def close(self): pass
 
@@ -203,4 +216,4 @@ async def test_worker_initializes_missing_uid_without_processing_history(monkeyp
     monkeypatch.setattr("taxsentry.worker.single_instance", lambda: nullcontext())
 
     assert await run_worker(once=True) == 0
-    assert settings["gmail"]["process_after_uid"] == 88 and saved
+    assert settings["gmail"]["process_after_uids"] == {"INBOX": 88} and saved

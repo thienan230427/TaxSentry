@@ -36,14 +36,27 @@ def single_instance(path: Path = RUNTIME_DIR / "worker.lock"):
         file.close()
 
 
-async def run_worker(*, once: bool = False, stop: asyncio.Event | None = None, notify: Callable[[str], None] | None = None) -> int:
-    settings, stop = load_config(), stop or asyncio.Event()
+async def run_worker(
+    *,
+    once: bool = False,
+    stop: asyncio.Event | None = None,
+    notify: Callable[[str], None] | None = None,
+    workflow: TaxSentryWorkflow | None = None,
+    settings: dict | None = None,
+) -> int:
+    settings, stop = settings or load_config(), stop or asyncio.Event()
     console = Console()
     if not settings.get("gmail", {}).get("enabled", True):
         console.print("[red]Gmail đang tắt / Gmail is disabled. Chạy `taxsentry setup` và chọn Full Agent hoặc Email Agent.[/]")
         return 2
-    if settings["gmail"].get("process_after_uid") is None:
-        settings["gmail"]["process_after_uid"] = GmailClient(settings).latest_uid()
+    gmail = workflow.gmail if workflow else GmailClient(settings)
+    if not settings["gmail"].get("process_after_uids"):
+        latest = gmail.latest_uids if hasattr(gmail, "latest_uids") else lambda: {"INBOX": gmail.latest_uid()}
+        settings["gmail"]["process_after_uids"] = await asyncio.wait_for(
+            asyncio.to_thread(latest),
+            timeout=float(settings["worker"].get("imap_timeout_seconds", 30)),
+        )
+        settings["gmail"]["process_after_uid"] = None
         save_config(settings)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -51,11 +64,13 @@ async def run_worker(*, once: bool = False, stop: asyncio.Event | None = None, n
             loop.add_signal_handler(sig, stop.set)
         except (NotImplementedError, RuntimeError):
             pass
-    workflow = TaxSentryWorkflow(settings)
+    owns_workflow = workflow is None
+    workflow = workflow or TaxSentryWorkflow(settings, gmail=gmail)
     try:
         with single_instance():
             while not stop.is_set():
                 completed = await workflow.run_once()
+                save_config(settings)
                 if completed:
                     message = f"Worker hoàn tất {completed} báo cáo"
                     notify(message) if notify else console.print(f"[cyan]TaxSentry:[/] {message}")
@@ -67,5 +82,6 @@ async def run_worker(*, once: bool = False, stop: asyncio.Event | None = None, n
                     pass
     finally:
         stop.set()
-        await workflow.close()
+        if owns_workflow:
+            await workflow.close()
     return 0

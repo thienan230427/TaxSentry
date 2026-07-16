@@ -154,7 +154,7 @@ class TaxSentryPDFGenerator:
             fontName=font_bold,
             fontSize=22,
             leading=26,
-            textColor=colors.HexColor('#1F4E79'),  # Xanh navy cổ điển
+            textColor=colors.HexColor('#27272A'),
             alignment=TA_CENTER,
             spaceAfter=20
         )
@@ -166,7 +166,7 @@ class TaxSentryPDFGenerator:
             fontName=font_bold,
             fontSize=15,
             leading=18,
-            textColor=colors.HexColor('#1F4E79'),
+            textColor=colors.HexColor('#9A7618'),
             spaceBefore=15,
             spaceAfter=8,
             keepWithNext=True
@@ -179,7 +179,7 @@ class TaxSentryPDFGenerator:
             fontName=font_bold,
             fontSize=12,
             leading=15,
-            textColor=colors.HexColor('#2E75B6'),  # Xanh nhạt hơn
+            textColor=colors.HexColor('#3F3F46'),
             spaceBefore=12,
             spaceAfter=6,
             keepWithNext=True
@@ -273,7 +273,7 @@ class TaxSentryPDFGenerator:
             if stripped.startswith('# '):
                 title_text = stripped[2:]
                 flowables.append(Paragraph(self._clean_inline_markdown(title_text), self.title_style))
-                flowables.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#1F4E79'), spaceAfter=15))
+                flowables.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#D4AF37'), spaceAfter=15))
                 continue
 
             # 4. Xử lý tiêu đề cấp 1 (## H1) hoặc cấp 2 (### H2)
@@ -392,7 +392,7 @@ class TaxSentryPDFGenerator:
         
         # Style cho bảng
         t_style = [
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E79')),  # Header Navy
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3F3F46')),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('PADDING', (0, 0), (-1, -1), 6),
@@ -447,7 +447,7 @@ class TaxSentryPDFGenerator:
         # Chữ ký chân trang
         story.append(Spacer(1, 25))
         story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#CCCCCC'), spaceAfter=10))
-        story.append(Paragraph("Báo cáo được thực hiện tự động và bảo mật hoàn toàn bởi hệ thống TaxSentry Co-Pilot.", self.caption_style))
+        story.append(Paragraph("Báo cáo được tạo tự động bởi TaxSentry; vui lòng đối chiếu chứng từ gốc trước khi quyết định.", self.caption_style))
 
         # Build PDF
         try:

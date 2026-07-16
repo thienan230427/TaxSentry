@@ -14,21 +14,22 @@ APP_HOME = Path(os.getenv("TAXSENTRY_HOME", Path.home() / ".taxsentry"))
 CONFIG_FILE = Path(os.getenv("TAXSENTRY_CONFIG_FILE", APP_HOME / "config.json"))
 MEMORY_DB = Path(os.getenv("TAXSENTRY_MEMORY_DB", APP_HOME / "taxsentry.db"))
 SESSION_FILE = APP_HOME / "sessions.jsonl"
-LOGS_DIR, RUNTIME_DIR, DOWNLOAD_DIR = APP_HOME / "logs", APP_HOME / "run", APP_HOME / "downloads"
+LOGS_DIR, RUNTIME_DIR, DOWNLOAD_DIR, OUTPUT_DIR = APP_HOME / "logs", APP_HOME / "run", APP_HOME / "downloads", APP_HOME / "outputs"
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "version": __version__, "configured": False,
     "agent": {"name": "TaxSentry", "persona": "precise and practical", "language": "vi", "memory_enabled": True},
     "provider": {"kind": "lmstudio", "model": "", "lmstudio_base_url": "http://127.0.0.1:1234/v1", "base_url": "http://127.0.0.1:1234/v1", "api_key": "", "auth_mode": "lmstudio"},
-    "gmail": {"enabled": True, "account": "", "process_after_uid": None},
+    "gmail": {"enabled": True, "account": "", "process_after_uid": None, "process_after_uids": {}, "mailbox_scope": "all"},
     "director": {"telegram_chat_ids": []},
     "telegram": {"enabled": False},
-    "worker": {"poll_seconds": 60, "max_retries": 3, "max_attachment_mb": 25},
+    "worker": {"poll_seconds": 30, "max_retries": 3, "max_attachment_mb": 100, "imap_timeout_seconds": 30, "analysis_timeout_seconds": 300, "extraction_timeout_seconds": 600},
     "update": {"source": "git+https://github.com/thienan230427/TaxSentry.git"},
     "report": {"language": "vi", "minimum_confidence": 0.70},
     "ocr": {"languages": ["vie", "eng"], "minimum_confidence": 70.0},
     "memory": {"max_facts": 50, "max_turns": 12, "session_title": "TaxSentry session"},
     "jobs": {"tracking_enabled": True, "retry_limit": 3, "default_state": "queued", "needs_human_review_on_missing_data": True, "auto_send_email": True, "auto_send_telegram": True},
+    "artifacts": {"output_dir": str(OUTPUT_DIR), "auto_send_telegram": True, "templates": {"docx": "", "xlsx": "", "pptx": ""}},
     "ui": {"theme": "sentinel", "language": "vi", "show_banner": True}, "extra_env": {},
 }
 
@@ -129,7 +130,7 @@ def describe_config(config: dict[str, Any]) -> str:
     en = config.get("ui", {}).get("language") == "en"
     disabled, pending = ("disabled", "pending initialization") if en else ("đã tắt", "chờ khởi tạo")
     gmail_status = (gmail.get("account") or ("not connected" if en else "chưa kết nối")) if gmail.get("enabled", True) else disabled
-    marker = gmail.get("process_after_uid")
+    marker = gmail.get("process_after_uids") or gmail.get("process_after_uid")
     if en:
         rows = (f"TaxSentry {config.get('version', __version__)}", f"Provider: {provider['kind']} / {provider.get('model') or 'default'}", f"Gmail: {gmail_status}", "Gmail sender policy: all senders", f"Worker starts after UID: {marker if marker is not None else pending}", f"Telegram: {'enabled' if config['telegram'].get('enabled') else disabled}", f"LibreOffice: {'available' if shutil.which('soffice') else 'optional / not found'}", f"Config: {CONFIG_FILE}")
     else:

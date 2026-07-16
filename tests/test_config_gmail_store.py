@@ -5,7 +5,7 @@ from copy import deepcopy
 
 from taxsentry import config as config_module
 from taxsentry.config import DEFAULT_SETTINGS
-from taxsentry.reporting import parse_report
+from taxsentry.reporting import REPORT_SCHEMA, parse_report
 from taxsentry.store import JobStore
 
 
@@ -63,3 +63,19 @@ def test_report_schema_requires_all_business_sections():
         "performance": [], "tax_risks": [], "missing_data": [], "recommendations": [], "confidence": 0.82,
     }
     assert parse_report(json.dumps(payload))["confidence"] == 0.82
+
+
+def test_report_schema_is_strict_at_every_object_level():
+    assert REPORT_SCHEMA["additionalProperties"] is False
+    for name in ("performance", "tax_risks", "recommendations"):
+        assert REPORT_SCHEMA["properties"][name]["items"]["additionalProperties"] is False
+
+
+def test_automatic_retry_keeps_its_budget(tmp_path):
+    store = JobStore(tmp_path / "retry.db")
+    job = store.create_job("gmail-1:sha", "accounting@example.com")
+    for attempt in range(1, 4):
+        store.transition(job["id"], "fetching")
+        assert store.increment_retry(job["id"], "provider error") == attempt
+        store.requeue(job["id"], reset_retries=False)
+    assert store.get(job["id"])["retries"] == 3

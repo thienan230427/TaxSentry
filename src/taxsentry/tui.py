@@ -100,7 +100,7 @@ def doctor(*, fix: bool = False) -> int:
         except keyring.errors.KeyringError:
             gmail_token = ""
         checks.append(("Gmail App Password", bool(gmail_token), ("stored in keyring" if en else "đã lưu trong keyring") if gmail_token else "run `taxsentry setup`"))
-        marker = settings["gmail"].get("process_after_uid")
+        marker = settings["gmail"].get("process_after_uids") or settings["gmail"].get("process_after_uid")
         checks.append(("Gmail sender policy" if en else "Chính sách người gửi Gmail", True, "all senders; automatic processing only after setup marker" if en else "mọi người gửi; chỉ tự động xử lý sau mốc setup"))
         checks.append(("Gmail worker marker", marker is not None, str(marker) if marker is not None else "run `taxsentry setup`"))
         libreoffice = shutil.which("soffice")

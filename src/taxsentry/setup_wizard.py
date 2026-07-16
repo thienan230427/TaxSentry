@@ -14,8 +14,9 @@ from rich.table import Table
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Input, Label, ProgressBar, Select, Static
+from textual.containers import Vertical
+from textual.widgets import Input, OptionList, Static
+from textual.widgets.option_list import Option
 
 from .config import save_config
 from .gmail import GmailClient
@@ -76,17 +77,20 @@ class SetupWizardApp(App[SetupSelection | None]):
     TITLE = "TaxSentry Setup"
     BINDINGS = [Binding("escape", "back", "Back"), Binding("ctrl+c", "cancel", "Cancel", priority=True)]
     CSS = """
-    Screen { background: #080b10; color: #d6dae1; layout: vertical; }
-    #wizard-title { height: 2; padding: 0 2; background: #121720; color: #d4af37; text-style: bold; content-align: left middle; }
-    #progress { height: 1; margin: 0 2; color: #22d3ee; }
-    #step-title { height: 2; margin: 1 2 0 2; color: #f1f5f9; text-style: bold; }
-    #content { height: 1fr; margin: 0 2; padding: 1 2; border-left: tall #334155; scrollbar-color: #334155; }
-    #content Label { width: 100%; height: auto; margin-top: 1; color: #94a3b8; }
-    #content Input, #content Select { width: 100%; margin-bottom: 1; }
-    #summary { width: 100%; height: auto; color: #cbd5e1; }
-    #error { height: auto; min-height: 1; margin: 0 2; color: #f87171; }
-    #navigation { height: 3; padding: 0 2; align-horizontal: right; }
-    #navigation Button { min-width: 12; margin-left: 1; }
+    Screen { background: ansi_default; color: ansi_default; layout: vertical; }
+    #wizard { width: 72; max-width: 100%; height: auto; padding: 0 1; }
+    #wizard-title { height: 1; color: #d4af37; text-style: bold; }
+    #history { height: auto; max-height: 6; margin-top: 1; color: #6b7280; }
+    #step { height: 1; margin-top: 1; color: #6b7280; }
+    #question { height: auto; margin-top: 1; text-style: bold; }
+    #content { width: 100%; height: auto; max-height: 12; margin-top: 1; }
+    OptionList { width: 100%; height: auto; max-height: 12; padding: 0; border: none; background: transparent; }
+    OptionList:focus { border: none; }
+    OptionList > .option-list--option-highlighted { color: #d4af37; background: transparent; text-style: bold; }
+    Input { width: 100%; height: 2; padding: 0; border: none; border-bottom: solid #4b5563; background: transparent; color: ansi_default; }
+    Input:focus { border-bottom: solid #d4af37; }
+    #error { height: auto; min-height: 1; margin-top: 1; color: #ef4444; }
+    #hint { height: 1; margin-top: 1; color: #6b7280; }
     """
 
     def __init__(self, config: dict[str, Any]):
@@ -96,24 +100,26 @@ class SetupWizardApp(App[SetupSelection | None]):
         self.candidate.setdefault("ui", {})["language"] = language(config)
         self.selection = SetupSelection(self.candidate)
         self.step = 0
-        self.steps = ("language", "profile", "provider", "model", "services", "confirm")
+        self.returning = bool(config.get("configured"))
+        self.steps = ["mode"] if self.returning else ["language", "mode"]
         self.model_options: list[tuple[str, str, tuple[str, ...]]] = []
         self.gmail_was_enabled = bool(config.get("gmail", {}).get("enabled", True))
+        self.history: list[str] = []
+        self.snapshots: list[tuple[Any, ...]] = []
 
     @property
     def en(self) -> bool:
         return self.candidate["ui"].get("language") == "en"
 
     def compose(self) -> ComposeResult:
-        yield Static(("◆" if WizardUI._supports_unicode() else "*") + " TAXSENTRY · SETUP", id="wizard-title")
-        yield ProgressBar(total=len(self.steps), show_eta=False, show_percentage=False, id="progress")
-        yield Static("", id="step-title")
-        yield VerticalScroll(id="content")
-        yield Static("", id="error")
-        with Horizontal(id="navigation"):
-            yield Button("Back", id="back")
-            yield Button("Cancel", id="cancel")
-            yield Button("Next", id="next", variant="primary")
+        with Vertical(id="wizard"):
+            yield Static("TaxSentry setup", id="wizard-title")
+            yield Static("", id="history")
+            yield Static("", id="step")
+            yield Static("", id="question")
+            yield Vertical(id="content")
+            yield Static("", id="error")
+            yield Static("↑/↓ select · Enter confirm · Esc back · Ctrl+C cancel", id="hint")
 
     async def on_mount(self) -> None:
         await self._render_step()
@@ -122,191 +128,251 @@ class SetupWizardApp(App[SetupSelection | None]):
         return en if self.en else vi
 
     async def _render_step(self) -> None:
-        content = self.query_one("#content", VerticalScroll)
+        content = self.query_one("#content", Vertical)
         await content.remove_children()
         self.query_one("#error", Static).update("")
-        self.query_one("#progress", ProgressBar).update(progress=self.step + 1)
-        self.query_one("#back", Button).disabled = self.step == 0
-        self.query_one("#back", Button).label = self._label("Quay lại", "Back")
-        self.query_one("#cancel", Button).label = self._label("Hủy", "Cancel")
         key = self.steps[self.step]
-        widgets: list[Any] = []
+        self.query_one("#history", Static).update("\n".join(self.history[-6:]))
+        self.query_one("#step", Static).update(self._label(f"Bước {self.step + 1} / {len(self.steps)}", f"Step {self.step + 1} of {len(self.steps)}"))
+        question = ""
+        widget: Any
         if key == "language":
-            title = "Language / Ngôn ngữ"
-            widgets = [
-                Label("Chọn ngôn ngữ giao diện / Choose the interface language"),
-                Select([("Tiếng Việt", "vi"), ("English", "en")], value=self.candidate["ui"].get("language", "vi"), allow_blank=False, id="language"),
-            ]
+            question = "Chọn ngôn ngữ / Choose your language"
+            widget = self._picker([("vi", "Tiếng Việt", "Giao diện tiếng Việt"), ("en", "English", "English interface")])
+        elif key == "mode":
+            question = self._label("Sếp muốn cấu hình theo cách nào?", "How would you like to set up TaxSentry?")
+            options = [("quick", "Quick Setup", self._label("Provider và model, vào chat ngay", "Provider and model, start chatting quickly")), ("full", "Full Setup", self._label("Cấu hình đầy đủ dịch vụ", "Configure every service"))]
+            if self.returning:
+                options.append(("section", "Configure a section", self._label("Chỉ thay phần được chọn", "Change one section only")))
+            widget = self._picker(options)
+        elif key == "section":
+            question = self._label("Sếp muốn cấu hình phần nào?", "Which section would you like to configure?")
+            widget = self._picker([("language", "Language", "Tiếng Việt / English"), ("provider", "Provider & Model", "Codex or LM Studio"), ("gmail", "Gmail", self._label("Tài khoản và App Password", "Account and App Password")), ("telegram", "Telegram", self._label("Chat IDs và bot token", "Chat IDs and bot token")), ("poll", "Polling", self._label("Chu kỳ kiểm tra Gmail", "Gmail polling interval"))])
         elif key == "profile":
-            title = self._label("Hồ sơ sử dụng", "Usage profile")
-            widgets = [
-                Label(self._label("Chọn các dịch vụ TaxSentry sẽ bật", "Choose which TaxSentry services to enable")),
-                Select(
-                    [("Full Agent — AI + Gmail + Telegram", "full"), ("Email Agent — AI + Gmail", "email"), ("Chat Only — terminal AI", "chat")],
-                    value=_profile(self.candidate), allow_blank=False, id="profile",
-                ),
-            ]
+            question = self._label("TaxSentry sẽ dùng những dịch vụ nào?", "Which services should TaxSentry use?")
+            widget = self._picker([("full", "Full Agent", "AI + Gmail + Telegram"), ("email", "Email Agent", "AI + Gmail"), ("chat", "Chat Only", self._label("Chỉ chat trong terminal", "Terminal chat only"))])
         elif key == "provider":
-            title = "AI Provider"
-            kind = self.candidate["provider"].get("kind", "lmstudio")
-            widgets = [
-                Label(self._label("Chọn provider và phương thức xác thực", "Choose a provider and authentication method")),
-                Select([("Codex / ChatGPT", "codex"), ("LM Studio", "lmstudio")], value=kind, allow_blank=False, id="provider"),
-                Label("LM Studio Base URL", id="base-url-label"),
-                Input(str(self.candidate["provider"].get("lmstudio_base_url", "http://127.0.0.1:1234/v1")), id="base-url"),
-                Label(self._label("Xác thực Codex", "Codex authentication"), id="codex-auth-label"),
-                Select(
-                    [
-                        (self._label("Phiên hiện tại", "Existing session"), "existing"),
-                        (self._label("Đăng nhập trình duyệt", "Browser OAuth"), "browser"),
-                        (self._label("Mã thiết bị", "Device code"), "device"),
-                    ],
-                    value="existing", allow_blank=False, id="codex-auth",
-                ),
-            ]
+            question = self._label("Chọn AI provider", "Choose an AI provider")
+            widget = self._picker([("codex", "Codex / ChatGPT", self._label("Đăng nhập bằng Codex App Server", "Authenticate with Codex App Server")), ("lmstudio", "LM Studio", self._label("Chạy model cục bộ", "Run a local model"))])
+        elif key == "provider_detail":
+            if self.candidate["provider"].get("kind") == "codex":
+                question = self._label("Xác thực Codex", "Codex authentication")
+                widget = self._picker([("existing", self._label("Phiên hiện tại", "Existing session"), self._label("Dùng đăng nhập đang có", "Use the current sign-in")), ("browser", "Browser OAuth", self._label("Mở trình duyệt để đăng nhập", "Open a browser to sign in"))])
+            else:
+                question = "LM Studio Base URL"
+                widget = Input(str(self.candidate["provider"].get("lmstudio_base_url", "http://127.0.0.1:1234/v1")), id="answer")
         elif key == "model":
-            title = "Model"
             current = str(self.candidate["provider"].get("model", ""))
-            options = [(self._label("Mặc định provider", "Provider default"), "")]
-            options += [(f"{label} · {model_id}", model_id) for model_id, label, _ in self.model_options]
-            valid = {value for _, value in options}
-            widgets = [
-                Label(self._label("Chọn model đã phát hiện hoặc nhập model ID", "Select a discovered model or enter a model ID")),
-                Select(options, value=current if current in valid else "", allow_blank=False, id="model-select"),
-                Label(self._label("Model ID tùy chỉnh (để trống để dùng lựa chọn trên)", "Custom model ID (leave blank to use the selection above)")),
-                Input(current if current not in valid else "", id="model-custom"),
-            ]
-        elif key == "services":
-            title = self._label("Dịch vụ", "Services")
-            if self.candidate["gmail"].get("enabled"):
-                widgets += [
-                    Label("Gmail"),
-                    Input(str(self.candidate["gmail"].get("account", "")), placeholder="name@gmail.com", id="gmail-account"),
-                    Label(self._label("Chu kỳ quét (giây, tối thiểu 10)", "Polling interval (seconds, minimum 10)")),
-                    Input(str(self.candidate["worker"].get("poll_seconds", 60)), id="poll"),
-                    Label(self._label("App Password mới (để trống để giữ secret hiện tại)", "New App Password (leave blank to keep the current secret)")),
-                    Input("", password=True, id="gmail-password"),
-                ]
-            if self.candidate["telegram"].get("enabled"):
-                widgets += [
-                    Label("Telegram Chat IDs"),
-                    Input(",".join(map(str, self.candidate["director"].get("telegram_chat_ids", []))), id="telegram-chats"),
-                    Label(self._label("Bot token mới (để trống để giữ secret hiện tại)", "New bot token (leave blank to keep the current secret)")),
-                    Input("", password=True, id="telegram-token"),
-                ]
-            if not widgets:
-                widgets = [Label(self._label("Hồ sơ Chat Only không cần dịch vụ bổ sung.", "The Chat Only profile needs no additional services."))]
+            question = self._label("Chọn model", "Choose a model")
+            options = [("", self._label("Mặc định provider", "Provider default"), self._label("Để provider tự chọn", "Let the provider decide"))]
+            options += [(model_id, label, model_id) for model_id, label, _ in self.model_options]
+            if current and current not in {item[0] for item in options}:
+                options.append((current, current, self._label("Model hiện tại", "Current model")))
+            options.append(("__custom__", self._label("Nhập model ID", "Enter model ID"), self._label("Dùng model tùy chỉnh", "Use a custom model")))
+            widget = self._picker(options)
+        elif key == "custom_model":
+            question = "Model ID"
+            widget = Input(str(self.candidate["provider"].get("model", "")), id="answer")
+        elif key in {"gmail_enabled", "telegram_enabled"}:
+            service = "Gmail" if key.startswith("gmail") else "Telegram"
+            question = self._label(f"Bật {service}?", f"Enable {service}?")
+            widget = self._picker([("yes", self._label("Bật", "Enable"), service), ("no", self._label("Tắt", "Disable"), service)])
+        elif key == "gmail_account":
+            question = self._label("Tài khoản Gmail nhận báo cáo", "Gmail report inbox")
+            widget = Input(str(self.candidate["gmail"].get("account", "")), placeholder="name@gmail.com", id="answer")
+        elif key == "poll":
+            question = self._label("Chu kỳ quét Gmail (giây, tối thiểu 10)", "Gmail polling interval (seconds, minimum 10)")
+            widget = Input(str(self.candidate["worker"].get("poll_seconds", 30)), id="answer")
+        elif key == "gmail_password":
+            question = self._label("Gmail App Password (để trống để giữ secret hiện tại)", "Gmail App Password (leave blank to keep the existing secret)")
+            widget = Input("", password=True, id="answer")
+        elif key == "telegram_chats":
+            question = "Telegram Chat IDs"
+            widget = Input(",".join(map(str, self.candidate["director"].get("telegram_chat_ids", []))), id="answer")
+        elif key == "telegram_token":
+            question = self._label("Telegram bot token (để trống để giữ secret hiện tại)", "Telegram bot token (leave blank to keep the existing secret)")
+            widget = Input("", password=True, id="answer")
         else:
-            title = self._label("Xác nhận", "Confirm")
-            profile = _profile(self.candidate)
+            question = self._label("Kiểm tra và lưu cấu hình?", "Validate and save this configuration?")
             provider = self.candidate["provider"]
             summary = [
-                f"{self._label('Hồ sơ', 'Profile')}: {profile}",
                 f"Provider: {provider['kind']} / {provider.get('model') or 'default'}",
                 f"Gmail: {self.candidate['gmail'].get('account') if self.candidate['gmail'].get('enabled') else 'disabled'}",
                 f"Telegram: {', '.join(self.candidate['director'].get('telegram_chat_ids', [])) if self.candidate['telegram'].get('enabled') else 'disabled'}",
-                f"{self._label('Ngôn ngữ', 'Language')}: {self.candidate['ui']['language']}",
             ]
-            widgets = [Static("\n".join(summary), id="summary", markup=False)]
-        self.query_one("#step-title", Static).update(f"{self.step + 1}/{len(self.steps)} · {title}")
-        self.query_one("#next", Button).label = self._label("Lưu & xác thực", "Save & validate") if key == "confirm" else self._label("Tiếp", "Next")
-        await content.mount(*widgets)
-        if key == "provider":
-            self._show_provider_fields(str(self._select("#provider")))
-        focusable = list(content.query("Input, Select"))
+            widget = Vertical(Static("\n".join(summary), markup=False), self._picker([("save", self._label("Lưu và xác thực", "Save and validate"), self._label("Không ghi gì nếu kiểm tra thất bại", "Nothing is written if validation fails"))]))
+        self.query_one("#question", Static).update(question)
+        await content.mount(widget)
+        focusable = list(content.query("Input, OptionList"))
         if focusable:
             focusable[0].focus()
 
-    def _show_provider_fields(self, kind: str) -> None:
-        for selector in ("#base-url-label", "#base-url"):
-            self.query_one(selector).display = kind == "lmstudio"
-        for selector in ("#codex-auth-label", "#codex-auth"):
-            self.query_one(selector).display = kind == "codex"
+    @staticmethod
+    def _picker(options: list[tuple[str, str, str]]) -> OptionList:
+        return OptionList(*(Option(f"{label}\n[dim]{description}[/]", id=value) for value, label, description in options), id="answers", compact=True)
 
-    @on(Select.Changed, "#provider")
-    def provider_changed(self, event: Select.Changed) -> None:
-        self._show_provider_fields(str(event.value))
+    def _snapshot(self) -> None:
+        saved = deepcopy(self.selection)
+        saved.gmail_password = ""
+        saved.telegram_token = ""
+        self.snapshots.append((self.step, deepcopy(self.steps), deepcopy(self.candidate), saved, deepcopy(self.history), deepcopy(self.model_options)))
 
-    def _select(self, selector: str) -> Any:
-        return self.query_one(selector, Select).value
+    def _finish_step(self, label: str) -> None:
+        self.history.append(("✓" if WizardUI._supports_unicode() else "+") + " " + label)
+        self.step += 1
 
-    async def _save_step(self) -> bool:
+    def _provider_steps(self) -> list[str]:
+        return ["provider", "provider_detail", "model"]
+
+    def _set_mode(self, mode: str) -> None:
+        prefix = self.steps[: self.step + 1]
+        if mode == "quick":
+            if not self.returning:
+                self.candidate["gmail"]["enabled"] = False
+                self.candidate["telegram"]["enabled"] = False
+            self.steps = prefix + self._provider_steps() + ["confirm"]
+        elif mode == "full":
+            self.steps = prefix + ["profile"]
+        else:
+            self.steps = prefix + ["section"]
+
+    def _set_profile(self, profile: str) -> None:
+        self.candidate["gmail"]["enabled"] = profile != "chat"
+        self.candidate["telegram"]["enabled"] = profile == "full"
+        tail = self._provider_steps()
+        if self.candidate["gmail"]["enabled"]:
+            tail += ["gmail_account", "poll", "gmail_password"]
+        if self.candidate["telegram"]["enabled"]:
+            tail += ["telegram_chats", "telegram_token"]
+        self.steps = self.steps[: self.step + 1] + tail + ["confirm"]
+
+    def _set_section(self, section: str) -> None:
+        mapping = {"language": ["language"], "provider": self._provider_steps(), "gmail": ["gmail_enabled"], "telegram": ["telegram_enabled"], "poll": ["poll"]}
+        self.steps = self.steps[: self.step + 1] + mapping[section] + ["confirm"]
+
+    @on(OptionList.OptionSelected)
+    async def option_selected(self, event: OptionList.OptionSelected) -> None:
+        await self._accept(str(event.option.id))
+
+    @on(Input.Submitted, "#answer")
+    async def input_submitted(self, event: Input.Submitted) -> None:
+        await self._accept(event.value)
+
+    async def _accept(self, value: str) -> None:
         key = self.steps[self.step]
-        error = ""
+        self._snapshot()
         try:
             if key == "language":
-                self.candidate["ui"]["language"] = str(self._select("#language"))
+                self.candidate["ui"]["language"] = value
+                label = f"Language · {'English' if value == 'en' else 'Tiếng Việt'}"
+            elif key == "mode":
+                self._set_mode(value)
+                label = value.replace("_", " ").title()
+            elif key == "section":
+                self._set_section(value)
+                label = f"Section · {value.title()}"
             elif key == "profile":
-                profile = str(self._select("#profile"))
-                self.candidate["gmail"]["enabled"] = profile != "chat"
-                self.candidate["telegram"]["enabled"] = profile == "full"
+                self._set_profile(value)
+                label = f"Profile · {value.title()}"
             elif key == "provider":
-                kind = str(self._select("#provider"))
-                self.candidate["provider"].update({"kind": kind, "auth_mode": kind})
+                self.candidate["provider"].update({"kind": value, "auth_mode": value})
+                label = f"Provider · {'Codex' if value == 'codex' else 'LM Studio'}"
+            elif key == "provider_detail":
+                kind = self.candidate["provider"]["kind"]
+                self.query_one("#error", Static).update(self._label("Đang kết nối…", "Connecting…"))
                 if kind == "lmstudio":
-                    base_url = self.query_one("#base-url", Input).value.strip()
+                    base_url = value.strip()
                     if not base_url.startswith(("http://", "https://")):
                         raise ValueError(self._label("URL phải bắt đầu bằng http:// hoặc https://", "URL must begin with http:// or https://"))
                     self.candidate["provider"].update({"lmstudio_base_url": base_url, "base_url": base_url})
                     try:
                         models = await asyncio.to_thread(lmstudio_models, from_settings(self.candidate))
                         self.model_options = [(item, item, ()) for item in models]
-                    except Exception as exc:
+                    except Exception:
                         self.model_options = []
-                        self.notify(str(exc), severity="warning")
                 else:
-                    mode = str(self._select("#codex-auth"))
-                    self.selection.codex_auth = mode
-                    await self._prepare_codex(mode)
+                    self.selection.codex_auth = value
+                    await self._prepare_codex(value)
+                label = self._label("Xác thực · sẵn sàng", "Authentication · ready")
             elif key == "model":
-                custom = self.query_one("#model-custom", Input).value.strip()
-                self.candidate["provider"]["model"] = custom or str(self._select("#model-select"))
-            elif key == "services":
-                if self.candidate["gmail"].get("enabled"):
-                    account = self.query_one("#gmail-account", Input).value.strip()
-                    poll = self.query_one("#poll", Input).value.strip()
-                    if not _email(account):
-                        raise ValueError(self._label("Địa chỉ Gmail không hợp lệ", "Invalid Gmail address"))
-                    if not poll.isdigit() or int(poll) < 10:
-                        raise ValueError(self._label("Polling phải là số từ 10 trở lên", "Polling must be a number of at least 10"))
-                    previous = str(self.original.get("gmail", {}).get("account", "")).casefold()
-                    self.candidate["gmail"]["account"] = account
-                    self.candidate["worker"]["poll_seconds"] = int(poll)
-                    self.selection.gmail_password = self.query_one("#gmail-password", Input).value
-                    self.selection.gmail_auth = "replace" if self.selection.gmail_password else "existing"
-                    self.selection.gmail_reset_uid = not self.gmail_was_enabled or previous != account.casefold() or self.candidate["gmail"].get("process_after_uid") is None
-                if self.candidate["telegram"].get("enabled"):
-                    chats = _csv(self.query_one("#telegram-chats", Input).value)
-                    if not chats or not all(re.fullmatch(r"-?\d+", item) for item in chats):
-                        raise ValueError(self._label("Chat ID phải là số nguyên", "Chat IDs must be integers"))
-                    self.candidate["director"]["telegram_chat_ids"] = chats
-                    self.selection.telegram_token = self.query_one("#telegram-token", Input).value.strip()
-                    self.selection.telegram_auth = "replace" if self.selection.telegram_token else "existing"
+                if value == "__custom__":
+                    self.steps.insert(self.step + 1, "custom_model")
+                    label = self._label("Model · tùy chỉnh", "Model · custom")
+                else:
+                    self.candidate["provider"]["model"] = value
+                    label = f"Model · {value or 'default'}"
+            elif key == "custom_model":
+                if not value.strip():
+                    raise ValueError("Model ID cannot be empty")
+                self.candidate["provider"]["model"] = value.strip()
+                label = f"Model · {value.strip()}"
+            elif key in {"gmail_enabled", "telegram_enabled"}:
+                service = "gmail" if key.startswith("gmail") else "telegram"
+                enabled = value == "yes"
+                self.candidate[service]["enabled"] = enabled
+                extra = (["gmail_account", "gmail_password"] if service == "gmail" else ["telegram_chats", "telegram_token"]) if enabled else []
+                self.steps = self.steps[: self.step + 1] + extra + ["confirm"]
+                label = f"{service.title()} · {'on' if enabled else 'off'}"
+            elif key == "gmail_account":
+                account = value.strip()
+                if not _email(account):
+                    raise ValueError(self._label("Địa chỉ Gmail không hợp lệ", "Invalid Gmail address"))
+                previous = str(self.original.get("gmail", {}).get("account", "")).casefold()
+                self.candidate["gmail"]["account"] = account
+                self.selection.gmail_reset_uid = not self.gmail_was_enabled or previous != account.casefold() or (not self.candidate["gmail"].get("process_after_uids") and self.candidate["gmail"].get("process_after_uid") is None)
+                label = f"Gmail · {account}"
+            elif key == "poll":
+                if not value.isdigit() or int(value) < 10:
+                    raise ValueError(self._label("Polling phải là số từ 10 trở lên", "Polling must be a number of at least 10"))
+                self.candidate["worker"]["poll_seconds"] = int(value)
+                label = f"Polling · {value}s"
+            elif key == "gmail_password":
+                if value and len("".join(value.split())) != 16:
+                    raise ValueError(self._label("App Password phải có đúng 16 ký tự", "App Password must contain exactly 16 characters"))
+                self.selection.gmail_password = value
+                self.selection.gmail_auth = "replace" if value else "existing"
+                label = self._label("Gmail App Password · đã cấu hình", "Gmail App Password · configured")
+            elif key == "telegram_chats":
+                chats = _csv(value)
+                if not chats or not all(re.fullmatch(r"-?\d+", item) for item in chats):
+                    raise ValueError(self._label("Chat ID phải là số nguyên", "Chat IDs must be integers"))
+                self.candidate["director"]["telegram_chat_ids"] = chats
+                label = f"Telegram · {', '.join(chats)}"
+            elif key == "telegram_token":
+                self.selection.telegram_token = value.strip()
+                self.selection.telegram_auth = "replace" if value.strip() else "existing"
+                label = self._label("Telegram token · đã cấu hình", "Telegram token · configured")
             elif key == "confirm":
                 self.candidate["configured"] = True
+                self.query_one("#error", Static).update(self._label("Đang kiểm tra kết nối…", "Validating connections…"))
                 statuses = await preflight_selection(self.selection)
                 failed = next((row for row in statuses if row[1] == "FAIL"), None)
                 if failed:
-                    self.step = 2 if failed[0] == "Provider" else 4
+                    target = "provider_detail" if failed[0] == "Provider" else "gmail_password" if failed[0] == "Gmail" else "telegram_token"
+                    self.step = self.steps.index(target) if target in self.steps else max(0, len(self.steps) - 2)
                     await self._render_step()
                     self.query_one("#error", Static).update(f"{failed[0]}: {failed[2]}")
-                    return False
+                    return
                 self.selection.validated = True
-                self.exit(self.selection)
-                return False
+                self.history.append(self._label("✓ Cấu hình hợp lệ", "✓ Configuration validated"))
+                self.query_one("#history", Static).update("\n".join(self.history[-6:]))
+                self.query_one("#question", Static).update(self._label("Sẵn sàng lưu TaxSentry.", "TaxSentry is ready to save."))
+                await self.query_one("#content", Vertical).remove_children()
+                self.call_after_refresh(self.exit, self.selection)
+                return
         except Exception as exc:
-            error = str(exc)
-        if error:
-            self.query_one("#error", Static).update(error)
-            return False
-        return True
+            self.snapshots.pop()
+            self.query_one("#error", Static).update(str(exc))
+            return
+        self._finish_step(label)
+        await self._render_step()
 
     async def _prepare_codex(self, mode: str) -> None:
         client = CodexAppServerProvider()
         try:
             account = await client.account()
             if mode != "existing":
-                result = await client.start_login(device_code=mode == "device")
+                result = await client.start_login(device_code=False)
                 url = str(result.get("authUrl") or result.get("verificationUrl") or "")
                 if not url:
                     raise RuntimeError("Codex returned no login URL")
@@ -324,23 +390,10 @@ class SetupWizardApp(App[SetupSelection | None]):
         finally:
             await client.close()
 
-    @on(Button.Pressed, "#next")
-    async def next_step(self) -> None:
-        if await self._save_step() and self.step < len(self.steps) - 1:
-            self.step += 1
-            await self._render_step()
-
-    @on(Button.Pressed, "#back")
-    async def back_button(self) -> None:
-        await self.action_back()
-
-    @on(Button.Pressed, "#cancel")
-    def cancel_button(self) -> None:
-        self.action_cancel()
-
     async def action_back(self) -> None:
-        if self.step > 0:
-            self.step -= 1
+        if self.snapshots:
+            self.step, self.steps, self.candidate, self.selection, self.history, self.model_options = self.snapshots.pop()
+            self.selection.config = self.candidate
             await self._render_step()
 
     def action_cancel(self) -> None:
@@ -392,7 +445,7 @@ async def _await_login(ui: WizardUI, client: CodexAppServerProvider, result: dic
 async def _login_codex(ui: WizardUI, client: CodexAppServerProvider, mode: str) -> None:
     while True:
         try:
-            result = await client.start_login(device_code=mode == "device")
+            result = await client.start_login(device_code=False)
             _show_codex_challenge(ui, result)
             await _await_login(ui, client, result)
             return
@@ -404,12 +457,11 @@ async def _login_codex(ui: WizardUI, client: CodexAppServerProvider, mode: str) 
                 ui.choose,
                 "Lỗi đăng nhập / Login failed",
                 "Chọn cách tiếp tục / Choose how to continue",
-                [("retry", "Thử lại\nRetry"), ("device", "Dùng mã thiết bị\nUse device code"), ("cancel", "Hủy\nCancel")],
-                "device" if mode == "browser" else "retry",
+                [("retry", "Thử lại\nRetry"), ("cancel", "Hủy\nCancel")],
+                "retry",
             )
             if action == "cancel":
                 raise Cancelled
-            mode = "device" if action == "device" else mode
 
 
 async def _codex_session(ui: WizardUI) -> tuple[dict[str, Any], list[tuple[str, str, tuple[str, ...]]]]:
@@ -423,7 +475,7 @@ async def _codex_session(ui: WizardUI) -> tuple[dict[str, Any], list[tuple[str, 
         values = []
         if existing:
             values.append(("existing", f"Dùng phiên hiện tại — {identity}{f' ({plan})' if plan else ''}\nUse existing session"))
-        values.extend([("browser", "Đăng nhập bằng trình duyệt\nBrowser OAuth"), ("device", "Đăng nhập bằng mã thiết bị\nDevice code login"), ("cancel", "Hủy\nCancel")])
+        values.extend([("browser", "Đăng nhập bằng trình duyệt\nBrowser OAuth"), ("cancel", "Hủy\nCancel")])
         mode = await asyncio.to_thread(ui.choose, "Xác thực Codex / Codex Authentication", "Chọn phương thức đăng nhập / Select authentication method", values, "existing" if existing else "browser")
         if mode == "cancel":
             raise Cancelled
@@ -523,9 +575,9 @@ def _collect(config: dict[str, Any], ui: WizardUI) -> SetupSelection:
         gmail = candidate["gmail"]
         previous_account = str(gmail.get("account", "")).casefold()
         gmail["account"] = ui.text("Gmail", "Tài khoản nhận báo cáo / Report inbox", str(gmail.get("account", "")), _email, "Nhập địa chỉ email hợp lệ / Enter a valid email")
-        selection.gmail_reset_uid = not gmail_was_enabled or previous_account != gmail["account"].casefold() or gmail.get("process_after_uid") is None
-        current_poll = int(candidate["worker"].get("poll_seconds", 60))
-        poll = ui.choose("Polling", "Chu kỳ quét Gmail / Gmail polling interval", [(30, "30 giây\n30 seconds"), (60, "60 giây — khuyên dùng\n60 seconds — recommended"), (300, "5 phút\n5 minutes"), (0, "Tùy chỉnh\nCustom")], current_poll if current_poll in {30, 60, 300} else 0)
+        selection.gmail_reset_uid = not gmail_was_enabled or previous_account != gmail["account"].casefold() or (not gmail.get("process_after_uids") and gmail.get("process_after_uid") is None)
+        current_poll = int(candidate["worker"].get("poll_seconds", 30))
+        poll = ui.choose("Polling", "Chu kỳ quét Gmail / Gmail polling interval", [(30, "30 giây — khuyên dùng\n30 seconds — recommended"), (60, "60 giây\n60 seconds"), (300, "5 phút\n5 minutes"), (0, "Tùy chỉnh\nCustom")], current_poll if current_poll in {30, 60, 300} else 0)
         if poll == 0:
             poll = int(ui.text("Polling", "Số giây, tối thiểu 10 / Seconds, minimum 10", str(current_poll), lambda value: value.isdigit() and int(value) >= 10, "Giá trị phải là số >= 10"))
         candidate["worker"]["poll_seconds"] = poll
@@ -558,7 +610,7 @@ def run_setup_wizard(config: dict[str, Any], console: Console | None, ui: Wizard
     if ui is None:
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise RuntimeError("`taxsentry setup` requires an interactive terminal.")
-        return SetupWizardApp(config).run()
+        return SetupWizardApp(config).run(inline=True, inline_no_clear=True)
     try:
         while True:
             selection = _collect(config, ui)
@@ -594,7 +646,7 @@ async def _codex_auth(mode: str, model: str, console: Console) -> str:
                     webbrowser.open(result["authUrl"])
                 elif result.get("verificationUrl"):
                     console.print(f"Open / Mở: {result['verificationUrl']}  Code / Mã: [bold]{result['userCode']}[/]")
-            await client.login(device_code=mode == "device", challenge=challenge)
+            await client.login(device_code=False, challenge=challenge)
         return "connected"
     finally:
         await client.close()
@@ -633,7 +685,9 @@ async def preflight_selection(selection: SetupSelection) -> list[tuple[str, str,
             gmail = GmailClient(config)
             await asyncio.to_thread(gmail.authenticate, app_password=selection.gmail_password, store=False)
             if selection.gmail_reset_uid:
-                config["gmail"]["process_after_uid"] = await asyncio.to_thread(gmail.latest_uid)
+                latest = gmail.latest_uids if hasattr(gmail, "latest_uids") else lambda: {"INBOX": gmail.latest_uid()}
+                config["gmail"]["process_after_uids"] = await asyncio.to_thread(latest)
+                config["gmail"]["process_after_uid"] = None
             statuses.append(("Gmail", "OK", config["gmail"]["account"]))
         except Exception as exc:
             statuses.append(("Gmail", "FAIL", str(exc)))

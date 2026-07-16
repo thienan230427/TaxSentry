@@ -118,3 +118,13 @@ def test_codex_finds_desktop_launcher_when_path_is_stale(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setattr("taxsentry.providers.shutil.which", lambda _: None)
     assert _codex_command() == str(launcher)
+
+
+def test_codex_prefers_desktop_launcher_over_windowsapps_alias(monkeypatch, tmp_path):
+    launcher = tmp_path / "OpenAI" / "Codex" / "bin" / "release" / "codex.exe"
+    launcher.parent.mkdir(parents=True)
+    launcher.touch()
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr("taxsentry.providers.shutil.which", lambda _: r"C:\Program Files\WindowsApps\codex.exe")
+    assert _codex_command() == str(launcher)
