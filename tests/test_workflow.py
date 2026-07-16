@@ -42,6 +42,31 @@ class FakeGmail:
         self.outgoing.append((to, subject, pdf_path)); return "gmail-out-1"
 
 
+class FlakyGmail(FakeGmail):
+    def __init__(self, root, message):
+        super().__init__(root, message)
+        self.attempts = 0
+
+    def send_report(self, *args, **kwargs):
+        self.attempts += 1
+        if self.attempts == 1:
+            raise TimeoutError
+        return super().send_report(*args, **kwargs)
+
+
+class FlakyTelegram(FakeTelegram):
+    def __init__(self):
+        super().__init__()
+        self.document_attempts = 0
+
+    async def notify(self, text, pdf=None):
+        if pdf:
+            self.document_attempts += 1
+            if self.document_attempts == 1:
+                raise TimeoutError
+        return await super().notify(text, pdf)
+
+
 def settings():
     return {
         "gmail": {"account": "director@example.com", "process_after_uid": 0},
@@ -70,6 +95,51 @@ def test_e2e_deduplicates_and_delivers(monkeypatch, tmp_path):
     assert store.recent_jobs()[0]["state"] == "completed"
     assert gmail.labels[-1] == "TaxSentry/Completed"
     assert gmail.outgoing[0][0] == "director@example.com" and telegram.sent
+
+
+def test_delivery_retry_does_not_repeat_pipeline_or_successful_channel(monkeypatch, tmp_path):
+    message = GmailMessage("m-retry", "accounting@example.com", "Retry", [GmailAttachment("report.pdf", "application/pdf", b"%PDF")])
+    gmail, telegram, store = FlakyGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "retry.db")
+    calls = {"extract": 0, "render": 0}
+
+    def fake_extract(path, languages):
+        calls["extract"] += 1
+        return Extraction("revenue 120", 0.95, "pdf-text")
+
+    def fake_pdf(report, output, warning=""):
+        calls["render"] += 1
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"%PDF")
+        return output
+
+    monkeypatch.setattr("taxsentry.workflow.extract", fake_extract)
+    monkeypatch.setattr("taxsentry.workflow.render_pdf", fake_pdf)
+    monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
+    monkeypatch.setattr("taxsentry.workflow.BACKOFF_SECONDS", (0, 0, 0))
+    workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
+
+    assert asyncio.run(workflow.run_once()) == 1
+    assert calls == {"extract": 1, "render": 1} and gmail.attempts == 2
+    assert len([document for _, document in telegram.sent if document]) == 1
+
+
+def test_telegram_retry_does_not_resend_gmail(monkeypatch, tmp_path):
+    message = GmailMessage("m-telegram", "accounting@example.com", "Retry", [GmailAttachment("report.pdf", "application/pdf", b"%PDF")])
+    gmail, telegram, store = FakeGmail(tmp_path, message), FlakyTelegram(), JobStore(tmp_path / "telegram.db")
+    monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: Extraction("revenue 120", 0.95, "pdf-text"))
+
+    def fake_pdf(report, output, warning=""):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"%PDF")
+        return output
+
+    monkeypatch.setattr("taxsentry.workflow.render_pdf", fake_pdf)
+    monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
+    monkeypatch.setattr("taxsentry.workflow.BACKOFF_SECONDS", (0, 0, 0))
+    workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
+
+    assert asyncio.run(workflow.run_once()) == 1
+    assert len(gmail.outgoing) == 1 and telegram.document_attempts == 2
 
 
 def test_each_attachment_gets_an_independent_job(monkeypatch, tmp_path):

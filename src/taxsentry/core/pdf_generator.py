@@ -469,7 +469,7 @@ class TaxSentryPDFGenerator:
             return True
         except Exception as e:
             print(f"❌ Lỗi khi xây dựng file PDF: {e}")
-            return False
+            raise
 
 def main():
     print("--- CHẠY THỬ NGHIỆM PDF GENERATOR ---")

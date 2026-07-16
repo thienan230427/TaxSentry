@@ -606,7 +606,7 @@ class TaxSentryParser:
                 continue
             summary[matched_key] = {
                 "label": item.get("label"),
-                "value": self._last_numeric_value(item),
+                "value": self._preferred_numeric_value(item),
             }
         return summary
 
@@ -626,15 +626,17 @@ class TaxSentryParser:
                 matched_key = self._match_canonical_label(item.get("label"))
                 if not matched_key:
                     continue
-                value = self._last_numeric_value(item)
+                value = self._preferred_numeric_value(item)
                 if value is None:
                     continue
+                norm = self._normalize_text(item.get("label"))
                 candidates[matched_key].append({
                     "value": value,
                     "sheet": report.get("name"),
                     "sheet_type": sheet_type,
                     "label": item.get("label"),
-                    "score": self._candidate_score(sheet_type, item.get("label")),
+                    "score": self._candidate_score(sheet_type, item.get("label"))
+                    + (2 if matched_key == "revenue" and "doanh thu thuan" in norm else 0),
                     "periods": list(item.get("values", {}).keys()),
                 })
 
@@ -683,7 +685,14 @@ class TaxSentryParser:
             canonical = self._match_canonical_label(item.get("label"))
             if canonical not in FIELD_ALIASES:
                 continue
-            values = list(item.get("values", {}).values())
+            values_by_period = [
+                (self._normalize_text(period), value)
+                for period, value in item.get("values", {}).items()
+                if isinstance(value, (int, float)) and not self._is_metadata_header(period)
+            ]
+            if any(period in {"ky nay", "ky truoc", "current", "previous"} for period, _ in values_by_period):
+                continue
+            values = [value for _, value in values_by_period]
             alias = FIELD_ALIASES[canonical]
             if values:
                 self.is_data["T5"][alias] = values[-1]
@@ -695,6 +704,8 @@ class TaxSentryParser:
     def _match_canonical_label(self, label):
         norm = self._normalize_text(label)
         if not norm:
+            return None
+        if "doanh thu hoat dong tai chinh" in norm or "financial income" in norm:
             return None
         for canonical, keywords in CANONICAL_LABEL_KEYWORDS.items():
             if any(keyword in norm for keyword in keywords):
@@ -719,6 +730,21 @@ class TaxSentryParser:
     def _last_numeric_value(self, item):
         values = [v for v in item.get("values", {}).values() if isinstance(v, (int, float))]
         return values[-1] if values else None
+
+    def _preferred_numeric_value(self, item):
+        values = item.get("values", {})
+        for period, value in values.items():
+            if self._normalize_text(period) in {"ky nay", "current", "this period"} and isinstance(value, (int, float)):
+                return value
+        candidates = [
+            value
+            for period, value in values.items()
+            if isinstance(value, (int, float)) and not self._is_metadata_header(period)
+        ]
+        return candidates[-1] if candidates else None
+
+    def _is_metadata_header(self, header):
+        return self._normalize_text(header) in {"ma so", "code", "stt", "thuyet minh", "note", "notes"}
 
     def _resolved_cell_value(self, sheet_name: str, row_idx: int, col_idx: int, visited=None):
         cell_ref = f"{get_column_letter(col_idx)}{row_idx}"

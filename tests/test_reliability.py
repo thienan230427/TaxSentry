@@ -66,7 +66,7 @@ def test_gmail_app_password_is_verified_before_keyring_storage(monkeypatch):
         def login(self, account, password):
             calls.append((account, password))
 
-    monkeypatch.setattr("taxsentry.gmail.imaplib.IMAP4_SSL", lambda *args: Imap())
+    monkeypatch.setattr("taxsentry.gmail.imaplib.IMAP4_SSL", lambda *args, **kwargs: Imap())
     monkeypatch.setattr("taxsentry.gmail.set_secret", lambda *args: calls.append(args))
     client = GmailClient({"gmail": {"account": "boss@gmail.com"}})
     client.authenticate(app_password="abcd efgh ijkl mnop")

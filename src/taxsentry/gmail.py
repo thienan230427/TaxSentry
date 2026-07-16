@@ -102,7 +102,8 @@ class GmailClient:
         password = "".join(app_password.split()) or get_secret(f"gmail-app-password:{account}")
         if not account or len(password) != 16:
             raise RuntimeError("Gmail App Password phải có đúng 16 ký tự / must contain exactly 16 characters.")
-        self.imap = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+        timeout = float(self.settings.get("worker", {}).get("imap_timeout_seconds", 30))
+        self.imap = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=timeout)
         try:
             self.imap.login(account, password)
         except imaplib.IMAP4.error as exc:
@@ -271,7 +272,11 @@ class GmailClient:
         message_id = f"<{idempotency_key}@taxsentry.local>" if idempotency_key else ""
         if message_id:
             self._imap_select()
-            status, data = self.imap.uid("search", None, "X-GM-RAW", f'"in:sent rfc822msgid:{message_id}"')
+            try:
+                status, data = self.imap.uid("search", None, "X-GM-RAW", f'"in:sent rfc822msgid:{message_id}"')
+            except (OSError, imaplib.IMAP4.abort):
+                self.imap = None
+                raise
             if status == "OK" and (data[0] or b"").split():
                 return (data[0] or b"").split()[0].decode()
         message = EmailMessage()
@@ -284,7 +289,8 @@ class GmailClient:
         message.add_attachment(pdf_path.read_bytes(), maintype="application", subtype="pdf", filename=pdf_path.name)
         account = self.settings["gmail"]["account"]
         password = get_secret(f"gmail-app-password:{account}")
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        timeout = float(self.settings.get("worker", {}).get("delivery_timeout_seconds", 90))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=timeout) as smtp:
             smtp.login(account, password)
             smtp.send_message(message)
         return message_id or str(message["Message-ID"] or "sent")

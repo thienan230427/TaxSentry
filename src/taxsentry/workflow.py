@@ -101,19 +101,20 @@ class TaxSentryWorkflow:
                 await self._progress(job_id, f"⛔ Đã hủy job {job_id[:8]}")
                 return False
             except Exception as exc:
+                error = str(exc) or type(exc).__name__
                 if isinstance(exc, ValueError) and str(exc).startswith("LibreOffice"):
-                    self.store.transition(job_id, "failed", error=str(exc))
+                    self.store.transition(job_id, "failed", error=error)
                     await self._progress(job_id, f"❌ Không thể đọc file Office cũ: {attachment.name}\n{exc}")
                     return False
                 retries = int(self.store.get(job_id)["retries"])
                 if retries >= maximum:
-                    self.store.transition(job_id, "failed", error=str(exc))
-                    await self._progress(job_id, f"❌ Job {job_id[:8]} thất bại sau {maximum} lần thử lại: {attachment.name}\n{exc}")
+                    self.store.transition(job_id, "failed", error=error)
+                    await self._progress(job_id, f"❌ Job {job_id[:8]} thất bại sau {maximum} lần thử lại: {attachment.name}\n{error}")
                     return False
-                retries = self.store.increment_retry(job_id, str(exc))
+                retries = self.store.increment_retry(job_id, error)
                 if self.store.get(job_id)["state"] != "queued":
                     self.store.requeue(job_id, reset_retries=False)
-                await self._progress(job_id, f"↻ Job {job_id[:8]} thử lại {retries}/{maximum}: {exc}")
+                await self._progress(job_id, f"↻ Job {job_id[:8]} thử lại {retries}/{maximum}: {error}")
                 try:
                     await asyncio.wait_for(self._cancel_event(job_id).wait(), timeout=BACKOFF_SECONDS[min(retries - 1, len(BACKOFF_SECONDS) - 1)])
                     raise JobCancelled
@@ -165,31 +166,62 @@ class TaxSentryWorkflow:
         self._check_cancel(job_id)
         self.store.transition(job_id, "delivering", report_path=str(pdf))
         await self._progress(job_id, f"📤 Đang gửi Gmail và Telegram · job {job_id[:8]}")
+        return await self._deliver(job_id, message, attachment, report, pdf, warning, approved)
+
+    async def _deliver(self, job_id, message, attachment, report, pdf, warning, approved) -> bool:
         director = self.settings["gmail"].get("account", "")
         if not director:
             raise ValueError("gmail.account is not configured")
-        if not self.store.delivered(job_id, "gmail"):
-            outgoing = await self._blocking(
-                self.gmail.send_report,
-                director,
-                f"TaxSentry: {message.subject} · {attachment.name}",
-                html_summary(report, warning),
-                pdf,
-                idempotency_key=job_id,
-                timeout=self._timeout("imap", 30),
-            )
-            self.store.delivery(job_id, "gmail", "sent", outgoing)
-        if not self.store.delivered(job_id, "telegram"):
-            notice = f"✅ {attachment.name}\n{report['executive_summary']}\nTin cậy: {report['confidence']:.0%}"
-            if warning:
-                notice += f"\n⚠️ {warning}"
-            telegram_ids = await asyncio.wait_for(self.telegram.notify(notice, pdf), timeout=self._timeout("imap", 30))
-            for external_id in telegram_ids:
-                self.store.delivery(job_id, "telegram", "sent", external_id)
-        self.store.transition(job_id, "completed", report_path=str(pdf))
-        if approved:
-            self.store.consume_approval(job_id)
-        return True
+        maximum = int(self.settings["worker"].get("max_retries", 3))
+        notice = f"✅ {attachment.name}\n{report['executive_summary']}\nTin cậy: {report['confidence']:.0%}"
+        if warning:
+            notice += f"\n⚠️ {warning}"
+        while True:
+            errors = []
+            if not self.store.delivered(job_id, "gmail"):
+                try:
+                    outgoing = await self._blocking(
+                        self.gmail.send_report,
+                        director,
+                        f"TaxSentry: {message.subject} · {attachment.name}",
+                        html_summary(report, warning),
+                        pdf,
+                        idempotency_key=job_id,
+                        timeout=self._timeout("delivery", 90),
+                    )
+                    self.store.delivery(job_id, "gmail", "sent", outgoing)
+                except Exception as exc:
+                    errors.append(f"gmail: {str(exc) or type(exc).__name__}")
+            if not self.store.delivered(job_id, "telegram"):
+                try:
+                    telegram_ids = await asyncio.wait_for(
+                        self.telegram.notify(notice, pdf), timeout=self._timeout("delivery", 90)
+                    )
+                    for external_id in telegram_ids or ["sent"]:
+                        self.store.delivery(job_id, "telegram", "sent", external_id)
+                except Exception as exc:
+                    errors.append(f"telegram: {str(exc) or type(exc).__name__}")
+            if not errors:
+                self.store.transition(job_id, "completed", report_path=str(pdf))
+                if approved:
+                    self.store.consume_approval(job_id)
+                return True
+            error = "; ".join(errors)
+            retries = int(self.store.get(job_id)["retries"])
+            if retries >= maximum:
+                self.store.transition(job_id, "failed", error=error)
+                await self._progress(job_id, f"❌ Job {job_id[:8]} gửi file thất bại sau {maximum} lần thử lại\n{error}")
+                return False
+            retries = self.store.increment_retry(job_id, error)
+            await self._progress(job_id, f"↻ Job {job_id[:8]} chỉ thử lại kênh gửi lỗi {retries}/{maximum}: {error}")
+            try:
+                await asyncio.wait_for(
+                    self._cancel_event(job_id).wait(),
+                    timeout=BACKOFF_SECONDS[min(retries - 1, len(BACKOFF_SECONDS) - 1)],
+                )
+                raise JobCancelled
+            except asyncio.TimeoutError:
+                pass
 
     async def _analyze(self, job_id: str, prompt: str) -> str:
         async def collect() -> str:

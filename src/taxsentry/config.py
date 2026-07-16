@@ -23,7 +23,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "gmail": {"enabled": True, "account": "", "process_after_uid": None, "process_after_uids": {}, "mailbox_scope": "all"},
     "director": {"telegram_chat_ids": []},
     "telegram": {"enabled": False},
-    "worker": {"poll_seconds": 30, "max_retries": 3, "max_attachment_mb": 100, "imap_timeout_seconds": 30, "analysis_timeout_seconds": 300, "extraction_timeout_seconds": 600},
+    "worker": {"poll_seconds": 30, "max_retries": 3, "max_attachment_mb": 100, "imap_timeout_seconds": 30, "delivery_timeout_seconds": 90, "analysis_timeout_seconds": 300, "extraction_timeout_seconds": 600},
     "update": {"source": "git+https://github.com/thienan230427/TaxSentry.git"},
     "report": {"language": "vi", "minimum_confidence": 0.70},
     "ocr": {"languages": ["vie", "eng"], "minimum_confidence": 70.0},
@@ -132,9 +132,9 @@ def describe_config(config: dict[str, Any]) -> str:
     gmail_status = (gmail.get("account") or ("not connected" if en else "chưa kết nối")) if gmail.get("enabled", True) else disabled
     marker = gmail.get("process_after_uids") or gmail.get("process_after_uid")
     if en:
-        rows = (f"TaxSentry {config.get('version', __version__)}", f"Provider: {provider['kind']} / {provider.get('model') or 'default'}", f"Gmail: {gmail_status}", "Gmail sender policy: all senders", f"Worker starts after UID: {marker if marker is not None else pending}", f"Telegram: {'enabled' if config['telegram'].get('enabled') else disabled}", f"LibreOffice: {'available' if shutil.which('soffice') else 'optional / not found'}", f"Config: {CONFIG_FILE}")
+        rows = (f"TaxSentry {__version__}", f"Provider: {provider['kind']} / {provider.get('model') or 'default'}", f"Gmail: {gmail_status}", "Gmail sender policy: all senders", f"Worker starts after UID: {marker if marker is not None else pending}", f"Telegram: {'enabled' if config['telegram'].get('enabled') else disabled}", f"LibreOffice: {'available' if shutil.which('soffice') else 'optional / not found'}", f"Config: {CONFIG_FILE}")
     else:
-        rows = (f"TaxSentry {config.get('version', __version__)}", f"Provider: {provider['kind']} / {provider.get('model') or 'mặc định'}", f"Gmail: {gmail_status}", "Chính sách Gmail: mọi người gửi", f"Worker bắt đầu sau UID: {marker if marker is not None else pending}", f"Telegram: {'đã bật' if config['telegram'].get('enabled') else disabled}", f"LibreOffice: {'sẵn sàng' if shutil.which('soffice') else 'tùy chọn / không tìm thấy'}", f"Cấu hình: {CONFIG_FILE}")
+        rows = (f"TaxSentry {__version__}", f"Provider: {provider['kind']} / {provider.get('model') or 'mặc định'}", f"Gmail: {gmail_status}", "Chính sách Gmail: mọi người gửi", f"Worker bắt đầu sau UID: {marker if marker is not None else pending}", f"Telegram: {'đã bật' if config['telegram'].get('enabled') else disabled}", f"LibreOffice: {'sẵn sàng' if shutil.which('soffice') else 'tùy chọn / không tìm thấy'}", f"Cấu hình: {CONFIG_FILE}")
     return "\n".join(rows)
 
 
