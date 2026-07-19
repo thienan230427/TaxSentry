@@ -297,7 +297,14 @@ class GmailClient:
         message.set_content("Báo cáo TaxSentry được đính kèm.")
         message.add_alternative(html, subtype="html")
         for path in dict.fromkeys([primary_path, *(attachments or [])]):
-            mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            mime_type = next(
+                (
+                    value
+                    for value in ALLOWED_MIME.get(path.suffix.casefold(), ())
+                    if value != "application/octet-stream"
+                ),
+                None,
+            ) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
             maintype, subtype = mime_type.split("/", 1)
             message.add_attachment(
                 path.read_bytes(),

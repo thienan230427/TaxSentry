@@ -60,6 +60,9 @@ def test_gmail_delivery_uses_stable_message_id(tmp_path):
 
 
 def test_gmail_delivery_attaches_the_exact_office_bundle(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "taxsentry.gmail.mimetypes.guess_type", lambda name: (None, None)
+    )
     pptx = tmp_path / "review.pptx"
     xlsx = tmp_path / "model.xlsx"
     pptx.write_bytes(b"pptx")
