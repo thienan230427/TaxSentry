@@ -51,7 +51,7 @@ flowchart LR
     Agent --> Artifacts
     Workflow <--> Store
     Artifacts --> TelegramOut["Telegram delivery"]
-    Workflow --> GmailOut["Gmail PDF report"]
+    Workflow --> GmailOut["Gmail advisory bundle"]
     Workflow --> TelegramOut
 ```
 
@@ -86,8 +86,10 @@ TaxSentry supports messages from every sender. Automatic processing starts only 
 - Direct PDF text extraction with OCR fallback for scanned pages.
 - OCR for PNG, JPG, and JPEG with configurable language packs.
 - Legacy DOC, XLS, and PPT conversion through LibreOffice when installed.
-- Structured AI reports with executive summary, evidence, missing data, risks, recommendations, and confidence.
-- PDF report rendering and auditable job, report, attachment, delivery, and event records.
+- Advisory Schema v2 reports with grounded metrics, findings, scenarios, tax risks, actionable recommendations, sources, assumptions, and confidence.
+- Deterministic Python calculations for growth, budget variance, margins, cost ratios, and three-case P&L sensitivity.
+- Official-source legal knowledge freshness checks; stale or unsupported conclusions are held for review.
+- Multi-file report bundles and auditable job, report, attachment, delivery, and event records.
 - Retry with bounded backoff, per-stage timeouts, cancellation, and duplicate-work protection.
 - Channel-aware delivery retries: if Gmail succeeds and Telegram fails, only the failed delivery is retried.
 
@@ -103,6 +105,8 @@ TaxSentry can create new office documents directly from a prompt, selected Gmail
 | Report document | PDF | Not applicable |
 
 Generated files use Vietnamese business conventions by default, including VND and `dd/mm/yyyy`. The agent is instructed not to invent missing values and to identify incomplete evidence. Outputs are saved under `~/.taxsentry/outputs` and sent to configured Telegram chats when automatic artifact delivery is enabled.
+
+When no format is specified, TaxSentry selects one of five advisory profiles: CFO brief, tax-risk memo, cash-flow advisory, performance review, or scenario plan. Excel advisory models include source data, editable assumptions, application-generated formulas, a two-variable sensitivity matrix, risks, actions, and charts.
 
 ### AI providers
 
@@ -274,12 +278,16 @@ Type `/` to show command completion. Use the arrow keys to select a command, `Ta
 | `/gmail search <query>` | Search up to 20 messages with Gmail search syntax. |
 | `/gmail read <uid>` | Read one message, including body and attachment names. |
 | `/gmail process <uid\|all>` | Confirm processing for selected search results. |
-| `/create <docx\|xlsx\|pptx\|pdf> <request>` | Generate a document. Add `--template <path>` for a compatible Office template. |
+| `/create [docx\|xlsx\|pptx\|pdf] <request>` | Generate one requested file or let TaxSentry select an advisory bundle. Add `--template <path>` for a compatible Office template. |
+| `/profile show` | Show the controlled company profile used by advisory reports. |
+| `/profile set <field> <value>` | Update an approved company-profile field. |
+| `/knowledge status` | Show legal-source verification and freshness. |
+| `/knowledge refresh` | Refresh the allowlisted official-source registry. |
 | `/cancel <job-prefix>` | Request cancellation of an active job. |
 | `/jobs` | Show recent job IDs, states, subjects, and retry counts. |
 | `/report` | Show the executive summary from the latest report. |
 | `/retry [job-prefix]` | Requeue a failed or review-pending job. |
-| `/approve [job-prefix]` | Approve and requeue a job in `needs_review`. |
+| `/approve [job-prefix]` | Approve and deliver the already-rendered draft without re-running analysis. |
 | `/new` | Start a new conversation session. |
 | `/exit` | Stop background services and exit safely. |
 
@@ -303,7 +311,9 @@ Which unread emails arrived today?
 | `/report` | Send the latest generated PDF. |
 | `/gmail search <query>` | Search Gmail and retain results for confirmation. |
 | `/gmail process <uid\|all>` | Process confirmed Gmail results. |
-| `/create <docx\|xlsx\|pptx\|pdf> <request>` | Generate a file and return its completion state. |
+| `/create [docx\|xlsx\|pptx\|pdf] <request>` | Generate a requested file or an automatically selected advisory bundle. |
+| `/profile show\|set ...` | View or update the controlled company profile. |
+| `/knowledge status\|refresh` | Inspect or refresh official legal sources. |
 | `/retry <job-prefix>` | Requeue a failed or review-pending job. |
 | `/approve <job-prefix>` | Approve a review-pending job. |
 | `/cancel <job-prefix>` | Cancel an active workflow job. |
@@ -364,12 +374,13 @@ For every supported attachment, TaxSentry:
 2. Validates the extension, MIME type, file signature, archive structure, and configured size limit.
 3. Saves the validated attachment under `~/.taxsentry/downloads/<job-id>/`.
 4. Extracts structured content or OCR text.
-5. Requests a fixed-schema financial analysis from the configured provider.
-6. Adds a visible warning when extraction or report confidence is below the configured threshold.
-7. Renders a PDF and records the report in SQLite.
-8. Sends the report to the connected Gmail account and configured Telegram chats.
-9. Records successful channels so retries do not duplicate completed deliveries.
-10. Applies the final Gmail workflow label.
+5. Builds deterministic metrics and retrieves relevant, freshness-scored knowledge.
+6. Requests an Advisory Schema v2 analysis and removes unsupported benchmarks or numbers.
+7. Renders the exact profile-selected bundle and records its main legacy `pdf_path` plus every output path in SQLite.
+8. Holds material, low-confidence, high-tax-risk, or stale-source reports for approval.
+9. Delivers the saved draft after approval without re-running extraction or analysis.
+10. Records each successful file/channel so retries do not duplicate completed deliveries.
+11. Applies the final Gmail workflow label.
 
 ## Architecture
 
@@ -439,6 +450,10 @@ Default profile layout:
 | `ocr.minimum_confidence` | `70` | Extraction threshold used for report warnings. |
 | `report.minimum_confidence` | `0.70` | Analysis threshold used for report warnings. |
 | `artifacts.output_dir` | `~/.taxsentry/outputs` | Generated document directory. |
+| `advisor.company.materiality_ratio` | `0.05` | Hold recommendations whose estimated impact reaches this share of period revenue. |
+| `advisor.knowledge.refresh_days` | `7` | Automatic official-source refresh cadence. |
+| `advisor.knowledge.legal_stale_days` | `30` | Maximum age before legal conclusions require review. |
+| `advisor.knowledge.benchmark_max_age_months` | `24` | Maximum accepted benchmark age. |
 
 ### Environment overrides
 

@@ -107,7 +107,7 @@ async def test_cockpit_commands_are_compact(monkeypatch):
             await cockpit._command(command)
         await pilot.pause()
         assert len(cockpit.query(Markdown)) == 8
-    assert list(COMMANDS) == ["/help", "/status", "/gmail", "/create", "/cancel", "/jobs", "/report", "/retry", "/approve", "/new", "/exit"]
+    assert list(COMMANDS) == ["/help", "/status", "/gmail", "/create", "/profile", "/knowledge", "/cancel", "/jobs", "/report", "/retry", "/approve", "/new", "/exit"]
     assert store.requeued == [("job-123456", False), ("job-123456", True)]
 
 

@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 
+import pytest
+
 from taxsentry import config as config_module
 from taxsentry.config import DEFAULT_SETTINGS
-from taxsentry.reporting import REPORT_SCHEMA, parse_report
+from taxsentry.reporting import REPORT_SCHEMA, normalize_report, parse_report
 from taxsentry.store import JobStore
 
 
@@ -63,12 +65,57 @@ def test_report_schema_requires_all_business_sections():
         "performance": [], "tax_risks": [], "missing_data": [], "recommendations": [], "confidence": 0.82,
     }
     assert parse_report(json.dumps(payload))["confidence"] == 0.82
+    assert normalize_report(payload)["schema_version"] == 2
 
 
 def test_report_schema_is_strict_at_every_object_level():
     assert REPORT_SCHEMA["additionalProperties"] is False
-    for name in ("performance", "tax_risks", "recommendations"):
+    for name in ("metrics", "findings", "tax_risks", "recommendations", "sources"):
         assert REPORT_SCHEMA["properties"][name]["items"]["additionalProperties"] is False
+
+
+def test_report_parser_rejects_formatted_financial_strings_and_unknown_fields():
+    report = normalize_report(
+        {
+            "executive_summary": "Test",
+            "performance": [],
+            "tax_risks": [],
+            "missing_data": [],
+            "recommendations": [],
+            "confidence": 0.9,
+        }
+    )
+    report.pop("confidence")
+    report["metrics"] = [
+        {
+            "id": "revenue",
+            "label": "Doanh thu",
+            "current": "120.000.000 VND",
+            "previous": None,
+            "budget": None,
+            "benchmark": None,
+            "unit": "VND",
+            "source_ids": ["input:1"],
+            "assessment": "",
+        }
+    ]
+    report["sources"] = [
+        {
+            "id": "input:1",
+            "kind": "file",
+            "title": "data.xlsx",
+            "locator": "data.xlsx",
+            "fetched_at": "",
+            "effective_from": "",
+            "verified_current": True,
+        }
+    ]
+    with pytest.raises(ValueError, match="must be number or null"):
+        parse_report(json.dumps(report))
+    report["metrics"][0]["current"] = 120_000_000
+    report["unexpected"] = True
+    with pytest.raises(ValueError, match="unknown fields"):
+        parse_report(json.dumps(report))
 
 
 def test_automatic_retry_keeps_its_budget(tmp_path):

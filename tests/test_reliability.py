@@ -59,6 +59,56 @@ def test_gmail_delivery_uses_stable_message_id(tmp_path):
     assert result == "123"
 
 
+def test_gmail_delivery_attaches_the_exact_office_bundle(monkeypatch, tmp_path):
+    pptx = tmp_path / "review.pptx"
+    xlsx = tmp_path / "model.xlsx"
+    pptx.write_bytes(b"pptx")
+    xlsx.write_bytes(b"xlsx")
+    sent = []
+
+    class Imap:
+        def select(self, mailbox):
+            return "OK", []
+
+        def uid(self, *args):
+            return "OK", [b""]
+
+    class Smtp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def login(self, account, password):
+            pass
+
+        def send_message(self, message):
+            sent.append(message)
+
+    client = GmailClient({"gmail": {"account": "boss@gmail.com"}}, imap=Imap())
+    monkeypatch.setattr(client, "authenticate", lambda *args, **kwargs: None)
+    monkeypatch.setattr("taxsentry.gmail.get_secret", lambda key: "secret")
+    monkeypatch.setattr("taxsentry.gmail.smtplib.SMTP_SSL", lambda *args, **kwargs: Smtp())
+    client.send_report(
+        "director@example.com",
+        "Performance review",
+        "<p>ok</p>",
+        pptx,
+        attachments=[xlsx],
+    )
+
+    attachments = list(sent[0].iter_attachments())
+    assert [item.get_filename() for item in attachments] == [
+        "review.pptx",
+        "model.xlsx",
+    ]
+    assert [item.get_content_type() for item in attachments] == [
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ]
+
+
 def test_gmail_app_password_is_verified_before_keyring_storage(monkeypatch):
     calls = []
 

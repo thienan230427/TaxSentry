@@ -30,6 +30,24 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "memory": {"max_facts": 50, "max_turns": 12, "session_title": "TaxSentry session"},
     "jobs": {"tracking_enabled": True, "retry_limit": 3, "default_state": "queued", "needs_human_review_on_missing_data": True, "auto_send_email": True, "auto_send_telegram": True},
     "artifacts": {"output_dir": str(OUTPUT_DIR), "auto_send_telegram": True, "templates": {"docx": "", "xlsx": "", "pptx": ""}},
+    "advisor": {
+        "company": {
+            "name": "",
+            "industry": "",
+            "business_model": "",
+            "fiscal_year_start": "01/01",
+            "reporting_cycle": "monthly",
+            "currency": "VND",
+            "materiality_ratio": 0.05,
+            "objectives": [],
+        },
+        "knowledge": {
+            "auto_refresh": True,
+            "refresh_days": 7,
+            "legal_stale_days": 30,
+            "benchmark_max_age_months": 24,
+        },
+    },
     "ui": {"theme": "sentinel", "language": "vi", "show_banner": True}, "extra_env": {},
 }
 

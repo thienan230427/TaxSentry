@@ -444,14 +444,25 @@ class TaxSentryPDFGenerator:
         flowables = self._parse_markdown_to_flowables(markdown_content)
         story.extend(flowables)
 
-        # Chữ ký chân trang
-        story.append(Spacer(1, 25))
-        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#CCCCCC'), spaceAfter=10))
-        story.append(Paragraph("Báo cáo được tạo tự động bởi TaxSentry; vui lòng đối chiếu chứng từ gốc trước khi quyết định.", self.caption_style))
+        def footer(canvas, document):
+            canvas.saveState()
+            canvas.setStrokeColor(colors.HexColor("#CCCCCC"))
+            canvas.line(document.leftMargin, 36, letter[0] - document.rightMargin, 36)
+            canvas.setFillColor(colors.HexColor("#666666"))
+            canvas.setFont(self.font_italic, 8)
+            canvas.drawString(
+                document.leftMargin,
+                24,
+                "Báo cáo do TaxSentry tạo; vui lòng đối chiếu chứng từ gốc trước khi quyết định.",
+            )
+            canvas.drawRightString(
+                letter[0] - document.rightMargin, 24, f"Trang {document.page}"
+            )
+            canvas.restoreState()
 
         # Build PDF
         try:
-            doc.build(story)
+            doc.build(story, onFirstPage=footer, onLaterPages=footer)
             if artifact_store is not None:
                 artifact_store.register_artifact(
                     artifact_type="pdf_report",

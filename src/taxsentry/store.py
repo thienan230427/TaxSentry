@@ -15,8 +15,8 @@ TRANSITIONS = {
     "fetching": {"extracting", "failed", "cancelled"},
     "extracting": {"analyzing", "needs_review", "failed", "cancelled"},
     "analyzing": {"needs_review", "rendering", "failed", "cancelled"},
-    "needs_review": {"failed", "cancelled"},
-    "rendering": {"delivering", "failed", "cancelled"},
+    "needs_review": {"delivering", "failed", "cancelled"},
+    "rendering": {"needs_review", "delivering", "failed", "cancelled"},
     "delivering": {"completed", "failed", "cancelled"},
     "completed": set(),
     "failed": set(),
@@ -106,6 +106,13 @@ class JobStore:
     def consume_approval(self, job_id: str) -> None:
         self.event(job_id, "approval_consumed", {})
         self.connection.commit()
+
+    def approve(self, job_id: str) -> None:
+        job = self.get(job_id)
+        if not job or job["state"] != "needs_review":
+            raise ValueError("Only needs-review jobs can be approved")
+        self.event(job_id, "approved", {})
+        self.transition(job_id, "delivering", report_path=job.get("report_path", ""))
 
     def transition(self, job_id: str, state: str, *, error: str = "", report_path: str = "") -> None:
         if state not in STATES:

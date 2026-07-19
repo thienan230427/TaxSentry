@@ -11,10 +11,31 @@ from taxsentry.store import JobStore
 from taxsentry.workflow import TaxSentryWorkflow
 
 REPORT = {
+    "schema_version": 2,
+    "profile": "cfo_brief",
+    "decision_question": "Cần ưu tiên kiểm soát chi phí nào?",
+    "period": {"label": "Tháng 5", "start": "01/05/2026", "end": "31/05/2026"},
     "executive_summary": "Hoạt động ổn định, cần kiểm soát chi phí.",
-    "performance": [{"metric": "Doanh thu", "value": "120 triệu", "assessment": "tăng"}],
-    "tax_risks": [], "missing_data": [],
-    "recommendations": [{"priority": "high", "action": "Rà soát chi phí"}], "confidence": 0.9,
+    "metrics": [{
+        "id": "revenue", "label": "Doanh thu", "current": 120_000_000,
+        "previous": 110_000_000, "budget": 125_000_000, "benchmark": None,
+        "unit": "VND", "source_ids": ["input:1"], "assessment": "tăng",
+    }],
+    "findings": [],
+    "scenario_model": {"model_type": "none", "drivers": [], "primary_output": "", "scenarios": []},
+    "tax_risks": [],
+    "recommendations": [{
+        "priority": "high", "action": "Rà soát chi phí", "rationale": "Bảo vệ biên lợi nhuận",
+        "owner": "CFO", "deadline_days": 30, "estimated_impact_vnd": 1_000_000,
+        "effort": "low", "evidence_ids": ["input:1"], "confidence": 0.9,
+    }],
+    "sources": [{
+        "id": "input:1", "kind": "file", "title": "report.pdf", "locator": "report.pdf",
+        "fetched_at": "", "effective_from": "", "verified_current": True,
+    }],
+    "missing_data": [],
+    "assumptions": [],
+    "overall_confidence": 0.9,
 }
 
 
@@ -75,6 +96,7 @@ def settings():
         "worker": {"max_retries": 1, "max_attachment_mb": 25},
         "ocr": {"languages": ["vie", "eng"], "minimum_confidence": 70},
         "report": {"minimum_confidence": 0.7},
+        "advisor": {"company": {"materiality_ratio": 0.05}, "knowledge": {"auto_refresh": False}},
         "provider": {"kind": "lmstudio", "model": "fake", "base_url": "http://localhost"},
     }
 
@@ -120,7 +142,7 @@ def test_delivery_retry_does_not_repeat_pipeline_or_successful_channel(monkeypat
 
     assert asyncio.run(workflow.run_once()) == 1
     assert calls == {"extract": 1, "render": 1} and gmail.attempts == 2
-    assert len([document for _, document in telegram.sent if document]) == 1
+    assert len([document for _, document in telegram.sent if document]) == 2
 
 
 def test_telegram_retry_does_not_resend_gmail(monkeypatch, tmp_path):
@@ -139,7 +161,7 @@ def test_telegram_retry_does_not_resend_gmail(monkeypatch, tmp_path):
     workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
 
     assert asyncio.run(workflow.run_once()) == 1
-    assert len(gmail.outgoing) == 1 and telegram.document_attempts == 2
+    assert len(gmail.outgoing) == 1 and telegram.document_attempts == 3
 
 
 def test_each_attachment_gets_an_independent_job(monkeypatch, tmp_path):
@@ -161,16 +183,109 @@ def test_each_attachment_gets_an_independent_job(monkeypatch, tmp_path):
     assert len(gmail.outgoing) == 2
 
 
-def test_low_ocr_confidence_delivers_with_warning(monkeypatch, tmp_path):
+def test_low_ocr_confidence_waits_for_review(monkeypatch, tmp_path):
     message = GmailMessage("m2", "accounting@example.com", "Scan", [GmailAttachment("scan.png", "image/png", b"image")])
     gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "state.db")
     monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: Extraction("unclear", 0.4, "ocr"))
     monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
     workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
-    assert asyncio.run(workflow.run_once()) == 1
-    assert store.recent_jobs()[0]["state"] == "completed"
-    assert gmail.labels[-1] == "TaxSentry/Completed"
+    assert asyncio.run(workflow.run_once()) == 0
+    assert store.recent_jobs()[0]["state"] == "needs_review"
+    assert gmail.labels[-1] == "TaxSentry/NeedsReview"
+    assert not gmail.outgoing
+
+
+def test_approve_delivers_saved_draft_without_reanalysis(monkeypatch, tmp_path):
+    message = GmailMessage("m-review", "accounting@example.com", "Review", [GmailAttachment("scan.png", "image/png", b"image")])
+    gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "review.db")
+
+    class CountingProvider(FakeProvider):
+        def __init__(self):
+            self.calls = 0
+
+        async def stream_turn(self, messages, output_schema=None):
+            self.calls += 1
+            async for event in super().stream_turn(messages, output_schema):
+                yield event
+
+    provider = CountingProvider()
+    monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: Extraction("unclear", 0.4, "ocr"))
+    monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
+    workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=provider, telegram=telegram)
+
+    assert asyncio.run(workflow.run_once()) == 0
+    job = store.recent_jobs()[0]
+    assert provider.calls == 1 and job["state"] == "needs_review"
+    assert asyncio.run(workflow.approve(job["id"]))
+    assert provider.calls == 1
+    assert store.get(job["id"])["state"] == "completed"
     assert gmail.outgoing
+
+
+def test_performance_profile_delivers_exact_pptx_xlsx_bundle(monkeypatch, tmp_path):
+    message = GmailMessage(
+        "m-performance",
+        "accounting@example.com",
+        "Performance",
+        [GmailAttachment("report.pdf", "application/pdf", b"%PDF")],
+    )
+    gmail, telegram = FakeGmail(tmp_path, message), FakeTelegram()
+    store = JobStore(tmp_path / "performance.db")
+    performance_report = json.loads(json.dumps(REPORT))
+    performance_report["profile"] = "performance_review"
+
+    class PerformanceProvider:
+        async def stream_turn(self, messages, output_schema=None):
+            yield AgentEvent(
+                EventType.TEXT_DELTA,
+                text=json.dumps(performance_report, ensure_ascii=False),
+            )
+            yield AgentEvent(EventType.TURN_COMPLETED)
+
+    monkeypatch.setattr(
+        "taxsentry.workflow.extract",
+        lambda path, languages: Extraction(
+            {
+                "data": {
+                    "canonical_metrics": {"revenue": {"value": 120_000_000}},
+                    "sheets": [],
+                }
+            },
+            0.95,
+            "pdf-text",
+        ),
+    )
+
+    def fake_artifact(kind, report, output_dir):
+        output = output_dir / f"performance.{kind}"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"office")
+        return output
+
+    monkeypatch.setattr("taxsentry.workflow.render_artifact", fake_artifact)
+    monkeypatch.setattr(
+        "taxsentry.workflow.render_pdf",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("performance_review must not add a PDF")
+        ),
+    )
+    monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
+    workflow = TaxSentryWorkflow(
+        settings(),
+        gmail=gmail,
+        store=store,
+        provider=PerformanceProvider(),
+        telegram=telegram,
+    )
+
+    assert asyncio.run(workflow.run_once()) == 1
+    saved = store.latest_report()
+    assert Path(saved["pdf_path"]).suffix == ".pptx"
+    assert [item["kind"] for item in saved["payload"]["outputs"]] == [
+        "pptx",
+        "xlsx",
+    ]
+    assert gmail.outgoing[0][2].suffix == ".pptx"
 
 
 def test_worker_recovers_interrupted_job(monkeypatch, tmp_path):

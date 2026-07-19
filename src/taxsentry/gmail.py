@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import imaplib
+import mimetypes
 import re
 import smtplib
 import zipfile
@@ -267,7 +268,16 @@ class GmailClient:
             if status != "OK":
                 raise RuntimeError(f"Gmail IMAP label failed: {name}")
 
-    def send_report(self, to: str, subject: str, html: str, pdf_path: Path, *, idempotency_key: str = "") -> str:
+    def send_report(
+        self,
+        to: str,
+        subject: str,
+        html: str,
+        primary_path: Path,
+        *,
+        idempotency_key: str = "",
+        attachments: list[Path] | None = None,
+    ) -> str:
         self.authenticate()
         message_id = f"<{idempotency_key}@taxsentry.local>" if idempotency_key else ""
         if message_id:
@@ -286,7 +296,15 @@ class GmailClient:
             message["Message-ID"] = message_id
         message.set_content("Báo cáo TaxSentry được đính kèm.")
         message.add_alternative(html, subtype="html")
-        message.add_attachment(pdf_path.read_bytes(), maintype="application", subtype="pdf", filename=pdf_path.name)
+        for path in dict.fromkeys([primary_path, *(attachments or [])]):
+            mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            maintype, subtype = mime_type.split("/", 1)
+            message.add_attachment(
+                path.read_bytes(),
+                maintype=maintype,
+                subtype=subtype,
+                filename=path.name,
+            )
         account = self.settings["gmail"]["account"]
         password = get_secret(f"gmail-app-password:{account}")
         timeout = float(self.settings.get("worker", {}).get("delivery_timeout_seconds", 90))

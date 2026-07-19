@@ -19,9 +19,10 @@ from . import __version__
 from .artifacts import ArtifactService, detect_artifact_kind
 from .bot.telegram_bot import serve as serve_telegram
 from .chat_service import ChatService
-from .config import describe_config, load_config
+from .config import describe_config, load_config, save_config
 from .events import EventType
 from .gmail import GmailClient, GmailMessage, natural_gmail_query
+from .knowledge import KnowledgeBase
 from .providers import create_provider
 from .store import JobStore
 from .telegram import TelegramDirector
@@ -34,7 +35,9 @@ COMMANDS = {
     "/help": "Danh mục lệnh và phím tắt",
     "/status": "Trạng thái provider, Gmail, Telegram và Office",
     "/gmail": "Hộp thư: /gmail [search <query> | read <uid>]",
-    "/create": "Tạo file: /create <docx|xlsx|pptx|pdf> <yêu cầu>",
+    "/create": "Tạo file: /create [docx|xlsx|pptx|pdf] <yêu cầu>",
+    "/profile": "Hồ sơ doanh nghiệp: /profile [show | set <field> <value>]",
+    "/knowledge": "Tri thức: /knowledge [status | refresh]",
     "/cancel": "Hủy job đang chạy: /cancel <job>",
     "/jobs": "Các job Gmail gần đây",
     "/report": "Tóm tắt báo cáo mới nhất",
@@ -47,7 +50,9 @@ COMMANDS_EN = {
     "/help": "Commands and keyboard shortcuts",
     "/status": "Provider, Gmail, Telegram, and Office status",
     "/gmail": "Inbox: /gmail [search <query> | read <uid>]",
-    "/create": "Create file: /create <docx|xlsx|pptx|pdf> <request>",
+    "/create": "Create file: /create [docx|xlsx|pptx|pdf] <request>",
+    "/profile": "Company profile: /profile [show | set <field> <value>]",
+    "/knowledge": "Knowledge: /knowledge [status | refresh]",
     "/cancel": "Cancel an active job: /cancel <job>",
     "/jobs": "Recent Gmail jobs",
     "/report": "Latest report summary",
@@ -349,7 +354,14 @@ class Cockpit(App[int]):
     async def _turn(self, value: str) -> None:
         await self._message(ui_text(self.settings, "boss"), value, "user")
         kind = detect_artifact_kind(value)
-        if kind and re.search(r"\b(tạo|viết|xuất|làm|create|make|export)\b", value, re.IGNORECASE):
+        wants_artifact = bool(kind) or bool(
+            re.search(
+                r"\b(tạo|viết|xuất|làm|create|make|export)\b.*\b(báo cáo|tài liệu|report|document|file)\b",
+                value,
+                re.IGNORECASE,
+            )
+        )
+        if wants_artifact:
             if self.gmail and re.search(r"\b(?:gmail|email)\b|hòm thư", value, re.IGNORECASE):
                 await self._gmail_context(natural_gmail_query(value), include_context=False)
                 await self._message("TaxSentry", f"Em đã liệt kê nguồn. Sếp xác nhận bằng `/create {kind} <yêu cầu có chữ Gmail>`.", "assistant")
@@ -434,12 +446,27 @@ class Cockpit(App[int]):
             return
         elif command == "/create":
             kind = detect_artifact_kind(args[0]) if args else ""
-            request = " ".join(args[1:]).strip()
-            if not kind or not request:
-                body = "Dùng: /create <docx|xlsx|pptx|pdf> <yêu cầu>"
+            request = " ".join(args[1:] if kind else args).strip()
+            if not request:
+                body = "Dùng: /create [docx|xlsx|pptx|pdf] <yêu cầu>"
             else:
                 self._launch(self._create_artifact(kind, request), "CREATE")
-                body = f"✓ Đã nhận yêu cầu tạo {kind.upper()}."
+                body = f"✓ Đã nhận yêu cầu tạo {kind.upper() if kind else 'bộ tài liệu tư vấn'}."
+        elif command == "/profile":
+            body = self._profile_command(args)
+        elif command == "/knowledge":
+            action = args[0].casefold() if args else "status"
+            knowledge = KnowledgeBase(self.settings)
+            status = (
+                await asyncio.to_thread(knowledge.refresh)
+                if action == "refresh"
+                else knowledge.status()
+            )
+            body = (
+                f"Tri thức: {'cũ/chưa xác minh' if status['stale'] else 'đã xác minh'}\n"
+                f"Nguồn: {status['verified_sources']}/{status['total_sources']}\n"
+                f"Kiểm tra gần nhất: {status['verified_at'] or 'chưa có'}"
+            )
         elif command == "/cancel":
             job = self.store.resolve(args[0] if args else "")
             if not job or not self.workflow:
@@ -469,11 +496,51 @@ class Cockpit(App[int]):
             if not job or job["state"] not in valid:
                 body = "No matching Failed/NeedsReview job." if self.lang == "en" else "Không tìm thấy job Failed/NeedsReview phù hợp."
             else:
-                self.store.requeue(job["id"], approved=command == "/approve")
-                body = f"✓ Job {job['id'][:8]} requeued."
+                if command == "/approve" and self.workflow:
+                    delivered = await self.workflow.approve(job["id"])
+                    body = f"✓ Job {job['id'][:8]} đã duyệt{' và gửi xong' if delivered else ''}."
+                else:
+                    self.store.requeue(job["id"], approved=command == "/approve")
+                    body = f"✓ Job {job['id'][:8]} requeued."
         else:
             body = ui_text(self.settings, "unknown_command")
         await self._message(ui_text(self.settings, "system"), body, "system")
+
+    def _profile_command(self, args: list[str]) -> str:
+        company = self.settings.setdefault("advisor", {}).setdefault("company", {})
+        if not args or args[0].casefold() == "show":
+            return "\n".join(
+                f"- `{key}`: {value if value not in ('', []) else 'chưa cấu hình'}"
+                for key, value in company.items()
+            )
+        if len(args) < 3 or args[0].casefold() != "set":
+            return "Dùng: /profile set <name|industry|business_model|fiscal_year_start|reporting_cycle|currency|materiality_ratio|objectives> <value>"
+        field, raw = args[1], " ".join(args[2:]).strip()
+        if field not in {
+            "name",
+            "industry",
+            "business_model",
+            "fiscal_year_start",
+            "reporting_cycle",
+            "currency",
+            "materiality_ratio",
+            "objectives",
+        }:
+            return "Trường hồ sơ không hợp lệ."
+        if field == "materiality_ratio":
+            try:
+                value: Any = float(raw.replace(",", "."))
+            except ValueError:
+                return "materiality_ratio phải là số."
+            if not 0 < value <= 1:
+                return "materiality_ratio phải nằm trong (0, 1]."
+        elif field == "objectives":
+            value = [item.strip() for item in raw.split(",") if item.strip()]
+        else:
+            value = raw
+        company[field] = value
+        save_config(self.settings)
+        return f"✓ Đã cập nhật `{field}`."
 
     async def _gmail_command(self, args: list[str]) -> None:
         if not self.gmail:
@@ -567,9 +634,15 @@ class Cockpit(App[int]):
                 del tokens[index : index + 2]
             paths = [Path(token.strip('"')) for token in tokens if Path(token.strip('"')).expanduser().is_file()]
             messages = self.gmail_results if re.search(r"\b(?:gmail|email)\b|hòm thư", request, re.IGNORECASE) else []
-            source = await self.artifacts.source_text(paths=paths, messages=messages) if paths or messages else ""
-            path = await self.artifacts.create(kind, request, source_text=source, template=template)
-            await self._message("TaxSentry", f"✓ Đã tạo `{path}` và gửi qua Telegram theo cấu hình.", "assistant")
+            source = await self.artifacts.source(paths=paths, messages=messages) if paths or messages else None
+            bundle = await self.artifacts.create_bundle(request, kind=kind, source=source, template=template)
+            details = "\n".join(f"- `{path}`" for path in bundle.files)
+            review = (
+                "\n⚠️ Cần kiểm tra: " + " ".join(bundle.review_reasons)
+                if bundle.needs_review
+                else ""
+            )
+            await self._message("TaxSentry", f"✓ Đã tạo bộ `{bundle.profile}`:\n{details}{review}", "assistant")
         except asyncio.CancelledError:
             await self._message("TaxSentry", "Đã ngắt tạo file.", "error")
             raise

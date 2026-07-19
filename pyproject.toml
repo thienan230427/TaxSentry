@@ -27,7 +27,7 @@ taxsentry = "taxsentry.tui:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-taxsentry = ["knowledge_base/*.md"]
+taxsentry = ["knowledge_base/*.md", "knowledge_base/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
