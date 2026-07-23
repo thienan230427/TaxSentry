@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taxsentry-agent"
-version = "2.0.12"
+version = "2.0.13"
 description = "Python-first AI agent for Vietnamese business and tax reporting workflows"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

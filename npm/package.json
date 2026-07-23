@@ -1,6 +1,6 @@
 {
   "name": "taxsentry",
-  "version": "2.0.12",
+  "version": "2.0.13",
   "description": "TypeScript launcher for the TaxSentry Python agent",
   "type": "module",
   "bin": {

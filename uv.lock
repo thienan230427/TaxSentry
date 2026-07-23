@@ -994,7 +994,7 @@ wheels = [
 
 [[package]]
 name = "taxsentry-agent"
-version = "2.0.12"
+version = "2.0.13"
 source = { editable = "." }
 dependencies = [
     { name = "keyring" },
