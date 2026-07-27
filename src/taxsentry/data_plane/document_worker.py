@@ -9,6 +9,8 @@ from dataclasses import asdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from taxsentry.gmail import ALLOWED_MIME
+
 from .object_store import LocalObjectStore, ObjectStore, S3ObjectStore
 from .queue import LostLeaseError
 from .worker import JobContext
@@ -199,7 +201,16 @@ def process_document_job(
             _iter_units(Path(manifest.units_uri)),
             raw_object_key=object_key,
             units_object_key=units_key,
-            mime_type=mimetypes.guess_type(manifest.name)[0] or "application/octet-stream",
+            mime_type=next(
+                (
+                    value
+                    for value in ALLOWED_MIME.get(suffix, ())
+                    if value != "application/octet-stream"
+                ),
+                None,
+            )
+            or mimetypes.guess_type(manifest.name)[0]
+            or "application/octet-stream",
         )
         context.checkpoint(
             "persist",

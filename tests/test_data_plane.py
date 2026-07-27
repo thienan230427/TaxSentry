@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import json
+import mimetypes
 import sqlite3
 import uuid
 
@@ -714,7 +715,14 @@ def test_legacy_attachment_rejects_path_escape_and_sha_mismatch(tmp_path):
     assert not [path for path in (tmp_path / "objects").rglob("*") if path.is_file()]
 
 
-def test_document_worker_uploads_portable_manifest_and_persists_units(tmp_path):
+def test_document_worker_uploads_portable_manifest_and_persists_units(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        mimetypes,
+        "guess_type",
+        lambda _name: ("application/octet-stream", None),
+    )
     object_store = LocalObjectStore(tmp_path / "objects")
     raw = b"fixture"
     raw_sha256 = hashlib.sha256(raw).hexdigest()
