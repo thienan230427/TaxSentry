@@ -71,6 +71,7 @@ def build_analysis_context(
 ) -> dict[str, Any]:
     metrics: dict[str, dict[str, Any]] = {}
     sources: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
     for index, item in enumerate(extracted, 1):
         source_id = f"input:{index}"
         sources.append(
@@ -86,7 +87,15 @@ def build_analysis_context(
         )
         content = item.get("content")
         if isinstance(content, dict):
-            _collect_metrics(content, source_id, metrics)
+            _collect_metrics(
+                content,
+                source_id,
+                metrics,
+                sources,
+                conflicts,
+                title=str(item.get("file") or f"Nguồn {index}"),
+                kind="email" if item.get("email") else "file",
+            )
     if history:
         normalized = history if history.get("schema_version") == 2 else {}
         for item in normalized.get("metrics", []):
@@ -101,24 +110,73 @@ def build_analysis_context(
         "company": company or {},
         "metrics": values,
         "sources": sources,
+        "conflicts": conflicts,
         "knowledge": knowledge_text,
         "benchmark_max_age_months": benchmark_max_age_months,
     }
 
 
-def _collect_metrics(content: dict, source_id: str, target: dict[str, dict]) -> None:
+def _collect_metrics(
+    content: dict,
+    source_id: str,
+    target: dict[str, dict],
+    sources: list[dict[str, Any]],
+    conflicts: list[dict[str, Any]],
+    *,
+    title: str,
+    kind: str,
+) -> None:
     data = content.get("data", content)
     canonical = data.get("canonical_metrics", {}) if isinstance(data, dict) else {}
     for key, item in canonical.items():
         if key not in LABELS or not isinstance(item, dict):
             continue
-        target[key] = _metric(key, _number(item.get("value")), source_id)
+        metric_source = _evidence_source(
+            sources,
+            root_id=source_id,
+            title=title,
+            kind=kind,
+            sheet=item.get("source_sheet"),
+            row=item.get("source_row"),
+            label=item.get("source_label"),
+        )
+        value = _number(item.get("value"))
+        existing = target.get(key)
+        if (
+            existing
+            and existing.get("current") is not None
+            and value is not None
+            and existing["current"] != value
+        ):
+            conflicts.append(
+                {
+                    "metric": key,
+                    "kept_value": existing["current"],
+                    "conflicting_value": value,
+                    "source_ids": [*existing["source_ids"], metric_source],
+                }
+            )
+            if metric_source not in existing["source_ids"]:
+                existing["source_ids"].append(metric_source)
+        else:
+            target[key] = _metric(key, value, metric_source)
     for sheet in data.get("sheets", []) if isinstance(data, dict) else []:
         for row in sheet.get("line_items", []):
             key = _key(row.get("label"))
             if not key:
                 continue
-            metric = target.setdefault(key, _metric(key, None, source_id))
+            metric_source = _evidence_source(
+                sources,
+                root_id=source_id,
+                title=title,
+                kind=kind,
+                sheet=sheet.get("name"),
+                row=row.get("row"),
+                label=row.get("label"),
+            )
+            metric = target.setdefault(key, _metric(key, None, metric_source))
+            if metric_source not in metric["source_ids"]:
+                metric["source_ids"].append(metric_source)
             for heading, value in row.get("values", {}).items():
                 number = _number(value)
                 if number is None:
@@ -126,6 +184,40 @@ def _collect_metrics(content: dict, source_id: str, target: dict[str, dict]) -> 
                 period = _period(heading)
                 if period and metric.get(period) is None:
                     metric[period] = number
+
+
+def _evidence_source(
+    sources: list[dict[str, Any]],
+    *,
+    root_id: str,
+    title: str,
+    kind: str,
+    sheet: Any,
+    row: Any,
+    label: Any,
+) -> str:
+    if not sheet:
+        return root_id
+    locator = f"{title}#sheet={sheet}"
+    if row:
+        locator += f";row={row}"
+    evidence_id = f"{root_id}:{len(sources) + 1}"
+    if any(item.get("locator") == locator for item in sources):
+        return next(
+            str(item["id"]) for item in sources if item.get("locator") == locator
+        )
+    sources.append(
+        {
+            "id": evidence_id,
+            "kind": kind,
+            "title": str(label or title),
+            "locator": locator,
+            "fetched_at": "",
+            "effective_from": "",
+            "verified_current": True,
+        }
+    )
+    return evidence_id
 
 
 def _metric(key: str, current: float | None, source_id: str) -> dict[str, Any]:

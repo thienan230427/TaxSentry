@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +48,7 @@ METRIC_SCHEMA = _strict(
         "previous": NUMBER,
         "budget": NUMBER,
         "benchmark": NUMBER,
-        "unit": {"type": "string", "enum": ["VND", "%", "days", "count", "ratio"]},
+        "unit": {"type": "string", "pattern": "^(?:[A-Z]{3}|%|days|count|ratio)$"},
         "source_ids": STRING_LIST,
         "assessment": {"type": "string"},
     }
@@ -72,7 +73,7 @@ DRIVER_SCHEMA = _strict(
         "base": {"type": "number"},
         "downside": {"type": "number"},
         "upside": {"type": "number"},
-        "unit": {"type": "string", "enum": ["VND", "%", "days", "count", "ratio"]},
+        "unit": {"type": "string", "pattern": "^(?:[A-Z]{3}|%|days|count|ratio)$"},
         "source_ids": STRING_LIST,
     }
 )
@@ -183,6 +184,12 @@ def _validate_schema(value: Any, schema: dict[str, Any], path: str) -> None:
             raise ValueError(f"{path} must be {' or '.join(choices)}")
     if "enum" in schema and value not in schema["enum"]:
         raise ValueError(f"{path} is not an allowed value")
+    if (
+        isinstance(value, str)
+        and "pattern" in schema
+        and not re.fullmatch(str(schema["pattern"]), value)
+    ):
+        raise ValueError(f"{path} does not match the required pattern")
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if "minimum" in schema and value < schema["minimum"]:
             raise ValueError(f"{path} is below the minimum")

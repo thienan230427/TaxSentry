@@ -11,6 +11,7 @@ from taxsentry.artifacts import (
     PROFILE_KINDS,
     ArtifactService,
     ArtifactSource,
+    ArtifactSpec,
     detect_artifact_kind,
     render_artifact,
 )
@@ -93,6 +94,33 @@ def test_artifact_renderers_create_safe_office_files(tmp_path: Path):
     assert custom.is_file() and custom != paths[0]
 
 
+def test_artifact_spec_keeps_case_document_and_source_lineage():
+    spec = ArtifactSpec.from_report(
+        advisory_report(),
+        case_id="case-1",
+        document_ids=("document-1",),
+        source_ids=("explicit-source",),
+    )
+
+    assert spec.metadata["case_id"] == "case-1"
+    assert spec.provenance == {
+        "document_ids": ["document-1"],
+        "source_ids": ["explicit-source", "input:1"],
+    }
+
+
+def test_artifact_spec_marks_each_uncited_numeric_claim():
+    report = advisory_report()
+    report["assumptions"] = ["Giả định chung không thay thế citation."]
+    report["metrics"][0]["source_ids"] = []
+
+    spec = ArtifactSpec.from_report(report)
+
+    assert any(
+        item["field"] == "citation:revenue" for item in spec.missing_data
+    )
+
+
 @pytest.mark.asyncio
 async def test_artifact_service_saves_and_auto_sends(tmp_path: Path):
     plan = {
@@ -161,6 +189,10 @@ def test_advisory_docx_uses_fixed_business_memo_geometry(tmp_path: Path):
         int(column.get(qn("w:w")))
         for column in table._tbl.tblGrid.findall(qn("w:gridCol"))
     ) == 9360
+    xml = document._element.xml
+    assert 'TOC \\o "1-3"' in xml
+    assert "w:bookmarkStart" in xml
+    assert any(paragraph.style.name == "Caption" for paragraph in document.paragraphs)
 
 
 def test_advisory_pptx_keeps_every_shape_inside_the_slide(tmp_path: Path):
@@ -172,6 +204,9 @@ def test_advisory_pptx_keeps_every_shape_inside_the_slide(tmp_path: Path):
         for shape in slide.shapes:
             assert 0 <= shape.left <= shape.left + shape.width <= deck.slide_width
             assert 0 <= shape.top <= shape.top + shape.height <= deck.slide_height
+    assert any(
+        slide.notes_slide.notes_text_frame.text.strip() for slide in deck.slides
+    )
 
 
 def test_pdf_does_not_add_a_footer_only_page(tmp_path: Path):
