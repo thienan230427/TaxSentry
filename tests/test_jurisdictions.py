@@ -18,6 +18,7 @@ from taxsentry.jurisdictions import (
     RetrievalQuery,
     RetrievalRecord,
     UnverifiedJurisdictionPackError,
+    _content_checksum,
 )
 
 
@@ -80,6 +81,18 @@ def test_jurisdiction_manifest_rejects_non_official_sources_and_tampered_content
         JurisdictionPack.load(
             manifest_path, verify_signature=lambda signature, payload: True
         )
+
+
+def test_pack_checksum_is_stable_across_text_newlines(tmp_path):
+    lf_root = tmp_path / "lf"
+    crlf_root = tmp_path / "crlf"
+    lf_root.mkdir()
+    crlf_root.mkdir()
+    (lf_root / "rules.md").write_bytes(b"rule one\nrule two\n")
+    (crlf_root / "rules.md").write_bytes(b"rule one\r\nrule two\r\n")
+    assert _content_checksum(lf_root, ("rules.md",)) == _content_checksum(
+        crlf_root, ("rules.md",)
+    )
 
 
 def test_hybrid_retrieval_prioritizes_exact_reference_and_falls_back_deterministically():

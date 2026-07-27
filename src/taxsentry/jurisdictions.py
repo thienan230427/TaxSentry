@@ -72,6 +72,8 @@ def _content_checksum(root: Path, paths: Sequence[str]) -> str:
         if root.resolve() not in path.parents or not path.is_file() or path.is_symlink():
             raise SkillSecurityError(f"Pack content không an toàn hoặc không tồn tại: {safe}")
         payload = path.read_bytes()
+        if path.suffix.casefold() in {".csv", ".json", ".md", ".txt", ".yaml", ".yml"}:
+            payload = payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         digest.update(safe.encode("utf-8") + b"\0")
         digest.update(len(payload).to_bytes(8, "big"))
         digest.update(payload)
