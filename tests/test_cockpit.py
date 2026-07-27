@@ -49,17 +49,34 @@ class FakeStore:
         self.job = {"id": "job-123456", "state": "needs_review"}
         self.requeued = []
 
-    def resolve(self, prefix=""):
+    def resolve(self, prefix="", *, company_id=None):
         return self.job
 
     def requeue(self, job_id, *, approved=False):
         self.requeued.append((job_id, approved))
 
-    def recent_jobs(self, limit=10):
+    def recent_jobs(self, limit=10, *, company_id=None):
         return [{**self.job, "subject": "Báo cáo", "retries": 0}]
 
-    def latest_report(self):
+    def latest_report(self, *, company_id=None):
         return {"payload": {"executive_summary": "Doanh thu ổn định"}}
+
+    def state_counts(self, *, company_id=None):
+        return {
+            name: int(name == self.job["state"])
+            for name in (
+                "queued",
+                "fetching",
+                "extracting",
+                "analyzing",
+                "needs_review",
+                "rendering",
+                "delivering",
+                "completed",
+                "failed",
+                "cancelled",
+            )
+        }
 
     def create_session(self, provider):
         return "abcd-session"
@@ -107,7 +124,26 @@ async def test_cockpit_commands_are_compact(monkeypatch):
             await cockpit._command(command)
         await pilot.pause()
         assert len(cockpit.query(Markdown)) == 8
-    assert list(COMMANDS) == ["/help", "/status", "/gmail", "/create", "/profile", "/knowledge", "/cancel", "/jobs", "/report", "/retry", "/approve", "/new", "/exit"]
+    assert list(COMMANDS) == [
+        "/help",
+        "/status",
+        "/gmail",
+        "/create",
+        "/profile",
+        "/knowledge",
+        "/skills",
+        "/cancel",
+        "/jobs",
+        "/report",
+        "/retry",
+        "/approve",
+        "/new",
+        "/resume",
+        "/sessions",
+        "/forget",
+        "/agent",
+        "/exit",
+    ]
     assert store.requeued == [("job-123456", False), ("job-123456", True)]
 
 
@@ -289,6 +325,9 @@ async def test_telegram_uses_allowlist_and_shared_chat(monkeypatch):
         def builder(): return Builder()
 
     class Chat:
+        company_id = "default"
+        store = FakeStore()
+
         async def stream(self, text, *, source):
             sources.append(source)
             yield AgentEvent(EventType.TEXT_DELTA, text="Đã nhận")
@@ -297,7 +336,6 @@ async def test_telegram_uses_allowlist_and_shared_chat(monkeypatch):
     monkeypatch.setattr(telegram.ext, "CommandHandler", lambda name, callback: (name, callback))
     monkeypatch.setattr(telegram.ext, "MessageHandler", lambda filters, callback: ("chat", callback))
     monkeypatch.setattr(telegram_bot, "load_config", lambda: {"director": {"telegram_chat_ids": [42]}})
-    monkeypatch.setattr(telegram_bot, "JobStore", FakeStore)
     monkeypatch.setattr(telegram_bot, "get_secret", lambda name: "token")
     telegram_bot.build_application(Chat())
     callback = handlers[-1][1]

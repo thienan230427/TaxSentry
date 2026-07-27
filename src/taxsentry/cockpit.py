@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import shlex
 import sys
@@ -19,12 +20,18 @@ from . import __version__
 from .artifacts import ArtifactService, detect_artifact_kind
 from .bot.telegram_bot import serve as serve_telegram
 from .chat_service import ChatService
-from .config import describe_config, load_config, save_config
+from .config import SKILLS_DIR, describe_config, load_config, save_config
 from .events import EventType
 from .gmail import GmailClient, GmailMessage, natural_gmail_query
 from .knowledge import KnowledgeBase
 from .providers import create_provider
-from .store import JobStore
+from .skills import (
+    SkillSecurityError,
+    SkillService,
+    SkillSource,
+    SkillValidationError,
+)
+from .store import JobStore, runtime_store
 from .telegram import TelegramDirector
 from .ui_text import language
 from .ui_text import text as ui_text
@@ -38,12 +45,17 @@ COMMANDS = {
     "/create": "Tạo file: /create [docx|xlsx|pptx|pdf] <yêu cầu>",
     "/profile": "Hồ sơ doanh nghiệp: /profile [show | set <field> <value>]",
     "/knowledge": "Tri thức: /knowledge [status | refresh]",
+    "/skills": "Skill: /skills [list | install | github | draft | approve | rollback | disable]",
     "/cancel": "Hủy job đang chạy: /cancel <job>",
     "/jobs": "Các job Gmail gần đây",
     "/report": "Tóm tắt báo cáo mới nhất",
     "/retry": "Chạy lại job lỗi: /retry [job]",
     "/approve": "Duyệt job cần kiểm tra: /approve [job]",
     "/new": "Mở phiên hội thoại mới",
+    "/resume": "Khôi phục phiên: /resume <session-id>",
+    "/sessions": "Tìm phiên: /sessions <từ khóa>",
+    "/forget": "Quên một memory: /forget <memory-id>",
+    "/agent": "Nạp lại identity/memory: /agent reload",
     "/exit": "Thoát TaxSentry an toàn",
 }
 COMMANDS_EN = {
@@ -53,12 +65,17 @@ COMMANDS_EN = {
     "/create": "Create file: /create [docx|xlsx|pptx|pdf] <request>",
     "/profile": "Company profile: /profile [show | set <field> <value>]",
     "/knowledge": "Knowledge: /knowledge [status | refresh]",
+    "/skills": "Skills: /skills [list | install | github | draft | approve | rollback | disable]",
     "/cancel": "Cancel an active job: /cancel <job>",
     "/jobs": "Recent Gmail jobs",
     "/report": "Latest report summary",
     "/retry": "Retry a failed job: /retry [job]",
     "/approve": "Approve a review job: /approve [job]",
     "/new": "Start a new conversation",
+    "/resume": "Resume a session: /resume <session-id>",
+    "/sessions": "Search sessions: /sessions <query>",
+    "/forget": "Forget one memory item: /forget <memory-id>",
+    "/agent": "Reload identity/memory: /agent reload",
     "/exit": "Exit TaxSentry safely",
 }
 ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
@@ -190,7 +207,12 @@ class Cockpit(App[int]):
         super().__init__()
         self.settings = settings or load_config()
         self.lang = language(self.settings)
-        self.chat = ChatService(self.settings, store=JobStore(), provider_factory=create_provider)
+        store = runtime_store(self.settings, local_store=JobStore())
+        self.chat = ChatService(
+            self.settings,
+            store=store,
+            provider_factory=create_provider,
+        )
         self.store = self.chat.store
         self.history = self.chat.history
         self.state = "IDLE"
@@ -199,6 +221,9 @@ class Cockpit(App[int]):
         self.telegram = TelegramDirector(self.settings)
         self.workflow = TaxSentryWorkflow(self.settings, gmail=self.gmail, store=self.store, telegram=self.telegram) if self.gmail else None
         self.artifacts = ArtifactService(self.settings, self.chat, self.telegram)
+        self.skills = SkillService(
+            Path(self.settings.get("paths", {}).get("skills") or SKILLS_DIR)
+        )
         self.tasks: list[asyncio.Task] = []
         self.active_task: asyncio.Task | None = None
         self.gmail_results: list[GmailMessage] = []
@@ -248,7 +273,7 @@ class Cockpit(App[int]):
             header, footer = f"TaxSentry · {model} · {self.state}", f"{model} · {self.state} · F1 help"
         else:
             header = f"TaxSentry {__version__} · {provider['kind']}/{model} · {self.state}"
-            counts = self.store.state_counts() if hasattr(self.store, "state_counts") else {name: 0 for name in ("queued", "fetching", "extracting", "analyzing", "rendering", "delivering", "failed")}
+            counts = self.store.state_counts(company_id=self.chat.company_id) if hasattr(self.store, "state_counts") else {name: 0 for name in ("queued", "fetching", "extracting", "analyzing", "rendering", "delivering", "failed")}
             footer = f"{model} · {self.state} · Q {counts['queued']} · RUN {sum(counts[name] for name in ('fetching', 'extracting', 'analyzing', 'rendering', 'delivering'))} · FAIL {counts['failed']} · F1" + (f" · {attention}" if attention else "")
         activity = self._notice_text or working
         for widget_id, value in (("#topbar", header), ("#footer", footer), ("#activity", activity)):
@@ -467,8 +492,13 @@ class Cockpit(App[int]):
                 f"Nguồn: {status['verified_sources']}/{status['total_sources']}\n"
                 f"Kiểm tra gần nhất: {status['verified_at'] or 'chưa có'}"
             )
+        elif command == "/skills":
+            body = self._skills_command(args)
         elif command == "/cancel":
-            job = self.store.resolve(args[0] if args else "")
+            job = self.store.resolve(
+                args[0] if args else "",
+                company_id=self.chat.company_id,
+            )
             if not job or not self.workflow:
                 body = "Không tìm thấy job."
             else:
@@ -479,19 +509,58 @@ class Cockpit(App[int]):
                     body = str(exc)
         elif command == "/jobs":
             rows = ["| Job | State | Subject | Retry |", "|---|---|---|---|"]
-            for job in self.store.recent_jobs():
+            for job in self.store.recent_jobs(company_id=self.chat.company_id):
                 subject = str(job["subject"]).replace("|", "\\|")[:50]
                 rows.append(f"| {job['id'][:8]} | {job['state']} | {subject} | {job['retries']} |")
             body = "\n".join(rows)
         elif command == "/report":
-            latest = self.store.latest_report()
+            latest = self.store.latest_report(company_id=self.chat.company_id)
             body = latest["payload"]["executive_summary"] if latest else ui_text(self.settings, "no_report")
         elif command == "/new":
             self.chat.new_session()
             body = "✓ New session" if self.lang == "en" else "✓ Đã mở phiên hội thoại mới."
             self._update_chrome(self.size.width)
+        elif command == "/resume":
+            if not args:
+                body = "Dùng: /resume <session-id>"
+            else:
+                try:
+                    self.chat.resume_session(args[0])
+                    body = f"✓ Đã khôi phục session {args[0]}."
+                except (KeyError, PermissionError) as exc:
+                    body = f"Không thể khôi phục session: {exc}"
+        elif command == "/sessions":
+            rows = self.chat.search_sessions(" ".join(args))
+            body = (
+                "\n".join(
+                    f"- `{item['id']}` · {item.get('updated_at', '')} · "
+                    f"{item.get('summary') or 'chưa có summary'}"
+                    for item in rows
+                )
+                or "Không tìm thấy session."
+            )
+        elif command == "/forget":
+            if not args:
+                body = "Dùng: /forget <memory-id>"
+            else:
+                body = (
+                    "✓ Đã quên memory."
+                    if self.chat.memory.forget(
+                        args[0], company_id=self.chat.company_id
+                    )
+                    else "Không tìm thấy memory trong doanh nghiệp hiện tại."
+                )
+        elif command == "/agent":
+            if args and args[0].casefold() == "reload":
+                digest = self.chat.reload_prompt()
+                body = f"✓ Đã nạp lại identity/memory · {digest[:12]}."
+            else:
+                body = "Dùng: /agent reload"
         elif command in {"/retry", "/approve"}:
-            job = self.store.resolve(args[0] if args else "")
+            job = self.store.resolve(
+                args[0] if args else "",
+                company_id=self.chat.company_id,
+            )
             valid = {"needs_review"} if command == "/approve" else {"failed", "needs_review"}
             if not job or job["state"] not in valid:
                 body = "No matching Failed/NeedsReview job." if self.lang == "en" else "Không tìm thấy job Failed/NeedsReview phù hợp."
@@ -506,6 +575,58 @@ class Cockpit(App[int]):
             body = ui_text(self.settings, "unknown_command")
         await self._message(ui_text(self.settings, "system"), body, "system")
 
+    def _skills_command(self, args: list[str]) -> str:
+        action = args[0].casefold() if args else "list"
+        try:
+            if action == "list":
+                rows = self.skills.registry.list()
+                return (
+                    "\n".join(
+                        f"- `{item.name}` {item.version} · {item.status}"
+                        f"{' · enabled' if item.enabled else ''}"
+                        for item in rows
+                    )
+                    or "Chưa có skill."
+                )
+            if action == "install" and len(args) >= 2:
+                item = self.skills.install(Path(" ".join(args[1:]).strip('"')))
+            elif action == "github" and len(args) == 4:
+                item = self.skills.install(
+                    SkillSource("github", args[1], args[2]),
+                    expected_checksum=args[3],
+                )
+            elif action == "draft" and len(args) == 3:
+                manifest = json.loads(Path(args[1].strip('"')).read_text(encoding="utf-8"))
+                instructions = Path(args[2].strip('"')).read_text(encoding="utf-8")
+                item = self.skills.create_draft(manifest, instructions)
+            elif action == "approve" and len(args) == 3:
+                item = self.skills.approve(
+                    args[1], args[2], approved_by=self.chat.company_id
+                )
+            elif action == "rollback" and len(args) == 2:
+                item = self.skills.registry.rollback(args[1])
+            elif action == "disable" and len(args) == 2:
+                self.skills.registry.disable(args[1])
+                return f"✓ Đã disable skill `{args[1]}`."
+            else:
+                return (
+                    "Dùng: /skills list | install <folder> | "
+                    "github <url> <commit> <sha256> | "
+                    "draft <manifest.json> <instructions.md> | "
+                    "approve <name> <version> | rollback <name> | disable <name>"
+                )
+            return (
+                f"✓ Skill `{item.name}` {item.version} · {item.status}"
+                f"{' · enabled' if item.enabled else ' · chờ duyệt'}."
+            )
+        except (
+            FileNotFoundError,
+            json.JSONDecodeError,
+            SkillSecurityError,
+            SkillValidationError,
+        ) as exc:
+            return f"Không thể xử lý skill: {exc}"
+
     def _profile_command(self, args: list[str]) -> str:
         company = self.settings.setdefault("advisor", {}).setdefault("company", {})
         if not args or args[0].casefold() == "show":
@@ -514,10 +635,12 @@ class Cockpit(App[int]):
                 for key, value in company.items()
             )
         if len(args) < 3 or args[0].casefold() != "set":
-            return "Dùng: /profile set <name|industry|business_model|fiscal_year_start|reporting_cycle|currency|materiality_ratio|objectives> <value>"
+            return "Dùng: /profile set <id|name|country_code|industry|business_model|fiscal_year_start|reporting_cycle|currency|materiality_ratio|objectives> <value>"
         field, raw = args[1], " ".join(args[2:]).strip()
         if field not in {
+            "id",
             "name",
+            "country_code",
             "industry",
             "business_model",
             "fiscal_year_start",
@@ -536,6 +659,14 @@ class Cockpit(App[int]):
                 return "materiality_ratio phải nằm trong (0, 1]."
         elif field == "objectives":
             value = [item.strip() for item in raw.split(",") if item.strip()]
+        elif field == "id":
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", raw):
+                return "id chỉ được chứa chữ, số, dấu gạch dưới hoặc gạch ngang."
+            value = raw
+        elif field == "country_code":
+            value = raw.upper()
+            if not re.fullmatch(r"[A-Z]{2}", value):
+                return "country_code phải là mã ISO alpha-2, ví dụ VN."
         else:
             value = raw
         company[field] = value
@@ -662,7 +793,7 @@ class Cockpit(App[int]):
         if panel.has_class("visible"):
             panel.remove_class("visible")
             return
-        job = self.store.resolve()
+        job = self.store.resolve(company_id=self.chat.company_id)
         if not job:
             panel.update("Chưa có job.")
         else:

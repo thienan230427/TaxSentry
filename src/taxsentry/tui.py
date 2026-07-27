@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 import keyring
 from rich.console import Console
@@ -12,7 +14,24 @@ from rich.table import Table
 
 from . import __version__
 from .cockpit import Cockpit
-from .config import APP_HOME, backup_v1_profile, describe_config, ensure_directories, load_config, save_config
+from .config import (
+    APP_HOME,
+    MEMORY_DB,
+    backup_v1_profile,
+    describe_config,
+    ensure_directories,
+    load_config,
+    save_config,
+)
+from .data_plane import job_queue_from_settings, object_store_from_settings
+from .data_plane.migration import (
+    SQLITE_SNAPSHOT_NAME,
+    MigrationFailure,
+    MigrationReport,
+    export_sqlite_snapshot,
+    migrate_sqlite_database,
+    write_migration_report,
+)
 from .providers import from_settings, health_check
 from .secrets import get_secret
 from .setup_wizard import authenticate_selection, run_setup_wizard
@@ -33,6 +52,27 @@ def _parser(settings: dict | None = None) -> argparse.ArgumentParser:
     doctor_parser.add_argument("--fix", action="store_true")
     update_parser = sub.add_parser("update", help="update TaxSentry" if en else "cập nhật TaxSentry")
     update_parser.add_argument("--main", action="store_true", help="update core from GitHub main" if en else "cập nhật core từ GitHub main")
+    migrate_parser = sub.add_parser(
+        "migrate-v3",
+        help="migrate SQLite data to PostgreSQL/object storage"
+        if en
+        else "migrate dữ liệu SQLite sang PostgreSQL/object storage",
+    )
+    migrate_parser.add_argument(
+        "--sqlite",
+        type=Path,
+        default=MEMORY_DB,
+        help="source v2 SQLite database" if en else "database SQLite v2 nguồn",
+    )
+    migrate_parser.add_argument(
+        "--backup-dir",
+        type=Path,
+        help="empty backup destination" if en else "thư mục backup trống",
+    )
+    migrate_parser.add_argument(
+        "--company-id",
+        help="target company scope" if en else "company scope đích",
+    )
     return parser
 
 
@@ -48,6 +88,13 @@ def main(argv: list[str] | None = None) -> int:
         return doctor(fix=args.fix)
     if args.command == "update":
         return update(main=args.main)
+    if args.command == "migrate-v3":
+        return migrate_v3(
+            settings,
+            sqlite_path=args.sqlite,
+            backup_dir=args.backup_dir,
+            company_id=args.company_id,
+        )
     if not settings.get("configured"):
         code = setup()
         settings = load_config()
@@ -71,6 +118,82 @@ def setup() -> int:
         message = f"Backed up the v1 profile: {backup}" if selection.config.get("ui", {}).get("language") == "en" else f"Đã sao lưu profile v1: {backup}"
         console.print(f"[yellow]{message}[/]")
     return authenticate_selection(selection, console)
+
+
+def migrate_v3(
+    settings: dict,
+    *,
+    sqlite_path: Path,
+    backup_dir: Path | None = None,
+    company_id: str | None = None,
+) -> int:
+    source = sqlite_path.expanduser().resolve()
+    destination = (
+        backup_dir
+        or APP_HOME
+        / "migration-backups"
+        / datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+    ).expanduser().resolve()
+    manifest_path = destination / "manifest.json"
+    report_path = destination / "migration-report.json"
+    report = MigrationReport(status="running", stage="configuration")
+    journal_allowed = False
+    try:
+        if not source.is_file():
+            raise FileNotFoundError(f"SQLite source not found: {source}")
+        if destination.exists() and (
+            not destination.is_dir() or any(destination.iterdir())
+        ):
+            raise ValueError(f"Backup destination must be an empty directory: {destination}")
+        destination.mkdir(parents=True, exist_ok=True)
+        journal_allowed = True
+        queue = job_queue_from_settings(settings)
+        report.stage = "backup"
+        manifest_path = export_sqlite_snapshot(source, destination)
+        snapshot = manifest_path.parent / SQLITE_SNAPSHOT_NAME
+        report.stage = "schema"
+        queue.ensure_schema()
+        report.stage = "object_store"
+        object_store = object_store_from_settings(settings)
+        company = company_id or str(
+            settings.get("agent", {}).get("company_id")
+            or settings.get("advisor", {}).get("company", {}).get("id")
+            or "default"
+        )
+        report.stage = "import"
+        report = migrate_sqlite_database(
+            snapshot,
+            queue,
+            company_id=company,
+            object_store=object_store,
+            legacy_source_root=source.parent,
+            approved_legacy_roots=(source.parent / "downloads", source.parent / "outputs"),
+        )
+        write_migration_report(report, report_path)
+    except Exception as exc:
+        if isinstance(exc, MigrationFailure):
+            report = exc.report
+        else:
+            report.status = "failed"
+            report.error_type = type(exc).__name__
+        if journal_allowed:
+            try:
+                write_migration_report(report, report_path)
+            except OSError:
+                pass
+        console.print(
+            f"[red]Migration failed during {report.stage or 'setup'}:[/] "
+            f"{report.error_type or type(exc).__name__}"
+        )
+        return 2
+    console.print(
+        f"[{'yellow' if report.conflicts else 'green'}]Migration complete:[/] "
+        f"imported={report.imported}, skipped={report.skipped}, "
+        f"conflicted={report.conflicts}"
+    )
+    console.print(f"Backup manifest: {manifest_path}")
+    console.print(f"Migration report: {report_path}")
+    return int(report.conflicts > 0)
 
 
 def doctor(*, fix: bool = False) -> int:

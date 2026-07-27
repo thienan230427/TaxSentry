@@ -13,10 +13,25 @@ from taxsentry.events import EventType
 from taxsentry.gmail import GmailMessage, natural_gmail_query
 from taxsentry.knowledge import KnowledgeBase
 from taxsentry.secrets import get_secret
-from taxsentry.store import JobStore
 from taxsentry.workflow import TaxSentryWorkflow
 
-COMMANDS = ("status", "jobs", "report", "retry", "approve", "gmail", "create", "cancel", "profile", "knowledge")
+COMMANDS = (
+    "status",
+    "jobs",
+    "report",
+    "retry",
+    "approve",
+    "gmail",
+    "create",
+    "cancel",
+    "profile",
+    "knowledge",
+    "new",
+    "resume",
+    "sessions",
+    "forget",
+    "agent",
+)
 
 
 def _allowed(update, settings) -> bool:
@@ -33,7 +48,7 @@ def build_application(
     from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
     settings = load_config()
-    store = workflow.store if workflow else JobStore()
+    store = workflow.store if workflow else chat.store
     token = get_secret("telegram:bot-token")
     if not token:
         raise RuntimeError("Run `taxsentry auth telegram` first")
@@ -46,13 +61,13 @@ def build_application(
 
     async def status(update, context):
         if _allowed(update, settings):
-            jobs = store.recent_jobs(5)
+            jobs = store.recent_jobs(5, company_id=chat.company_id)
             await update.message.reply_text("\n".join(f"{j['id'][:8]} · {j['state']} · {j['subject']}" for j in jobs) or "Chưa có job.")
 
     async def report(update, context):
         if not _allowed(update, settings):
             return
-        item = store.latest_report()
+        item = store.latest_report(company_id=chat.company_id)
         if not item or not item.get("pdf_path") or not Path(item["pdf_path"]).exists():
             await update.message.reply_text("Chưa có tài liệu.")
             return
@@ -62,7 +77,10 @@ def build_application(
     async def change_job(update, context, action):
         if not _allowed(update, settings):
             return
-        job = store.resolve(context.args[0] if context.args else "")
+        job = store.resolve(
+            context.args[0] if context.args else "",
+            company_id=chat.company_id,
+        )
         if not job:
             await update.message.reply_text("Không tìm thấy job.")
             return
@@ -85,7 +103,10 @@ def build_application(
     async def cancel(update, context):
         if not _allowed(update, settings) or not workflow:
             return
-        job = store.resolve(context.args[0] if context.args else "")
+        job = store.resolve(
+            context.args[0] if context.args else "",
+            company_id=chat.company_id,
+        )
         if not job:
             await update.message.reply_text("Không tìm thấy job.")
             return
@@ -174,6 +195,64 @@ def build_application(
             f"Kiểm tra gần nhất: {result['verified_at'] or 'chưa có'}"
         )
 
+    async def new(update, context):
+        if _allowed(update, settings):
+            session_id = chat.new_session()
+            await update.message.reply_text(f"Đã mở session mới {session_id}.")
+
+    async def resume(update, context):
+        if not _allowed(update, settings):
+            return
+        if not context.args:
+            await update.message.reply_text("Dùng: /resume <session-id>")
+            return
+        try:
+            chat.resume_session(context.args[0])
+            await update.message.reply_text(
+                f"Đã khôi phục session {context.args[0]}."
+            )
+        except (KeyError, PermissionError) as exc:
+            await update.message.reply_text(f"Không thể khôi phục session: {exc}")
+
+    async def sessions(update, context):
+        if not _allowed(update, settings):
+            return
+        rows = chat.search_sessions(" ".join(context.args))
+        await update.message.reply_text(
+            "\n".join(
+                f"{item['id']} · {item.get('updated_at', '')} · "
+                f"{item.get('summary') or 'chưa có summary'}"
+                for item in rows
+            )
+            or "Không tìm thấy session."
+        )
+
+    async def forget(update, context):
+        if not _allowed(update, settings):
+            return
+        if not context.args:
+            await update.message.reply_text("Dùng: /forget <memory-id>")
+            return
+        forgotten = chat.memory.forget(
+            context.args[0], company_id=chat.company_id
+        )
+        await update.message.reply_text(
+            "Đã quên memory."
+            if forgotten
+            else "Không tìm thấy memory trong doanh nghiệp hiện tại."
+        )
+
+    async def agent(update, context):
+        if not _allowed(update, settings):
+            return
+        if context.args and context.args[0].casefold() == "reload":
+            digest = chat.reload_prompt()
+            await update.message.reply_text(
+                f"Đã nạp lại identity/memory · {digest[:12]}."
+            )
+        else:
+            await update.message.reply_text("Dùng: /agent reload")
+
     async def chat_message(update, context):
         if not _allowed(update, settings):
             return
@@ -214,7 +293,24 @@ def build_application(
         for start in range(0, len(answer), 4096):
             await update.message.reply_text(answer[start:start + 4096])
 
-    for name, handler in zip(COMMANDS, (status, status, report, retry, approve, gmail, create, cancel, profile, knowledge), strict=True):
+    handlers = (
+        status,
+        status,
+        report,
+        retry,
+        approve,
+        gmail,
+        create,
+        cancel,
+        profile,
+        knowledge,
+        new,
+        resume,
+        sessions,
+        forget,
+        agent,
+    )
+    for name, handler in zip(COMMANDS, handlers, strict=True):
         app.add_handler(CommandHandler(name, handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_message))
     return app

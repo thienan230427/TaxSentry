@@ -164,7 +164,7 @@ def test_telegram_retry_does_not_resend_gmail(monkeypatch, tmp_path):
     assert len(gmail.outgoing) == 1 and telegram.document_attempts == 3
 
 
-def test_each_attachment_gets_an_independent_job(monkeypatch, tmp_path):
+def test_all_message_attachments_form_one_case_and_one_bundle(monkeypatch, tmp_path):
     message = GmailMessage("m-many", "accounting@example.com", "Tháng 6", [GmailAttachment("a.pdf", "application/pdf", b"%PDF-a"), GmailAttachment("b.pdf", "application/pdf", b"%PDF-b")])
     gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "many.db")
     monkeypatch.setattr("taxsentry.workflow.extract", lambda path, languages: Extraction("revenue 120", 0.95, "pdf-text"))
@@ -178,9 +178,13 @@ def test_each_attachment_gets_an_independent_job(monkeypatch, tmp_path):
     monkeypatch.setattr("taxsentry.workflow.DOWNLOAD_DIR", tmp_path)
     workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
 
-    assert asyncio.run(workflow.run_once()) == 2
-    assert len(store.recent_jobs()) == 2
-    assert len(gmail.outgoing) == 2
+    assert asyncio.run(workflow.run_once()) == 1
+    assert len(store.recent_jobs()) == 1
+    assert (
+        store.connection.execute("SELECT COUNT(*) FROM attachments").fetchone()[0]
+        == 2
+    )
+    assert len(gmail.outgoing) == 1
 
 
 def test_low_ocr_confidence_waits_for_review(monkeypatch, tmp_path):
@@ -326,9 +330,20 @@ def test_cancelled_queued_job_never_starts(monkeypatch, tmp_path):
     message = GmailMessage("m-cancel", "accounting@example.com", "Cancel", [GmailAttachment("report.pdf", "application/pdf", b"%PDF-1.7")])
     gmail, telegram, store = FakeGmail(tmp_path, message), FakeTelegram(), JobStore(tmp_path / "cancel.db")
     workflow = TaxSentryWorkflow(settings(), gmail=gmail, store=store, provider=FakeProvider(), telegram=telegram)
+    cancelled_cases = []
+    workflow.documents = type(
+        "Documents",
+        (),
+        {
+            "cancel_case": lambda self, case_id, *, company_id: cancelled_cases.append(
+                (case_id, company_id)
+            )
+        },
+    )()
     job_id = workflow.queue_messages([message])[0]
     workflow.cancel(job_id)
 
     assert asyncio.run(workflow.run_once()) == 0
     assert store.get(job_id)["state"] == "cancelled"
+    assert cancelled_cases == [(job_id, "default")]
     assert not gmail.outgoing

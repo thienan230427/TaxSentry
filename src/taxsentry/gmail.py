@@ -14,19 +14,20 @@ from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .config import DOWNLOAD_DIR
 from .secrets import get_secret, set_secret
 
 LABELS = ("TaxSentry/Processing", "TaxSentry/Completed", "TaxSentry/NeedsReview", "TaxSentry/Failed")
-ALLOWED_EXTENSIONS = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".png", ".jpg", ".jpeg"}
+ALLOWED_EXTENSIONS = {".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".ppt", ".pptx", ".pdf", ".png", ".jpg", ".jpeg"}
 ALLOWED_MIME = {
     ".doc": {"application/msword", "application/octet-stream"},
     ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream"},
     ".xls": {"application/vnd.ms-excel", "application/octet-stream"},
     ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream"},
+    ".xlsm": {"application/vnd.ms-excel.sheet.macroenabled.12", "application/octet-stream"},
     ".ppt": {"application/vnd.ms-powerpoint", "application/octet-stream"},
     ".pptx": {"application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/octet-stream"},
     ".pdf": {"application/pdf", "application/octet-stream"},
@@ -247,7 +248,7 @@ class GmailClient:
             date = parsedate_to_datetime(raw_date).isoformat() if raw_date else ""
         except (TypeError, ValueError, OverflowError):
             date = raw_date
-        return GmailMessage(uid, str(message.get("From", "")), str(message.get("Subject", "")), attachments, str(message.get("To", "")), date, body.strip()[:50000], mailbox, gmail_id)
+        return GmailMessage(uid, str(message.get("From", "")), str(message.get("Subject", "")), attachments, str(message.get("To", "")), date, body.strip(), mailbox, gmail_id)
 
     def save(self, job_id: str, attachment: GmailAttachment, max_mb: int = 25) -> Path:
         validate_attachment(attachment)
@@ -327,12 +328,32 @@ def validate_attachment(attachment: GmailAttachment) -> None:
     if suffix not in ALLOWED_EXTENSIONS or mime not in ALLOWED_MIME[suffix]:
         raise ValueError(f"Unsupported attachment type: {attachment.name} ({attachment.mime_type})")
     valid = False
-    if suffix in {".docx", ".xlsx", ".pptx"}:
+    if suffix in {".docx", ".xlsx", ".xlsm", ".pptx"}:
         try:
             with zipfile.ZipFile(BytesIO(attachment.data)) as document:
-                names = set(document.namelist())
-                required = {".docx": "word/document.xml", ".xlsx": "xl/workbook.xml", ".pptx": "ppt/presentation.xml"}[suffix]
-                valid = {"[Content_Types].xml", required} <= names and sum(item.file_size for item in document.infolist()) <= 200 * 1024 * 1024
+                infos = document.infolist()
+                names = {item.filename for item in infos}
+                required = {
+                    ".docx": "word/document.xml",
+                    ".xlsx": "xl/workbook.xml",
+                    ".xlsm": "xl/workbook.xml",
+                    ".pptx": "ppt/presentation.xml",
+                }[suffix]
+                expanded = sum(item.file_size for item in infos)
+                compressed = sum(max(1, item.compress_size) for item in infos)
+                safe_paths = all(
+                    not PurePosixPath(item.filename.replace("\\", "/")).is_absolute()
+                    and ".."
+                    not in PurePosixPath(item.filename.replace("\\", "/")).parts
+                    for item in infos
+                )
+                valid = (
+                    {"[Content_Types].xml", required} <= names
+                    and len(infos) <= 100_000
+                    and expanded <= 4 * 1024 * 1024 * 1024
+                    and expanded / max(1, compressed) <= 1_000
+                    and safe_paths
+                )
         except zipfile.BadZipFile:
             pass
     elif suffix in {".doc", ".xls", ".ppt"}:
