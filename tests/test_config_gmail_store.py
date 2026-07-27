@@ -59,6 +59,32 @@ def test_store_deduplicates_gmail_messages_and_tracks_state(tmp_path):
     assert store.get(job["id"])["state"] == "extracting"
 
 
+def test_job_and_report_queries_are_company_scoped(tmp_path):
+    store = JobStore(tmp_path / "companies.db")
+    alpha = store.create_job(
+        "gmail-shared",
+        "alpha@example.test",
+        company_id="alpha",
+    )
+    beta = store.create_job(
+        "gmail-shared",
+        "beta@example.test",
+        company_id="beta",
+    )
+    assert alpha and beta
+    store.report(alpha["id"], {"company": "alpha"}, 1.0)
+    store.report(beta["id"], {"company": "beta"}, 1.0)
+
+    assert store.by_message("gmail-shared", company_id="alpha")["id"] == alpha["id"]
+    assert store.by_message("gmail-shared", company_id="beta")["id"] == beta["id"]
+    assert store.resolve(company_id="alpha")["id"] == alpha["id"]
+    assert [job["id"] for job in store.recent_jobs(company_id="beta")] == [
+        beta["id"]
+    ]
+    assert store.latest_report(company_id="alpha")["payload"]["company"] == "alpha"
+    assert store.state_counts(company_id="alpha")["queued"] == 1
+
+
 def test_report_schema_requires_all_business_sections():
     payload = {
         "executive_summary": "Doanh thu tăng nhưng biên lợi nhuận giảm.",
