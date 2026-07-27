@@ -14,9 +14,12 @@ from urllib.request import Request, urlopen
 from .config import APP_HOME
 
 PACKAGE_DIR = Path(__file__).with_name("knowledge_base")
-REGISTRY_FILE = PACKAGE_DIR / "knowledge_sources.json"
+VIETNAM_PACK_DIR = (
+    PACKAGE_DIR / "jurisdictions" / "VN" / "vietnam-core"
+)
+REGISTRY_FILE = VIETNAM_PACK_DIR / "sources" / "knowledge_sources.json"
 BENCHMARK_REGISTRY_FILE = PACKAGE_DIR / "benchmark_sources.json"
-LOCAL_KNOWLEDGE = PACKAGE_DIR / "tax_rules_vietnam.md"
+LOCAL_KNOWLEDGE = VIETNAM_PACK_DIR / "references" / "tax_rules_vietnam.md"
 TRUSTED_DOMAIN = "vanban.chinhphu.vn"
 
 
