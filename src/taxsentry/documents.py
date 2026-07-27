@@ -906,12 +906,19 @@ def _excel_document(
             xml_meta = (
                 _sheet_xml_metadata(archive, xml_path) if xml_path in archive.namelist() else {}
             )
+            rows, columns = worksheet.max_row, worksheet.max_column
+            if rows is None or columns is None:
+                # ponytail: only dimensionless sheets pay for this scan.
+                rows = columns = 0
+                for row in worksheet.iter_rows():
+                    rows += 1
+                    columns = max(columns, len(row))
             inventory.append(
                 {
                     "name": worksheet.title,
                     "state": worksheet.sheet_state,
-                    "rows": worksheet.max_row,
-                    "columns": worksheet.max_column,
+                    "rows": rows,
+                    "columns": columns,
                     **xml_meta,
                 }
             )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import zipfile
 
 import pytest
@@ -85,6 +86,34 @@ def test_excel_manifest_covers_every_sheet_row_and_locator(tmp_path):
     compatibility = extract(path, ["vie", "eng"]).content
     assert compatibility["data"]["canonical_metrics"]["revenue"]["value"] == 580
     assert compatibility["data"]["sheets"][1]["type"] == "tax_summary"
+
+
+def test_excel_without_dimension_metadata_is_fully_ingested(tmp_path):
+    source = tmp_path / "source.xlsx"
+    path = tmp_path / "dimensionless.xlsx"
+    workbook = Workbook()
+    workbook.active.append(["Chỉ tiêu", "Giá trị"])
+    workbook.active.append(["Doanh thu", 580])
+    workbook.create_sheet("Trống")
+    workbook.save(source)
+    with zipfile.ZipFile(source) as archive, zipfile.ZipFile(path, "w") as output:
+        for info in archive.infolist():
+            content = archive.read(info.filename)
+            if info.filename.startswith("xl/worksheets/"):
+                content = re.sub(br'<dimension ref="[^"]+"\s*/>', b"", content)
+            output.writestr(info, content)
+
+    service = DocumentService(tmp_path / "documents")
+    manifest = service.ingest_sync(path=path, company_id="acme")
+
+    assert manifest.coverage.complete
+    assert [
+        (sheet["rows"], sheet["columns"]) for sheet in manifest.metadata["sheets"]
+    ] == [(2, 2), (0, 0)]
+    assert any(
+        unit.locator == "sheet=Sheet!rows=1:2"
+        for unit in service.iter_units(manifest.id, company_id="acme")
+    )
 
 
 def test_word_and_powerpoint_are_structural_units(tmp_path):

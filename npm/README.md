@@ -23,9 +23,9 @@
 > gốc và nguồn chính thức trước khi sử dụng.
 
 > [!NOTE]
-> Mã nguồn trên nhánh `main` hiện mang phiên bản **3.0.0**. Gói npm `latest`
-> vẫn là **2.0.13** cho đến khi quy trình phát hành v3 hoàn tất. Muốn dùng các
-> tính năng v3 ngay, hãy [cài từ mã nguồn](#cài-taxsentry-30-từ-mã-nguồn).
+> Phiên bản mã nguồn và gói phát hành hiện tại là **3.0.1**. Bản vá này bổ sung
+> khả năng đọc workbook thiếu dimension metadata. Huy hiệu npm phía trên luôn
+> hiển thị phiên bản `latest` đã được công bố trên registry.
 
 ## TaxSentry là gì?
 
@@ -231,12 +231,12 @@ MinIO HTTP và credential phát triển. Production phải dùng cấu hình b�
 
 | Kênh | Phiên bản | Cách dùng |
 | --- | --- | --- |
-| GitHub `main` | 3.0.0 | Đầy đủ mã nguồn v3 hiện tại |
-| npm `latest` | 2.0.13 | Bản stable công khai hiện tại |
+| GitHub `main` | 3.0.1 | Mã nguồn và bản vá Excel mới nhất |
+| npm package | 3.0.1 | Gói được chuẩn bị để phát hành bằng `npm publish` |
 
-Mã 3.0.0 đã có test unit/integration/security, CI đa nền tảng và fixture file
+Mã 3.0.1 đã có test unit/integration/security, CI đa nền tảng và fixture file
 lớn. Việc này không thay thế rehearsal trên dữ liệu sản xuất: migration/rollback
-thực tế, shadow run 2.0.13–3.0, TLS đa máy, backup mã hóa và restore vẫn phải
+thực tế, shadow run với bản đang vận hành, TLS đa máy, backup mã hóa và restore vẫn phải
 được tổ chức triển khai xác nhận.
 
 ## Bắt đầu nhanh
@@ -259,12 +259,13 @@ Tùy nhu cầu:
 - Telegram bot token cho Full Agent;
 - Docker, PostgreSQL/pgvector và MinIO cho distributed mode.
 
-### Cài bản stable từ npm
+### Cài bản mới nhất từ npm
 
-Lệnh này hiện cài TaxSentry 2.0.13:
+Sau khi chủ package phát hành 3.0.1, các lệnh sau cài và xác minh bản mới nhất:
 
 ```powershell
 npm install -g taxsentry
+npm view taxsentry version
 taxsentry --version
 taxsentry setup
 taxsentry doctor
@@ -275,7 +276,7 @@ TypeScript launcher tự tạo Python virtual environment ở
 `~/.taxsentry/runtime/venv`, cài wheel đi kèm và chuyển tiếp lệnh sang Python
 core.
 
-### Cài TaxSentry 3.0 từ mã nguồn
+### Cài TaxSentry 3.0.1 từ mã nguồn
 
 ```powershell
 git clone https://github.com/thienan230427/TaxSentry.git
