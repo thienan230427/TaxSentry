@@ -58,7 +58,7 @@ def test_git_main_requires_main_branch(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize(
     ("latest", "expected_install"),
-    [("1.1.7", False), ("2.1.0", True)],
+    [("2.1.0", False), ("3.1.0", True)],
 )
 def test_npm_stable_never_downgrades(monkeypatch, latest, expected_install):
     calls = []

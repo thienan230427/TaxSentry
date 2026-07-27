@@ -12,18 +12,21 @@
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![License](https://img.shields.io/github/license/thienan230427/TaxSentry)](LICENSE)
 
-[Quick start](#quick-start) · [Features](#features) · [Setup](#interactive-setup) · [Commands](#command-reference) · [Architecture](#architecture) · [Troubleshooting](#troubleshooting)
+[Quick start](#quick-start) · [Features](#features) · [Setup](#interactive-setup) · [Commands](#command-reference) · [Architecture](#architecture) · [TaxSentry 3 operations](docs/taxsentry-3.md) · [Troubleshooting](#troubleshooting)
 
 </div>
 
 > [!IMPORTANT]
 > TaxSentry assists with extraction, analysis, and reporting. It does not file taxes or make financial, legal, or operational decisions. A qualified person should verify material conclusions against the original evidence before acting on them.
 
+> [!NOTE]
+> The `codex/knowledge-platform-v3` branch contains the TaxSentry 3 development architecture and `3.0.0` package metadata. This does not mean the release has been published or that all release gates have passed. See [TaxSentry 3 development architecture and operations](docs/taxsentry-3.md).
+
 ## Overview
 
 TaxSentry is a local, terminal-first assistant for Vietnamese financial and business workflows. It can chat through an AI provider, search Gmail, process new attachments, extract data from office documents and scans, generate polished files, create structured PDF reports, and deliver results through Gmail and Telegram.
 
-The npm package contains a small TypeScript launcher and the matching Python application wheel. On first use, the launcher creates an isolated Python environment under `~/.taxsentry/runtime/venv`, installs the bundled core, and forwards commands to it. Application data and credentials remain local to the machine.
+The npm package contains a small TypeScript launcher and the matching Python application wheel. On first use, the launcher creates an isolated Python environment under `~/.taxsentry/runtime/venv`, installs the bundled core, and forwards commands to it. The default profile keeps application data local and credentials in the OS keyring. When the optional distributed data plane is configured, documents and metadata are sent to the explicitly configured PostgreSQL and MinIO/S3 services and must be protected as described in the operations guide.
 
 ```mermaid
 flowchart LR
@@ -38,20 +41,30 @@ flowchart LR
         TUI["Financial Sentinel TUI"]
         Agent["Shared AI agent"]
         Workflow["Document workflow"]
-        Extract["Office, PDF, and OCR extraction"]
-        Store[("SQLite history")]
+        Extract["Structural Document Intelligence"]
+        Store[("SQLite workflow compatibility")]
+        AgentStore[("SQLite or PostgreSQL agent state")]
+        Coordinator["Configured document coordinator"]
+        Queue[("PostgreSQL job leases")]
+        DistributedWorker["Docker document worker"]
+        Objects[("MinIO or S3 objects")]
         Artifacts["DOCX, XLSX, PPTX, and PDF builder"]
     end
 
     Terminal --> TUI --> Agent
     TelegramIn --> Agent
+    Agent <--> AgentStore
     Gmail --> Workflow --> Extract --> Agent
     Files --> Artifacts
     Gmail --> Artifacts
     Agent --> Artifacts
     Workflow <--> Store
+    Workflow --> Extract
+    Extract --> Coordinator --> Queue --> DistributedWorker
+    DistributedWorker --> Extract
+    DistributedWorker <--> Objects
     Artifacts --> TelegramOut["Telegram delivery"]
-    Workflow --> GmailOut["Gmail PDF report"]
+    Workflow --> GmailOut["Gmail advisory bundle"]
     Workflow --> TelegramOut
 ```
 
@@ -63,7 +76,8 @@ flowchart LR
 - Vietnamese and English interface modes selected during setup.
 - Slash-command completion, recent jobs, current integration state, and session controls.
 - One serialized chat service shared by the terminal and Telegram gateway.
-- Persistent conversation history and workflow events in SQLite.
+- Company-scoped conversation history, prompt snapshots, session search/resume, and curated memory. SQLite is the local default; PostgreSQL stores sessions and memory when the distributed data plane is enabled.
+- Layered `SOUL.md`, `USER.md`, `MEMORY.md`, `COMPANY.md`, and repository `AGENTS.md` prompt assembly.
 - Safe cancellation and clean shutdown of background services.
 
 ### Gmail search and automation
@@ -81,13 +95,17 @@ TaxSentry supports messages from every sender. Automatic processing starts only 
 
 ### Document extraction and reporting
 
-- Direct text extraction from DOCX and PPTX.
-- Financial workbook analysis for XLSX, including multi-sheet and formula-heavy files.
-- Direct PDF text extraction with OCR fallback for scanned pages.
+- Structural manifests, unit-level evidence locators, and explicit processed/failed/skipped coverage.
+- Full worksheet inventory for XLSX and XLSM, including hidden sheets, formulas, merged ranges, defined names, chart sources, and external-link inventory.
+- Structural DOCX and PPTX extraction, including tables, hierarchy, notes/comments, chart data, headers/footers, and embedded-image OCR where supported.
+- Per-page PDF text extraction with page-selective OCR for mixed text/scan files.
 - OCR for PNG, JPG, and JPEG with configurable language packs.
-- Legacy DOC, XLS, and PPT conversion through LibreOffice when installed.
-- Structured AI reports with executive summary, evidence, missing data, risks, recommendations, and confidence.
-- PDF report rendering and auditable job, report, attachment, delivery, and event records.
+- Legacy DOC, XLS, and PPT conversion through the sandbox-enabled LibreOffice worker path.
+- Multi-file cases up to 500 MB aggregate, with source separation and conflict reporting.
+- Advisory Schema v2 reports with grounded metrics, findings, scenarios, tax risks, actionable recommendations, sources, assumptions, and confidence.
+- Deterministic Python calculations for growth, budget variance, margins, cost ratios, and three-case P&L sensitivity.
+- Official-source legal knowledge freshness checks; stale or unsupported conclusions are held for review.
+- Multi-file report bundles and auditable job, report, attachment, delivery, and event records.
 - Retry with bounded backoff, per-stage timeouts, cancellation, and duplicate-work protection.
 - Channel-aware delivery retries: if Gmail succeeds and Telegram fails, only the failed delivery is retried.
 
@@ -103,6 +121,8 @@ TaxSentry can create new office documents directly from a prompt, selected Gmail
 | Report document | PDF | Not applicable |
 
 Generated files use Vietnamese business conventions by default, including VND and `dd/mm/yyyy`. The agent is instructed not to invent missing values and to identify incomplete evidence. Outputs are saved under `~/.taxsentry/outputs` and sent to configured Telegram chats when automatic artifact delivery is enabled.
+
+When no format is specified, TaxSentry selects one of five advisory profiles: CFO brief, tax-risk memo, cash-flow advisory, performance review, or scenario plan. Excel advisory models include source data, editable assumptions, application-generated formulas, a two-variable sensitivity matrix, risks, actions, and charts.
 
 ### AI providers
 
@@ -134,6 +154,7 @@ Optional components:
 
 - Tesseract OCR with `vie` and `eng` language data for images and scanned PDFs.
 - LibreOffice for legacy `.doc`, `.xls`, and `.ppt` files.
+- Docker with PostgreSQL/pgvector and MinIO for the optional distributed document plane.
 - Gmail App Password for Email Agent or Full Agent mode.
 - Telegram bot token for Full Agent mode.
 
@@ -184,6 +205,17 @@ uv run taxsentry setup
 ```
 
 If TaxSentry detects a v1 profile, it moves the old profile to a timestamped backup directory before creating the v2 profile. Existing data is not silently deleted.
+
+To use the PostgreSQL and S3/MinIO APIs from the source environment, install the
+optional dependencies declared by the repository:
+
+```powershell
+uv sync --extra dev --extra distributed
+```
+
+The Docker worker installs the same pinned clients directly. Deployment,
+migration, and rollback details are in
+[TaxSentry 3 development architecture and operations](docs/taxsentry-3.md).
 
 ## Interactive setup
 
@@ -261,6 +293,7 @@ The same Gmail account is used for IMAP reading, SMTP delivery, and receiving ge
 | `taxsentry doctor --fix` | Create required directories and attempt to install missing Tesseract components. |
 | `taxsentry update` | Update through the stable channel for the detected installation type. |
 | `taxsentry update --main` | Explicitly update the Python core from GitHub `main`. |
+| `taxsentry migrate-v3 [--sqlite PATH] [--backup-dir DIR] [--company-id ID]` | Back up a v2 SQLite store, ensure the PostgreSQL schema, import supported data/object references, and write a JSON migration report. |
 
 ### Terminal commands
 
@@ -274,13 +307,22 @@ Type `/` to show command completion. Use the arrow keys to select a command, `Ta
 | `/gmail search <query>` | Search up to 20 messages with Gmail search syntax. |
 | `/gmail read <uid>` | Read one message, including body and attachment names. |
 | `/gmail process <uid\|all>` | Confirm processing for selected search results. |
-| `/create <docx\|xlsx\|pptx\|pdf> <request>` | Generate a document. Add `--template <path>` for a compatible Office template. |
+| `/create [docx\|xlsx\|pptx\|pdf] <request>` | Generate one requested file or let TaxSentry select an advisory bundle. Add `--template <path>` for a compatible Office template. |
+| `/profile show` | Show the controlled company profile used by advisory reports. |
+| `/profile set <field> <value>` | Update an approved company-profile field. |
+| `/knowledge status` | Show legal-source verification and freshness. |
+| `/knowledge refresh` | Refresh the allowlisted official-source registry. |
+| `/skills list\|install\|github\|draft\|approve\|rollback\|disable ...` | Inspect or govern local, pinned-GitHub, and agent-drafted skills; installs remain drafts until approved. |
 | `/cancel <job-prefix>` | Request cancellation of an active job. |
 | `/jobs` | Show recent job IDs, states, subjects, and retry counts. |
 | `/report` | Show the executive summary from the latest report. |
 | `/retry [job-prefix]` | Requeue a failed or review-pending job. |
-| `/approve [job-prefix]` | Approve and requeue a job in `needs_review`. |
+| `/approve [job-prefix]` | Approve and deliver the already-rendered draft without re-running analysis. |
 | `/new` | Start a new conversation session. |
+| `/resume <session-id>` | Resume a saved session from the selected company. |
+| `/sessions <query>` | Search saved sessions and messages within the selected company. |
+| `/forget <memory-id>` | Delete one curated-memory item in the selected company and retain a content-free audit tombstone. |
+| `/agent reload` | Rebuild the current session's identity/memory/skill prompt snapshot and reset its provider thread. |
 | `/exit` | Stop background services and exit safely. |
 
 Examples:
@@ -303,27 +345,33 @@ Which unread emails arrived today?
 | `/report` | Send the latest generated PDF. |
 | `/gmail search <query>` | Search Gmail and retain results for confirmation. |
 | `/gmail process <uid\|all>` | Process confirmed Gmail results. |
-| `/create <docx\|xlsx\|pptx\|pdf> <request>` | Generate a file and return its completion state. |
+| `/create [docx\|xlsx\|pptx\|pdf] <request>` | Generate a requested file or an automatically selected advisory bundle. |
+| `/profile show\|set ...` | View or update the controlled company profile. |
+| `/knowledge status\|refresh` | Inspect or refresh official legal sources. |
 | `/retry <job-prefix>` | Requeue a failed or review-pending job. |
 | `/approve <job-prefix>` | Approve a review-pending job. |
 | `/cancel <job-prefix>` | Cancel an active workflow job. |
+| `/new`, `/resume <session-id>` | Start a new shared session or resume one owned by the selected company. |
+| `/sessions <query>` | Search that company's saved sessions. |
+| `/forget <memory-id>` | Remove one curated-memory item in the selected company. |
+| `/agent reload` | Rebuild the current prompt snapshot and reset the provider thread. |
 | Plain text | Chat with the shared TaxSentry assistant. |
 
 ## Supported documents
 
 | Extension | Validation and extraction |
 | --- | --- |
-| `.docx` | Open XML package validation and document text extraction. |
-| `.xlsx` | Open XML package validation and native financial workbook parsing. |
-| `.pptx` | Open XML package validation and slide text extraction. |
-| `.pdf` | PDF signature validation, direct text extraction, then OCR fallback when text is sparse. |
+| `.docx` | Open XML validation plus structural paragraphs, headings/sections, tables, headers/footers, notes/comments, tracked-change text, and embedded-image OCR. |
+| `.xlsx`, `.xlsm` | Open XML validation plus all-sheet inventory, streaming row units, formulas/cached values, merged cells, names, chart sources, and external-link metadata. VBA is never executed. |
+| `.pptx` | Open XML validation plus slides, shapes, tables, chart series, speaker notes, comments, theme/master metadata, and embedded-image OCR. |
+| `.pdf` | PDF signature validation, per-page direct extraction, and page-selective OCR when text is sparse. |
 | `.png` | PNG signature validation and Tesseract OCR. |
 | `.jpg`, `.jpeg` | JPEG signature validation and Tesseract OCR. |
-| `.doc`, `.xls`, `.ppt` | Compound-file signature validation, then headless LibreOffice conversion. |
+| `.doc`, `.xls`, `.ppt` | Compound-file signature validation, then headless LibreOffice conversion when the sandbox flag is enabled. |
 
-Macro-enabled `.docm`, `.xlsm`, and `.pptm` files are not accepted. Email and document content is treated as untrusted data: TaxSentry does not execute macros, scripts, links, or instructions embedded in source files.
+Macro-enabled `.docm` and `.pptm` files are not accepted. `.xlsm` is accepted as workbook data, but TaxSentry does not execute macros or open external links. Email and document content is treated as untrusted data: TaxSentry does not execute scripts, links, or instructions embedded in source files.
 
-Default attachment and local-source size limit: **100 MB**. Open XML archive expansion is capped at **200 MB**. Both limits protect the local workflow from unexpectedly large input.
+The configured single-document and aggregate case limit is **500 MB**. Open XML expansion is capped at **4 GiB**, 100,000 entries, and a 1,000:1 compression ratio. A synthetic 498 MiB case with 100 Excel sheets/1,000,000 rows, 1,000 PDF pages, 500 slides, and a long Word document completed with 7,609/7,609 units covered; see the [recorded acceptance result](docs/benchmarks/acceptance-2026-07-27.md). Every inventoried unit must be processed or appear explicitly as failed/skipped in the coverage report.
 
 ## Gmail processing lifecycle
 
@@ -364,12 +412,13 @@ For every supported attachment, TaxSentry:
 2. Validates the extension, MIME type, file signature, archive structure, and configured size limit.
 3. Saves the validated attachment under `~/.taxsentry/downloads/<job-id>/`.
 4. Extracts structured content or OCR text.
-5. Requests a fixed-schema financial analysis from the configured provider.
-6. Adds a visible warning when extraction or report confidence is below the configured threshold.
-7. Renders a PDF and records the report in SQLite.
-8. Sends the report to the connected Gmail account and configured Telegram chats.
-9. Records successful channels so retries do not duplicate completed deliveries.
-10. Applies the final Gmail workflow label.
+5. Builds deterministic metrics and retrieves relevant, freshness-scored knowledge.
+6. Requests an Advisory Schema v2 analysis and removes unsupported benchmarks or numbers.
+7. Renders the exact profile-selected bundle and records its main legacy `pdf_path` plus every output path in SQLite.
+8. Holds material, low-confidence, high-tax-risk, or stale-source reports for approval.
+9. Delivers the saved draft after approval without re-running extraction or analysis.
+10. Records each successful file/channel so retries do not duplicate completed deliveries.
+11. Applies the final Gmail workflow label.
 
 ## Architecture
 
@@ -382,11 +431,19 @@ flowchart TB
     Cockpit --> Chat["Shared ChatService"]
     Cockpit --> Worker["Gmail polling worker"]
     Cockpit --> Telegram["Telegram bot gateway"]
+    Chat --> Prompt["PromptAssembler"]
+    Prompt --> Identity["SOUL · USER · COMPANY · MEMORY · AGENTS"]
     Chat --> Provider["Codex App Server or LM Studio"]
     Worker --> Workflow["TaxSentryWorkflow"]
-    Workflow --> Extraction["Extraction and OCR"]
-    Workflow --> Reporting["Structured analysis and PDF rendering"]
-    Workflow --> Database[("SQLite")]
+    Workflow --> Documents["DocumentService and coverage"]
+    Workflow --> Reporting["Structured analysis and ArtifactSpec"]
+    Workflow --> Database[("SQLite compatibility workflow state")]
+    Documents --> LocalObjects[("Local object store")]
+    Documents --> Coordinator["Configured document coordinator"]
+    Coordinator --> Queue[("PostgreSQL + pgvector job plane")]
+    Queue --> LeaseWorker["Lease-based Docker workers"]
+    LeaseWorker --> Documents
+    LeaseWorker --> Objects[("MinIO or S3-compatible objects")]
     Cockpit --> Artifacts["ArtifactService"]
     Telegram --> Chat
     Telegram --> Workflow
@@ -396,10 +453,17 @@ flowchart TB
 ### Runtime boundaries
 
 - **TypeScript launcher:** discovers `uv`, creates the managed virtual environment, installs the bundled wheel, forwards signals, and forces UTF-8 for the Python child process.
-- **Python core:** owns setup, providers, TUI, Gmail, Telegram, extraction, workflow state, storage, report rendering, artifact generation, and updates.
-- **SQLite store:** records jobs, state transitions, approvals, reports, attachments, deliveries, workflow events, sessions, and messages.
+- **Python core:** owns setup, providers, prompt assembly, memory, TUI, Gmail, Telegram, Document Intelligence, workflow state, report rendering, artifact generation, jurisdiction guards, skills, and updates.
+- **SQLite compatibility store:** remains the local store for jobs, state transitions, approvals, reports, attachments, deliveries, and events. It also stores sessions/messages/memory when distributed mode is disabled.
+- **Distributed document plane:** when enabled, the shared `DocumentService` facade used by Gmail workflows and artifact generation submits document jobs to PostgreSQL lease/checkpoint workers and exchanges results through MinIO/S3. PostgreSQL also becomes the operational session/message/memory store; legacy workflow state remains in SQLite for compatibility.
 - **OS keyring:** stores Gmail App Passwords and Telegram bot tokens.
 - **Local profile:** stores non-secret configuration and generated workflow data under `~/.taxsentry` unless overridden.
+
+The included [`deploy/compose.yml`](deploy/compose.yml) is for local development.
+It deliberately uses PostgreSQL without TLS and MinIO over HTTP. Do not expose
+it unchanged; the [TaxSentry 3 operations guide](docs/taxsentry-3.md) defines the
+TLS, credential, encryption, network, backup, migration, and rollback
+requirements for multi-host deployment.
 
 ## Configuration and local data
 
@@ -408,7 +472,16 @@ Default profile layout:
 ```text
 ~/.taxsentry/
 ├── config.json                 # non-secret configuration
-├── taxsentry.db                # jobs, reports, events, deliveries, and chat history
+├── taxsentry.db                # local workflow state and default agent state
+├── SOUL.md                     # agent identity and communication style
+├── USER.md                     # confirmed user preferences
+├── MEMORY.md                   # global curated-memory snapshot
+├── companies/<company-id>/
+│   ├── COMPANY.md              # scoped company profile
+│   └── MEMORY.md               # scoped curated-memory snapshot
+├── skills/                     # drafts, approved versions, and registry state
+├── documents/                  # document manifests and unit JSONL
+├── objects/                    # default local content-addressed object store
 ├── sessions.jsonl              # reserved session path
 ├── logs/                       # runtime logs directory
 ├── run/                        # worker lock and runtime files
@@ -434,11 +507,22 @@ Default profile layout:
 | `telegram.enabled` | `false` | Enable the Telegram gateway and delivery. |
 | `worker.poll_seconds` | `30` | Delay after each Gmail polling cycle. |
 | `worker.max_retries` | `3` | Retry limit for workflow and delivery failures. |
-| `worker.max_attachment_mb` | `100` | Per-file input limit. |
+| `worker.max_attachment_mb` | `500` | Per-file input limit. |
+| `documents.max_case_mb` | `500` | Aggregate `DocumentService.ingest_case` input limit. |
+| `documents.excel_rows_per_unit` | `250` | Default structural workbook row-chunk size. |
+| `memory.retention_days` | `90` | Expiry for unpinned messages and curated memory. |
+| `memory.soft_context_ratio` | `0.55` | Context-compression soft threshold. |
+| `memory.hard_context_ratio` | `0.80` | Context-compression hard threshold. |
+| `data_plane.postgres_dsn` | empty | Optional PostgreSQL data-plane DSN. |
+| `data_plane.object_store.kind` | `local` | `local` by default; distributed workers use S3/MinIO environment settings. |
 | `ocr.languages` | `vie`, `eng` | Tesseract language packs. |
 | `ocr.minimum_confidence` | `70` | Extraction threshold used for report warnings. |
 | `report.minimum_confidence` | `0.70` | Analysis threshold used for report warnings. |
 | `artifacts.output_dir` | `~/.taxsentry/outputs` | Generated document directory. |
+| `advisor.company.materiality_ratio` | `0.05` | Hold recommendations whose estimated impact reaches this share of period revenue. |
+| `advisor.knowledge.refresh_days` | `7` | Automatic official-source refresh cadence. |
+| `advisor.knowledge.legal_stale_days` | `30` | Maximum age before legal conclusions require review. |
+| `advisor.knowledge.benchmark_max_age_months` | `24` | Maximum accepted benchmark age. |
 
 ### Environment overrides
 
@@ -446,7 +530,14 @@ Default profile layout:
 | --- | --- |
 | `TAXSENTRY_HOME` | Move the complete TaxSentry profile. |
 | `TAXSENTRY_CONFIG_FILE` | Override the JSON configuration path. |
-| `TAXSENTRY_MEMORY_DB` | Override the SQLite database path. |
+| `TAXSENTRY_MEMORY_DB` | Override the local SQLite compatibility database path. |
+| `TAXSENTRY_AGENTS_FILE` | Override the repository/project `AGENTS.md` path used by prompt assembly. |
+| `TAXSENTRY_POSTGRES_DSN` | Give a distributed worker a complete PostgreSQL DSN. |
+| `TAXSENTRY_JOB_HANDLER` | Select the worker handler as `module:function`; document workers use `taxsentry.data_plane.document_worker:handle_document_job`. |
+| `TAXSENTRY_S3_ENDPOINT`, `TAXSENTRY_S3_BUCKET` | Configure the S3-compatible object endpoint and bucket. |
+| `TAXSENTRY_S3_ACCESS_KEY`, `TAXSENTRY_S3_SECRET_KEY` | Configure object-store service credentials. |
+| `TAXSENTRY_S3_ALLOW_INSECURE` | Explicitly permit HTTP object storage for local development only. |
+| `TAXSENTRY_S3_ENCRYPTION` | Request a supported S3 server-side encryption mode. |
 | `TAXSENTRY_UV` | Point the npm launcher to a specific `uv` executable. |
 | `CODEX_CLI_PATH` | Point TaxSentry to a specific Codex executable. |
 
@@ -454,9 +545,11 @@ Default profile layout:
 
 - Secrets are stored in the operating-system keyring and excluded from persisted JSON.
 - Incoming attachments must match the allowed extension, MIME type, and binary signature.
-- Open XML files must contain their required package members and stay within the expanded-size limit.
+- Open XML files must contain their required package members and stay within expansion, entry-count, compression-ratio, and traversal limits.
 - File names are reduced to their base name before saving, preventing attachment path traversal.
 - Gmail and document text is placed in prompts as untrusted source data, with explicit instructions not to follow embedded commands.
+- Macros and external Office links are inventoried where relevant but never executed or opened.
+- Curated memory rejects untrusted sources and secret-like content and is isolated by company.
 - Job identity includes the Gmail message identity and attachment SHA-256 to avoid duplicate processing.
 - Gmail delivery uses a stable message ID and checks Sent mail before sending again.
 - Successful delivery channels are recorded independently for safe retries.
@@ -578,6 +671,9 @@ npm publish --dry-run
 ```text
 TaxSentry/
 ├── .github/workflows/           # cross-platform CI
+├── deploy/                      # local PostgreSQL/MinIO/worker development topology
+├── docs/
+│   └── taxsentry-3.md           # v3 architecture, deployment, migration, and rollback
 ├── npm/
 │   ├── src/                     # TypeScript launcher and runtime bootstrap
 │   ├── scripts/                 # prepack and smoke-install validation
@@ -586,15 +682,21 @@ TaxSentry/
 ├── src/taxsentry/
 │   ├── bot/                     # Telegram command gateway
 │   ├── core/                    # financial XLSX parser and PDF generator
-│   ├── knowledge_base/          # Vietnamese tax knowledge context
+│   ├── data_plane/              # PostgreSQL leases, object stores, worker, and migration
+│   ├── knowledge_base/          # identity defaults and verified Vietnam knowledge content
 │   ├── artifacts.py             # DOCX, XLSX, PPTX, and PDF generation
 │   ├── cockpit.py               # terminal interface
 │   ├── config.py                # profile paths and defaults
+│   ├── documents.py             # structural ingestion, manifests, evidence, and coverage
 │   ├── extraction.py            # Office, PDF, and OCR extraction
 │   ├── gmail.py                 # IMAP, SMTP, search, labels, and validation
+│   ├── jurisdictions.py         # verified-pack guard and hybrid retrieval
+│   ├── memory.py                # scoped curated memory and session services
+│   ├── prompt.py                # identity and prompt snapshot assembly
 │   ├── providers.py             # LM Studio and Codex App Server
+│   ├── skills.py                # governed draft, approval, rollback, and sandbox APIs
 │   ├── setup_wizard.py          # bilingual transactional setup
-│   ├── store.py                 # SQLite jobs, reports, events, and sessions
+│   ├── store.py                 # SQLite workflow state plus PostgreSQL-backed agent-state adapter
 │   ├── updater.py               # safe update channels
 │   └── workflow.py              # document processing and delivery
 ├── tests/                       # Python unit and regression tests
@@ -605,6 +707,7 @@ TaxSentry/
 
 ## Production checklist
 
+- [ ] Read the [TaxSentry 3 deployment, migration, and rollback guide](docs/taxsentry-3.md); do not use the local Compose security settings on a network.
 - [ ] Run `taxsentry doctor` on the target machine.
 - [ ] Confirm the selected provider and model.
 - [ ] Verify Gmail IMAP and SMTP with the production App Password.
@@ -616,6 +719,8 @@ TaxSentry/
 - [ ] Compare the generated report with the original source evidence.
 - [ ] Test a delivery failure and retry without duplicating the successful channel.
 - [ ] Back up `~/.taxsentry` according to the organization's retention policy.
+- [ ] For distributed deployment, verify PostgreSQL TLS/certificates, HTTPS object storage, scoped service credentials, encrypted volumes/backups, restore, and worker egress controls.
+- [ ] Preserve the SQLite source and hashed migration export until rollback and reconciliation are signed off.
 
 ## License
 

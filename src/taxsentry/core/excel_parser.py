@@ -295,11 +295,19 @@ class TaxSentryParser:
                     preview_texts.append(text)
         corpus = " | ".join([title] + preview_texts)
 
+        if any(
+            keyword in title
+            for keyword in ("tong hop thue", "tax summary", "thue-bh", "thue va bao hiem")
+        ):
+            return "tax_summary"
+        if any(keyword in title for keyword in ("bang luong", "payroll", "danh sach nhan vien")):
+            return "payroll"
+
         rules = [
             ("assumptions", ["assumptions", "gia dinh", "thue suat", "tax rate", "muc phat"]),
             ("income_statement", ["income_statement", "ket qua hoat dong kinh doanh", "loi nhuan", "gia von", "doanh thu"]),
+            ("tax_summary", ["tong hop thue", "tax summary", "thue-bh", "thue va bao hiem"]),
             ("payroll", ["bang luong", "luong", "thuc linh", "nhan vien", "thu nhap", "thue tncn", "bhxh"]),
-            ("tax_summary", ["tong hop thue", "bao hiem", "thue-bh", "bhxh", "bhyt", "bhtn"]),
             ("balance_sheet", ["can doi ke toan", "tai san", "nguon von", "balance sheet"]),
             ("cash_flow", ["luu chuyen tien te", "dong tien", "cash flow"]),
             ("ledger", ["so cai", "nhat ky", "ledger", "journal"]),
@@ -370,16 +378,11 @@ class TaxSentryParser:
         line_items = []
         notes = []
         summary = {}
-        blank_run = 0
 
         for row_idx in range((header_row_idx or 0) + 1, ws.max_row + 1):
             row_values = [ws.cell(row=row_idx, column=col_idx).value for col_idx in range(1, ws.max_column + 1)]
             if self._row_is_blank(row_values):
-                blank_run += 1
-                if blank_run >= 5 and line_items:
-                    break
                 continue
-            blank_run = 0
 
             item = self._row_to_line_item(ws, row_idx, headers_map)
             if not item:
@@ -389,9 +392,6 @@ class TaxSentryParser:
                 continue
 
             line_items.append(item)
-            if len(line_items) >= 120:
-                summary["truncated_line_items"] = True
-                break
 
         if header_row_idx:
             summary["header_row"] = header_row_idx
@@ -405,7 +405,7 @@ class TaxSentryParser:
             "headers": [headers_map[k] for k in sorted(headers_map)] if headers_map else [],
             "line_items": line_items,
             "summary": summary,
-            "notes": notes[:40],
+            "notes": notes,
         }
 
     def _extract_payroll_records(self, ws, generic):
@@ -420,15 +420,10 @@ class TaxSentryParser:
             return []
 
         records = []
-        blank_run = 0
         for row_idx in range(header_row_idx + 1, ws.max_row + 1):
             row_values = [ws.cell(row=row_idx, column=c).value for c in range(1, ws.max_column + 1)]
             if self._row_is_blank(row_values):
-                blank_run += 1
-                if blank_run >= 4 and records:
-                    break
                 continue
-            blank_run = 0
 
             label_probe = self._normalize_text(ws.cell(row=row_idx, column=name_col).value)
             if any(token in label_probe for token in ["tong cong", "tong", "total"]):
@@ -456,8 +451,6 @@ class TaxSentryParser:
                 "metrics": metrics,
             }
             records.append(record)
-            if len(records) >= 150:
-                break
         return records
 
     def _extract_payroll_summary(self, ws, generic, records):
@@ -595,7 +588,7 @@ class TaxSentryParser:
             "values": values,
         }
         if note_texts:
-            item["note"] = " | ".join(note_texts[:3])
+            item["note"] = " | ".join(note_texts)
         return item
 
     def _extract_metric_summary_from_line_items(self, line_items):
@@ -635,6 +628,7 @@ class TaxSentryParser:
                     "sheet": report.get("name"),
                     "sheet_type": sheet_type,
                     "label": item.get("label"),
+                    "row": item.get("row"),
                     "score": self._candidate_score(sheet_type, item.get("label"))
                     + (2 if matched_key == "revenue" and "doanh thu thuan" in norm else 0),
                     "periods": list(item.get("values", {}).keys()),
@@ -649,6 +643,7 @@ class TaxSentryParser:
                         "sheet": report.get("name"),
                         "sheet_type": sheet_type,
                         "label": label,
+                        "row": None,
                         "score": self._candidate_score(sheet_type, label) + 1,
                         "periods": [label],
                     })
@@ -661,6 +656,7 @@ class TaxSentryParser:
                 "source_sheet": best["sheet"],
                 "source_type": best["sheet_type"],
                 "source_label": best["label"],
+                "source_row": best.get("row"),
                 "periods": best.get("periods", []),
             }
         return canonical

@@ -30,11 +30,73 @@ jobs:
       - name: Install OCR runtime
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-vie
-      - run: uv sync --locked --extra dev
+      - run: uv sync --locked --extra dev --extra distributed
       - run: uv lock --check
       - run: uv run ruff check src tests
       - run: uv run pytest -q
       - run: uv build
+
+  data-plane:
+    name: PostgreSQL / MinIO / 3 workers
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: integration-postgres-password
+      MINIO_ROOT_USER: integration-access-key
+      MINIO_ROOT_PASSWORD: integration-minio-secret-key
+      TAXSENTRY_TEST_POSTGRES_DSN: postgresql://taxsentry:integration-postgres-password@127.0.0.1:5432/taxsentry?sslmode=disable
+      TAXSENTRY_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+      TAXSENTRY_TEST_S3_BUCKET: taxsentry-tests
+      TAXSENTRY_TEST_S3_WORKER_BUCKET: taxsentry
+      TAXSENTRY_TEST_S3_ACCESS_KEY: integration-access-key
+      TAXSENTRY_TEST_S3_SECRET_KEY: integration-minio-secret-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked --extra dev --extra distributed
+      - name: Validate production Compose contract and images
+        env:
+          TAXSENTRY_SECRET_DIR: /tmp/taxsentry-production-secrets
+        run: |
+          uv run python scripts/validate_production_deploy.py
+          docker compose -f deploy/compose.production.json config --quiet
+          docker compose -f deploy/compose.production.json build worker minio
+      - name: Start coordinator services
+        run: >-
+          docker compose -f deploy/compose.yml up -d --build
+          --wait --wait-timeout 180 postgres minio
+      - name: Validate queue, object store, and expired-lease recovery
+        env:
+          TAXSENTRY_TEST_LEASE_RECOVERY: "1"
+        run: >-
+          uv run pytest -q
+          tests/test_data_plane_integration.py::test_postgres_queue_lease_retry_checkpoint_and_resume
+          tests/test_data_plane_integration.py::test_postgres_agent_memory_and_sessions_are_company_scoped_and_forgettable
+          tests/test_data_plane_integration.py::test_minio_round_trip
+          tests/test_data_plane_integration.py::test_postgres_expired_lease_resumes_from_checkpoint
+      - name: Start three document workers
+        run: >-
+          docker compose -f deploy/compose.yml up -d --build
+          --wait --wait-timeout 180 --scale worker=3 worker
+      - name: Verify three worker replicas are running
+        run: >-
+          test "$(docker compose -f deploy/compose.yml
+          ps --status running -q worker | wc -l)" -eq 3
+      - name: Validate distributed document and migration round trips
+        run: >-
+          uv run pytest -q
+          tests/test_data_plane_integration.py::test_distributed_document_worker_round_trip
+          tests/test_data_plane_integration.py::test_live_sqlite_migration_is_additive_idempotent_and_preserves_source
+      - name: Show service logs
+        if: failure()
+        run: docker compose -f deploy/compose.yml logs --no-color
+      - name: Stop coordinator services
+        if: always()
+        run: docker compose -f deploy/compose.yml down -v
 
   npm:
     name: ${{ matrix.os }} / npm launcher / node-24

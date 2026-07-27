@@ -1,0 +1,22 @@
+[
+  {"id": "cfo-growth", "category": "cfo", "metrics": {"revenue": 100, "revenue_previous": 80}, "expected_metric": "revenue_growth", "expected_value": 0.25},
+  {"id": "cfo-gross-margin", "category": "cfo", "metrics": {"revenue": 100, "gross_profit": 40}, "expected_metric": "gross_margin", "expected_value": 0.4},
+  {"id": "cfo-net-margin", "category": "cfo", "metrics": {"revenue": 100, "net_income": 15}, "expected_metric": "net_margin", "expected_value": 0.15},
+  {"id": "cfo-opex-ratio", "category": "cfo", "metrics": {"revenue": 100, "total_opex": 25}, "expected_metric": "opex_ratio", "expected_value": 0.25},
+  {"id": "cfo-budget", "category": "cfo", "metrics": {"revenue": 90, "revenue_budget": 100}, "expected_metric": "revenue_budget_variance", "expected_value": -0.1},
+  {"id": "cfo-scenario", "category": "cfo", "metrics": {"revenue": 100, "cogs": 60, "total_opex": 20, "ebt": 20, "tax_expense": 4}, "expected_metric": "scenario_base_net", "expected_value": 16},
+
+  {"id": "tax-high-risk", "category": "tax", "risk": "high", "legal_verified": true, "expected_review": true},
+  {"id": "tax-medium-risk", "category": "tax", "risk": "medium", "legal_verified": true, "expected_review": false},
+  {"id": "tax-stale-source", "category": "tax", "risk": "medium", "legal_verified": false, "expected_review": true},
+  {"id": "tax-current-source", "category": "tax", "risk": "low", "legal_verified": true, "expected_review": false},
+  {"id": "tax-material-missing", "category": "tax", "risk": "low", "legal_verified": true, "material_missing": true, "expected_review": true},
+  {"id": "tax-nonmaterial-missing", "category": "tax", "risk": "low", "legal_verified": true, "material_missing": false, "expected_review": false},
+
+  {"id": "mixed-impact-threshold", "category": "mixed", "revenue": 100, "impact": 5, "confidence": 0.9, "expected_review": true},
+  {"id": "mixed-impact-below", "category": "mixed", "revenue": 100, "impact": 4.99, "confidence": 0.9, "expected_review": false},
+  {"id": "mixed-no-revenue", "category": "mixed", "revenue": null, "impact": null, "confidence": 0.9, "expected_review": true},
+  {"id": "mixed-low-confidence", "category": "mixed", "revenue": 100, "impact": null, "confidence": 0.69, "expected_review": true},
+  {"id": "mixed-good-confidence", "category": "mixed", "revenue": 100, "impact": null, "confidence": 0.7, "expected_review": false},
+  {"id": "mixed-high-priority-only", "category": "mixed", "revenue": 100, "impact": null, "confidence": 0.9, "priority": "high", "expected_review": false}
+]

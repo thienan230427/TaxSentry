@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taxsentry-agent"
-version = "2.0.12"
+version = "3.0.0"
 description = "Python-first AI agent for Vietnamese business and tax reporting workflows"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -18,7 +18,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build>=1.2", "pytest>=8.0", "pytest-asyncio>=0.25", "ruff>=0.9"]
+dev = ["build==1.5.0", "pytest>=8.0", "pytest-asyncio>=0.25", "ruff>=0.9"]
+distributed = ["psycopg[binary]==3.3.4", "boto3==1.43.51"]
 
 [project.scripts]
 taxsentry = "taxsentry.tui:main"
@@ -27,10 +28,16 @@ taxsentry = "taxsentry.tui:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-taxsentry = ["knowledge_base/*.md"]
+taxsentry = [
+  "knowledge_base/*.md",
+  "knowledge_base/*.json",
+  "knowledge_base/jurisdictions/*/*/*",
+  "knowledge_base/jurisdictions/*/*/*/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff]
 target-version = "py311"

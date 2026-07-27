@@ -10,32 +10,95 @@ from typing import Any
 
 from . import __version__
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 APP_HOME = Path(os.getenv("TAXSENTRY_HOME", Path.home() / ".taxsentry"))
 CONFIG_FILE = Path(os.getenv("TAXSENTRY_CONFIG_FILE", APP_HOME / "config.json"))
 MEMORY_DB = Path(os.getenv("TAXSENTRY_MEMORY_DB", APP_HOME / "taxsentry.db"))
+AGENTS_FILE = Path(os.getenv("TAXSENTRY_AGENTS_FILE", PROJECT_ROOT / "AGENTS.md"))
 SESSION_FILE = APP_HOME / "sessions.jsonl"
-LOGS_DIR, RUNTIME_DIR, DOWNLOAD_DIR, OUTPUT_DIR = APP_HOME / "logs", APP_HOME / "run", APP_HOME / "downloads", APP_HOME / "outputs"
+SOUL_FILE, USER_FILE, CURATED_MEMORY_FILE = APP_HOME / "SOUL.md", APP_HOME / "USER.md", APP_HOME / "MEMORY.md"
+COMPANIES_DIR, SKILLS_DIR = APP_HOME / "companies", APP_HOME / "skills"
+LOGS_DIR, RUNTIME_DIR, DOWNLOAD_DIR, OUTPUT_DIR = (
+    APP_HOME / "logs",
+    APP_HOME / "run",
+    APP_HOME / "downloads",
+    APP_HOME / "outputs",
+)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "version": __version__, "configured": False,
-    "agent": {"name": "TaxSentry", "persona": "precise and practical", "language": "vi", "memory_enabled": True},
+    "agent": {
+        "name": "TaxSentry",
+        "persona": "precise and practical",
+        "language": "vi",
+        "memory_enabled": True,
+        "company_id": "default",
+    },
     "provider": {"kind": "lmstudio", "model": "", "lmstudio_base_url": "http://127.0.0.1:1234/v1", "base_url": "http://127.0.0.1:1234/v1", "api_key": "", "auth_mode": "lmstudio"},
     "gmail": {"enabled": True, "account": "", "process_after_uid": None, "process_after_uids": {}, "mailbox_scope": "all"},
     "director": {"telegram_chat_ids": []},
     "telegram": {"enabled": False},
-    "worker": {"poll_seconds": 30, "max_retries": 3, "max_attachment_mb": 100, "imap_timeout_seconds": 30, "delivery_timeout_seconds": 90, "analysis_timeout_seconds": 300, "extraction_timeout_seconds": 600},
+    "worker": {"poll_seconds": 30, "max_retries": 3, "max_attachment_mb": 500, "imap_timeout_seconds": 30, "delivery_timeout_seconds": 90, "analysis_timeout_seconds": 300, "extraction_timeout_seconds": 7200},
     "update": {"source": "git+https://github.com/thienan230427/TaxSentry.git"},
     "report": {"language": "vi", "minimum_confidence": 0.70},
     "ocr": {"languages": ["vie", "eng"], "minimum_confidence": 70.0},
-    "memory": {"max_facts": 50, "max_turns": 12, "session_title": "TaxSentry session"},
+    "memory": {
+        "max_facts": 50,
+        "max_turns": 12,
+        "session_title": "TaxSentry session",
+        "retention_days": 90,
+        "context_window_chars": 80_000,
+        "soft_context_ratio": 0.55,
+        "hard_context_ratio": 0.80,
+    },
     "jobs": {"tracking_enabled": True, "retry_limit": 3, "default_state": "queued", "needs_human_review_on_missing_data": True, "auto_send_email": True, "auto_send_telegram": True},
-    "artifacts": {"output_dir": str(OUTPUT_DIR), "auto_send_telegram": True, "templates": {"docx": "", "xlsx": "", "pptx": ""}},
+    "documents": {"max_case_mb": 500, "excel_rows_per_unit": 250},
+    "data_plane": {
+        "enabled": False,
+        "postgres_dsn": "",
+        "object_store": {
+            "kind": "local",
+            "root": str(APP_HOME / "objects"),
+            "endpoint_url": "",
+            "bucket": "taxsentry",
+        },
+    },
+    "artifacts": {"output_dir": str(OUTPUT_DIR), "theme": "taxsentry", "auto_send_telegram": True, "templates": {"docx": "", "xlsx": "", "pptx": ""}},
+    "skills": {"catalogs": [], "require_signatures": True},
+    "advisor": {
+        "company": {
+            "id": "default",
+            "name": "",
+            "country_code": "VN",
+            "industry": "",
+            "business_model": "",
+            "fiscal_year_start": "01/01",
+            "reporting_cycle": "monthly",
+            "currency": "VND",
+            "materiality_ratio": 0.05,
+            "objectives": [],
+        },
+        "knowledge": {
+            "auto_refresh": True,
+            "refresh_days": 7,
+            "legal_stale_days": 30,
+            "benchmark_max_age_months": 24,
+        },
+    },
     "ui": {"theme": "sentinel", "language": "vi", "show_banner": True}, "extra_env": {},
 }
 
 
 def ensure_directories() -> None:
-    for path in (APP_HOME, LOGS_DIR, RUNTIME_DIR, DOWNLOAD_DIR):
+    for path in (
+        APP_HOME,
+        LOGS_DIR,
+        RUNTIME_DIR,
+        DOWNLOAD_DIR,
+        OUTPUT_DIR,
+        COMPANIES_DIR,
+        SKILLS_DIR,
+    ):
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -63,7 +126,18 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
 
 def get_empty_config() -> dict[str, Any]:
     config = deepcopy(DEFAULT_SETTINGS)
-    config["paths"] = {"home": str(APP_HOME), "config": str(CONFIG_FILE), "memory_db": str(MEMORY_DB), "session_file": str(SESSION_FILE)}
+    config["paths"] = {
+        "home": str(APP_HOME),
+        "config": str(CONFIG_FILE),
+        "memory_db": str(MEMORY_DB),
+        "session_file": str(SESSION_FILE),
+        "agents": str(AGENTS_FILE),
+        "soul": str(SOUL_FILE),
+        "user": str(USER_FILE),
+        "memory": str(CURATED_MEMORY_FILE),
+        "companies": str(COMPANIES_DIR),
+        "skills": str(SKILLS_DIR),
+    }
     return config
 
 

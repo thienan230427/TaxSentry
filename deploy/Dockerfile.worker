@@ -1,0 +1,33 @@
+FROM python:3.12.11-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONUTF8=1 \
+    PYTHONIOENCODING=utf-8 \
+    TAXSENTRY_OFFICE_SANDBOX=1 \
+    TAXSENTRY_OFFICE_NETWORK_ISOLATED=1
+
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        libreoffice-calc \
+        libreoffice-impress \
+        libreoffice-writer \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-vie \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 taxsentry \
+    && mkdir /work \
+    && chown taxsentry:taxsentry /work
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY scripts/worker_entrypoint.py /usr/local/bin/taxsentry-worker
+RUN python -m pip install --no-cache-dir . \
+    "psycopg[binary]==3.3.4" \
+    "boto3==1.43.51" \
+    && chmod 0555 /usr/local/bin/taxsentry-worker
+
+USER taxsentry
+WORKDIR /work
+CMD ["python", "/usr/local/bin/taxsentry-worker"]

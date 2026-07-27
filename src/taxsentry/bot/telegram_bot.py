@@ -8,14 +8,30 @@ from pathlib import Path
 
 from taxsentry.artifacts import ArtifactService, detect_artifact_kind
 from taxsentry.chat_service import ChatService
-from taxsentry.config import load_config
+from taxsentry.config import load_config, save_config
 from taxsentry.events import EventType
 from taxsentry.gmail import GmailMessage, natural_gmail_query
+from taxsentry.knowledge import KnowledgeBase
 from taxsentry.secrets import get_secret
-from taxsentry.store import JobStore
 from taxsentry.workflow import TaxSentryWorkflow
 
-COMMANDS = ("status", "jobs", "report", "retry", "approve", "gmail", "create", "cancel")
+COMMANDS = (
+    "status",
+    "jobs",
+    "report",
+    "retry",
+    "approve",
+    "gmail",
+    "create",
+    "cancel",
+    "profile",
+    "knowledge",
+    "new",
+    "resume",
+    "sessions",
+    "forget",
+    "agent",
+)
 
 
 def _allowed(update, settings) -> bool:
@@ -32,7 +48,7 @@ def build_application(
     from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
     settings = load_config()
-    store = workflow.store if workflow else JobStore()
+    store = workflow.store if workflow else chat.store
     token = get_secret("telegram:bot-token")
     if not token:
         raise RuntimeError("Run `taxsentry auth telegram` first")
@@ -45,15 +61,15 @@ def build_application(
 
     async def status(update, context):
         if _allowed(update, settings):
-            jobs = store.recent_jobs(5)
+            jobs = store.recent_jobs(5, company_id=chat.company_id)
             await update.message.reply_text("\n".join(f"{j['id'][:8]} · {j['state']} · {j['subject']}" for j in jobs) or "Chưa có job.")
 
     async def report(update, context):
         if not _allowed(update, settings):
             return
-        item = store.latest_report()
+        item = store.latest_report(company_id=chat.company_id)
         if not item or not item.get("pdf_path") or not Path(item["pdf_path"]).exists():
-            await update.message.reply_text("Chưa có PDF.")
+            await update.message.reply_text("Chưa có tài liệu.")
             return
         with Path(item["pdf_path"]).open("rb") as file:
             await update.message.reply_document(file, filename=Path(item["pdf_path"]).name)
@@ -61,12 +77,18 @@ def build_application(
     async def change_job(update, context, action):
         if not _allowed(update, settings):
             return
-        job = store.resolve(context.args[0] if context.args else "")
+        job = store.resolve(
+            context.args[0] if context.args else "",
+            company_id=chat.company_id,
+        )
         if not job:
             await update.message.reply_text("Không tìm thấy job.")
             return
         try:
-            store.requeue(job["id"], approved=action == "approve")
+            if action == "approve" and workflow:
+                await workflow.approve(job["id"])
+            else:
+                store.requeue(job["id"], approved=action == "approve")
         except ValueError as exc:
             await update.message.reply_text(str(exc))
             return
@@ -81,7 +103,10 @@ def build_application(
     async def cancel(update, context):
         if not _allowed(update, settings) or not workflow:
             return
-        job = store.resolve(context.args[0] if context.args else "")
+        job = store.resolve(
+            context.args[0] if context.args else "",
+            company_id=chat.company_id,
+        )
         if not job:
             await update.message.reply_text("Không tìm thấy job.")
             return
@@ -115,14 +140,118 @@ def build_application(
         if not _allowed(update, settings) or not artifacts:
             return
         kind = context.args[0] if context.args else ""
-        request = " ".join(context.args[1:]).strip()
-        if not detect_artifact_kind(kind) or not request:
-            await update.message.reply_text("Dùng: /create <docx|xlsx|pptx|pdf> <yêu cầu>")
+        detected = detect_artifact_kind(kind)
+        request = " ".join(context.args[1:] if detected else context.args).strip()
+        if not request:
+            await update.message.reply_text("Dùng: /create [docx|xlsx|pptx|pdf] <yêu cầu>")
             return
         request_id = uuid.uuid4().hex[:8]
         await update.message.reply_text(f"Đã nhận · request {request_id}")
         messages = pending.get(str(update.effective_chat.id), []) if re.search(r"\bgmail\b|hòm thư", request, re.IGNORECASE) else []
-        _start(tasks, _create_artifact(artifacts, kind, request, messages, update, request_id))
+        _start(tasks, _create_artifact(artifacts, detected, request, messages, update, request_id))
+
+    async def profile(update, context):
+        if not _allowed(update, settings):
+            return
+        company = settings.setdefault("advisor", {}).setdefault("company", {})
+        if not context.args or context.args[0].casefold() == "show":
+            await update.message.reply_text(
+                "\n".join(f"{key}: {value if value not in ('', []) else 'chưa cấu hình'}" for key, value in company.items())
+            )
+            return
+        if len(context.args) < 3 or context.args[0].casefold() != "set":
+            await update.message.reply_text("Dùng: /profile set <field> <value>")
+            return
+        field, raw = context.args[1], " ".join(context.args[2:]).strip()
+        if field not in {"name", "industry", "business_model", "fiscal_year_start", "reporting_cycle", "currency", "materiality_ratio", "objectives"}:
+            await update.message.reply_text("Trường hồ sơ không hợp lệ.")
+            return
+        if field == "materiality_ratio":
+            try:
+                value = float(raw.replace(",", "."))
+            except ValueError:
+                await update.message.reply_text("materiality_ratio phải là số.")
+                return
+            if not 0 < value <= 1:
+                await update.message.reply_text("materiality_ratio phải nằm trong (0, 1].")
+                return
+        elif field == "objectives":
+            value = [item.strip() for item in raw.split(",") if item.strip()]
+        else:
+            value = raw
+        company[field] = value
+        save_config(settings)
+        await update.message.reply_text(f"Đã cập nhật {field}.")
+
+    async def knowledge(update, context):
+        if not _allowed(update, settings):
+            return
+        service = KnowledgeBase(settings)
+        action = context.args[0].casefold() if context.args else "status"
+        result = await asyncio.to_thread(service.refresh) if action == "refresh" else service.status()
+        await update.message.reply_text(
+            f"Tri thức: {'cũ/chưa xác minh' if result['stale'] else 'đã xác minh'}\n"
+            f"Nguồn: {result['verified_sources']}/{result['total_sources']}\n"
+            f"Kiểm tra gần nhất: {result['verified_at'] or 'chưa có'}"
+        )
+
+    async def new(update, context):
+        if _allowed(update, settings):
+            session_id = chat.new_session()
+            await update.message.reply_text(f"Đã mở session mới {session_id}.")
+
+    async def resume(update, context):
+        if not _allowed(update, settings):
+            return
+        if not context.args:
+            await update.message.reply_text("Dùng: /resume <session-id>")
+            return
+        try:
+            chat.resume_session(context.args[0])
+            await update.message.reply_text(
+                f"Đã khôi phục session {context.args[0]}."
+            )
+        except (KeyError, PermissionError) as exc:
+            await update.message.reply_text(f"Không thể khôi phục session: {exc}")
+
+    async def sessions(update, context):
+        if not _allowed(update, settings):
+            return
+        rows = chat.search_sessions(" ".join(context.args))
+        await update.message.reply_text(
+            "\n".join(
+                f"{item['id']} · {item.get('updated_at', '')} · "
+                f"{item.get('summary') or 'chưa có summary'}"
+                for item in rows
+            )
+            or "Không tìm thấy session."
+        )
+
+    async def forget(update, context):
+        if not _allowed(update, settings):
+            return
+        if not context.args:
+            await update.message.reply_text("Dùng: /forget <memory-id>")
+            return
+        forgotten = chat.memory.forget(
+            context.args[0], company_id=chat.company_id
+        )
+        await update.message.reply_text(
+            "Đã quên memory."
+            if forgotten
+            else "Không tìm thấy memory trong doanh nghiệp hiện tại."
+        )
+
+    async def agent(update, context):
+        if not _allowed(update, settings):
+            return
+        if context.args and context.args[0].casefold() == "reload":
+            digest = chat.reload_prompt()
+            await update.message.reply_text(
+                f"Đã nạp lại identity/memory · {digest[:12]}."
+            )
+        else:
+            await update.message.reply_text("Dùng: /agent reload")
 
     async def chat_message(update, context):
         if not _allowed(update, settings):
@@ -131,7 +260,14 @@ def build_application(
         if notify:
             notify(f"◇ TELEGRAM · {chat_id} › {text}")
         kind = detect_artifact_kind(text)
-        if kind and re.search(r"\b(tạo|viết|xuất|làm|create|make|export)\b", text, re.IGNORECASE):
+        wants_artifact = bool(kind) or bool(
+            re.search(
+                r"\b(tạo|viết|xuất|làm|create|make|export)\b.*\b(báo cáo|tài liệu|report|document|file)\b",
+                text,
+                re.IGNORECASE,
+            )
+        )
+        if wants_artifact:
             if re.search(r"\bgmail\b|hòm thư", text, re.IGNORECASE):
                 await update.message.reply_text("Đã nhận · đang tìm nguồn Gmail để Sếp xác nhận…")
                 messages = await asyncio.wait_for(asyncio.to_thread(workflow.gmail.search, natural_gmail_query(text), 20), timeout=30) if workflow else []
@@ -157,7 +293,24 @@ def build_application(
         for start in range(0, len(answer), 4096):
             await update.message.reply_text(answer[start:start + 4096])
 
-    for name, handler in zip(COMMANDS, (status, status, report, retry, approve, gmail, create, cancel), strict=True):
+    handlers = (
+        status,
+        status,
+        report,
+        retry,
+        approve,
+        gmail,
+        create,
+        cancel,
+        profile,
+        knowledge,
+        new,
+        resume,
+        sessions,
+        forget,
+        agent,
+    )
+    for name, handler in zip(COMMANDS, handlers, strict=True):
         app.add_handler(CommandHandler(name, handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_message))
     return app
@@ -194,9 +347,11 @@ async def _create_artifact(artifacts: ArtifactService | None, kind: str, request
     if not artifacts:
         return
     try:
-        source = await artifacts.source_text(messages=messages) if messages else ""
-        path = await artifacts.create(kind, request, source_text=source)
-        await update.message.reply_text(f"Request {request_id} hoàn tất · {path.name}")
+        source = await artifacts.source(messages=messages) if messages else None
+        bundle = await artifacts.create_bundle(request, kind=kind, source=source)
+        names = ", ".join(path.name for path in bundle.files)
+        review = " · cần kiểm tra" if bundle.needs_review else ""
+        await update.message.reply_text(f"Request {request_id} hoàn tất · {names}{review}")
     except Exception as exc:
         await update.message.reply_text(f"Request {request_id} lỗi: {exc}")
 

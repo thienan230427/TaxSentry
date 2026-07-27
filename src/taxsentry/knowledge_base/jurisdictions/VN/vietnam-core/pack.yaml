@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "vietnam-core",
+  "country_code": "VN",
+  "name": "Vietnam Tax and Accounting",
+  "version": "1.0.0",
+  "languages": [
+    "vi",
+    "en"
+  ],
+  "currency": "VND",
+  "domains": [
+    "corporate_income_tax",
+    "tax_administration",
+    "accounting"
+  ],
+  "effective_from": "2026-07-01",
+  "verification": {
+    "verified": true,
+    "verified_at": "2026-07-26T00:00:00+07:00",
+    "method": "migrated-from-taxsentry-2-official-source-registry"
+  },
+  "freshness_days": 30,
+  "official_domains": [
+    "vanban.chinhphu.vn"
+  ],
+  "citation_rules": {
+    "legal_claims": "official_source_required",
+    "locator": "url_or_pack_section"
+  },
+  "refresh_policy": {
+    "mode": "official_allowlist",
+    "days": 7
+  },
+  "signature": "bundled-wheel-trust",
+  "minimum_taxsentry_version": "3.0.0",
+  "content": {
+    "rules": "references/tax_rules_vietnam.md",
+    "sources": "sources/knowledge_sources.json"
+  },
+  "content_checksum": "cd7f5722d911f41b7ca95b51611ff2153ece0522008ff791b735bd52b8c1fc58"
+}

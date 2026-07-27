@@ -1,0 +1,101 @@
+name: taxsentry-v3
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.2-pg16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-taxsentry}
+      POSTGRES_USER: ${POSTGRES_USER:-taxsentry}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    ports:
+      - "${TAXSENTRY_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+      - host-access
+
+  minio:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+    ports:
+      - "${TAXSENTRY_BIND_HOST:-127.0.0.1}:${MINIO_PORT:-9000}:9000"
+      - "${TAXSENTRY_BIND_HOST:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/minio-entrypoint", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+      - host-access
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      TAXSENTRY_POSTGRES_HOST: postgres
+      TAXSENTRY_POSTGRES_PORT: "5432"
+      TAXSENTRY_POSTGRES_DB: ${POSTGRES_DB:-taxsentry}
+      TAXSENTRY_POSTGRES_USER: ${POSTGRES_USER:-taxsentry}
+      TAXSENTRY_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TAXSENTRY_POSTGRES_SSLMODE: disable
+      TAXSENTRY_JOB_HANDLER: ${TAXSENTRY_JOB_HANDLER:-taxsentry.data_plane.document_worker:handle_document_job}
+      TAXSENTRY_LEASE_SECONDS: ${TAXSENTRY_LEASE_SECONDS:-60}
+      TAXSENTRY_POLL_SECONDS: ${TAXSENTRY_POLL_SECONDS:-2}
+      TAXSENTRY_S3_ENDPOINT: http://minio:9000
+      TAXSENTRY_S3_BUCKET: ${TAXSENTRY_S3_BUCKET:-taxsentry}
+      TAXSENTRY_S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      TAXSENTRY_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      TAXSENTRY_S3_ALLOW_INSECURE: "true"
+    deploy:
+      resources:
+        limits:
+          cpus: "${TAXSENTRY_WORKER_CPUS:-2}"
+          memory: ${TAXSENTRY_WORKER_MEMORY:-4G}
+          pids: 512
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    volumes:
+      - /work
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+volumes:
+  postgres-data:
+  minio-data:
+
+networks:
+  backend:
+    internal: true
+  host-access:
+    driver: bridge

@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 
+import pytest
+
 from taxsentry import config as config_module
 from taxsentry.config import DEFAULT_SETTINGS
-from taxsentry.reporting import REPORT_SCHEMA, parse_report
+from taxsentry.reporting import REPORT_SCHEMA, normalize_report, parse_report
 from taxsentry.store import JobStore
 
 
@@ -57,18 +59,89 @@ def test_store_deduplicates_gmail_messages_and_tracks_state(tmp_path):
     assert store.get(job["id"])["state"] == "extracting"
 
 
+def test_job_and_report_queries_are_company_scoped(tmp_path):
+    store = JobStore(tmp_path / "companies.db")
+    alpha = store.create_job(
+        "gmail-shared",
+        "alpha@example.test",
+        company_id="alpha",
+    )
+    beta = store.create_job(
+        "gmail-shared",
+        "beta@example.test",
+        company_id="beta",
+    )
+    assert alpha and beta
+    store.report(alpha["id"], {"company": "alpha"}, 1.0)
+    store.report(beta["id"], {"company": "beta"}, 1.0)
+
+    assert store.by_message("gmail-shared", company_id="alpha")["id"] == alpha["id"]
+    assert store.by_message("gmail-shared", company_id="beta")["id"] == beta["id"]
+    assert store.resolve(company_id="alpha")["id"] == alpha["id"]
+    assert [job["id"] for job in store.recent_jobs(company_id="beta")] == [
+        beta["id"]
+    ]
+    assert store.latest_report(company_id="alpha")["payload"]["company"] == "alpha"
+    assert store.state_counts(company_id="alpha")["queued"] == 1
+
+
 def test_report_schema_requires_all_business_sections():
     payload = {
         "executive_summary": "Doanh thu tăng nhưng biên lợi nhuận giảm.",
         "performance": [], "tax_risks": [], "missing_data": [], "recommendations": [], "confidence": 0.82,
     }
     assert parse_report(json.dumps(payload))["confidence"] == 0.82
+    assert normalize_report(payload)["schema_version"] == 2
 
 
 def test_report_schema_is_strict_at_every_object_level():
     assert REPORT_SCHEMA["additionalProperties"] is False
-    for name in ("performance", "tax_risks", "recommendations"):
+    for name in ("metrics", "findings", "tax_risks", "recommendations", "sources"):
         assert REPORT_SCHEMA["properties"][name]["items"]["additionalProperties"] is False
+
+
+def test_report_parser_rejects_formatted_financial_strings_and_unknown_fields():
+    report = normalize_report(
+        {
+            "executive_summary": "Test",
+            "performance": [],
+            "tax_risks": [],
+            "missing_data": [],
+            "recommendations": [],
+            "confidence": 0.9,
+        }
+    )
+    report.pop("confidence")
+    report["metrics"] = [
+        {
+            "id": "revenue",
+            "label": "Doanh thu",
+            "current": "120.000.000 VND",
+            "previous": None,
+            "budget": None,
+            "benchmark": None,
+            "unit": "VND",
+            "source_ids": ["input:1"],
+            "assessment": "",
+        }
+    ]
+    report["sources"] = [
+        {
+            "id": "input:1",
+            "kind": "file",
+            "title": "data.xlsx",
+            "locator": "data.xlsx",
+            "fetched_at": "",
+            "effective_from": "",
+            "verified_current": True,
+        }
+    ]
+    with pytest.raises(ValueError, match="must be number or null"):
+        parse_report(json.dumps(report))
+    report["metrics"][0]["current"] = 120_000_000
+    report["unexpected"] = True
+    with pytest.raises(ValueError, match="unknown fields"):
+        parse_report(json.dumps(report))
 
 
 def test_automatic_retry_keeps_its_budget(tmp_path):
