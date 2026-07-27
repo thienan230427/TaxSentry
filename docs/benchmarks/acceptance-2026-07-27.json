@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "profile": "acceptance",
+  "generated_at": "2026-07-26T17:14:58.813945+00:00",
+  "settings": {
+    "xlsx_sheets": 100,
+    "xlsx_rows_per_sheet": 10000,
+    "pdf_pages": 1000,
+    "pdf_scan_every": 10,
+    "pptx_slides": 500,
+    "docx_paragraphs": 2000,
+    "docx_table_rows": 200,
+    "target_case_mb": 497
+  },
+  "documents": [
+    {
+      "name": "xlsx",
+      "path": "/tmp/taxsentry-acceptance-benchmark-hptbpuar/fixtures/large.xlsx",
+      "size_bytes": 521141936,
+      "generation_seconds": 12.508826,
+      "ingest_seconds": 25.879382,
+      "coverage": {
+        "total": 4101,
+        "processed": 4101,
+        "failed": 0,
+        "skipped": 0,
+        "failed_units": [],
+        "warnings": [
+          "Workbook contains formulas without cached values"
+        ]
+      },
+      "observed_units": {
+        "sheet_rows": 4100,
+        "workbook": 1
+      },
+      "expected_minimum_units": {
+        "workbook": 1,
+        "sheet_rows": 4100
+      },
+      "missing_units": {},
+      "no_silent_unit_loss": true,
+      "metadata": {
+        "sheets": 100,
+        "data_rows": 1000000,
+        "total_rows_including_headers": 1000100
+      },
+      "document_id": "86a7ae47e68eab9380a4c0acdb62ed6d"
+    },
+    {
+      "name": "pdf",
+      "path": "/tmp/taxsentry-acceptance-benchmark-hptbpuar/fixtures/large.pdf",
+      "size_bytes": 611505,
+      "generation_seconds": 0.227889,
+      "ingest_seconds": 57.259799,
+      "coverage": {
+        "total": 1000,
+        "processed": 1000,
+        "failed": 0,
+        "skipped": 0,
+        "failed_units": [],
+        "warnings": []
+      },
+      "observed_units": {
+        "page": 1000
+      },
+      "expected_minimum_units": {
+        "page": 1000
+      },
+      "missing_units": {},
+      "no_silent_unit_loss": true,
+      "metadata": {
+        "pages": 1000,
+        "text_pages": 900,
+        "simulated_scan_pages": 100
+      },
+      "document_id": "faf5774a1d3ff64f3a306a9bdb6ecf09"
+    },
+    {
+      "name": "pptx",
+      "path": "/tmp/taxsentry-acceptance-benchmark-hptbpuar/fixtures/large.pptx",
+      "size_bytes": 433948,
+      "generation_seconds": 0.469106,
+      "ingest_seconds": 1.922927,
+      "coverage": {
+        "total": 502,
+        "processed": 502,
+        "failed": 0,
+        "skipped": 0,
+        "failed_units": [],
+        "warnings": []
+      },
+      "observed_units": {
+        "slide": 500,
+        "slide_master": 1,
+        "theme": 1
+      },
+      "expected_minimum_units": {
+        "slide": 500
+      },
+      "missing_units": {},
+      "no_silent_unit_loss": true,
+      "metadata": {
+        "slides": 500
+      },
+      "document_id": "3904d465b7ded004b520fc14dd5ed721"
+    },
+    {
+      "name": "docx",
+      "path": "/tmp/taxsentry-acceptance-benchmark-hptbpuar/fixtures/large.docx",
+      "size_bytes": 46343,
+      "generation_seconds": 0.13241,
+      "ingest_seconds": 0.029241,
+      "coverage": {
+        "total": 2006,
+        "processed": 2006,
+        "failed": 0,
+        "skipped": 0,
+        "failed_units": [],
+        "warnings": []
+      },
+      "observed_units": {
+        "comment": 2,
+        "footer": 1,
+        "header": 1,
+        "paragraph": 2001,
+        "table": 1
+      },
+      "expected_minimum_units": {
+        "paragraph": 2001,
+        "table": 1,
+        "header": 1,
+        "footer": 1,
+        "comment": 1
+      },
+      "missing_units": {},
+      "no_silent_unit_loss": true,
+      "metadata": {
+        "paragraphs": 2001,
+        "table_rows": 201,
+        "comment_supported": true
+      },
+      "document_id": "3cb3bcb9bd33d8f818e215e59bce3da9"
+    }
+  ],
+  "case": {
+    "id": "benchmark-acceptance",
+    "document_ids": [
+      "86a7ae47e68eab9380a4c0acdb62ed6d",
+      "faf5774a1d3ff64f3a306a9bdb6ecf09",
+      "3904d465b7ded004b520fc14dd5ed721",
+      "3cb3bcb9bd33d8f818e215e59bce3da9"
+    ],
+    "size_bytes": 522233732,
+    "ingest_seconds": 69.480318,
+    "coverage": {
+      "total": 7609,
+      "processed": 7609,
+      "failed": 0,
+      "skipped": 0,
+      "complete": true
+    }
+  },
+  "passed": true
+}
