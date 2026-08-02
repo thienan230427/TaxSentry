@@ -41,6 +41,37 @@ def test_xlsx_extraction_prefers_current_period_and_net_revenue(tmp_path):
     assert data["income_statement"]["T5_Actual"] == {}
 
 
+def test_xlsx_resolver_keeps_statement_period_and_rejects_decoys(tmp_path):
+    path = tmp_path / "anthropic-like.xlsx"
+    workbook = Workbook()
+    statement = workbook.active
+    statement.title = "03_KQKD"
+    statement.append(["Chỉ tiêu", "FY2025A", "FY2026E"])
+    statement.append(["Đơn vị: USD billion", None, None])
+    statement.append(["Doanh thu", 40, 43.5])
+    statement.append(["Giá vốn", -20, -25.407])
+    statement.append(["Lợi nhuận gộp", 20, 18.093])
+    statement.append(["Lợi nhuận trước thuế", -8, -10.423])
+    statement.append(["Lợi nhuận sau thuế", -8, -10.423])
+    statement.append(["Net debt", -28, -28])
+    statement.append(["COGS %", -0.584, -0.584])
+    scenario = workbook.create_sheet("07_Kich_ban")
+    scenario.append(["Metric", "Base", "Bull"])
+    scenario.append(["Revenue", 43.5, 52])
+    valuation = workbook.create_sheet("Valuation")
+    valuation.append(["Revenue multiple", 10])
+    workbook.save(path)
+
+    metrics = extract(path, ["vie", "eng"]).content["data"]["canonical_metrics"]
+    assert metrics["revenue"]["value"] == 43.5
+    assert metrics["revenue"]["source_type"] == "income_statement"
+    assert metrics["revenue"]["currency"] == "USD"
+    assert metrics["revenue"]["scale_multiplier"] == "1000000000"
+    assert metrics["net_income"]["value"] == -10.423
+    assert metrics["ebt"]["value"] == -10.423
+    assert metrics["cogs"]["value"] == -25.407
+
+
 @pytest.mark.skipif(not shutil.which("tesseract"), reason="Tesseract is a system prerequisite")
 def test_real_image_ocr(tmp_path):
     path = tmp_path / "scan.png"

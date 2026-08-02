@@ -2,7 +2,7 @@ import asyncio
 import json
 
 from taxsentry.events import EventType
-from taxsentry.providers import CodexAppServerProvider, _codex_command
+from taxsentry.providers import CODEX_JSONL_LIMIT, CodexAppServerProvider, ProviderError, _codex_command
 
 
 class _Reader:
@@ -52,6 +52,32 @@ def test_codex_jsonl_stream_contract():
     assert [event.type for event in events] == [EventType.TEXT_DELTA, EventType.TURN_COMPLETED]
 
 
+def test_codex_reads_large_jsonl_event_without_64k_truncation():
+    provider = CodexAppServerProvider()
+    provider.process = _Process([
+        {"id": 1, "result": {"turn": {"id": "turn_1"}, "payload": "x" * (200 * 1024)}},
+    ])
+
+    result = asyncio.run(provider._request("turn/start", {}))
+    assert len(result["payload"]) == 200 * 1024
+
+
+def test_codex_reports_jsonl_limit_with_stage():
+    class OversizeReader:
+        async def readline(self):
+            raise ValueError("Separator is found, but chunk is longer than limit")
+
+    provider = CodexAppServerProvider()
+    provider.process = _Process([])
+    provider.process.stdout = OversizeReader()
+    try:
+        asyncio.run(provider._request("turn/start", {}))
+    except ProviderError as exc:
+        assert str(CODEX_JSONL_LIMIT) in str(exc) and "turn/start" in str(exc)
+    else:
+        raise AssertionError("oversize JSONL should be a deterministic provider error")
+
+
 def test_codex_thread_uses_current_read_only_variant():
     provider = CodexAppServerProvider()
     provider.process = _Process([
@@ -99,6 +125,7 @@ def test_codex_uses_isolated_home(monkeypatch, tmp_path):
     provider = CodexAppServerProvider()
     asyncio.run(provider.start())
     assert captured["env"]["CODEX_HOME"] == str(tmp_path / "codex")
+    assert captured["limit"] == CODEX_JSONL_LIMIT
     assert provider.codex_home == str(tmp_path / "codex")
 
 

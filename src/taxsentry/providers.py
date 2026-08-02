@@ -17,6 +17,7 @@ from .config import APP_HOME, get_value
 from .events import AgentEvent, EventType
 
 CodexModel = tuple[str, str, tuple[str, ...]]
+CODEX_JSONL_LIMIT = 8 * 1024 * 1024
 
 
 class ProviderError(RuntimeError):
@@ -115,7 +116,7 @@ class CodexAppServerProvider:
             codex_home.mkdir(parents=True, exist_ok=True)
             env = os.environ.copy()
             env["CODEX_HOME"] = str(codex_home)
-            self.process = await asyncio.create_subprocess_exec(command, "app-server", "--listen", "stdio://", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=env)
+            self.process = await asyncio.create_subprocess_exec(command, "app-server", "--listen", "stdio://", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=env, limit=CODEX_JSONL_LIMIT)
         except (OSError, PermissionError) as exc:
             raise ProviderError("Codex CLI không chạy được. Đặt CODEX_CLI_PATH tới codex.exe hợp lệ.") from exc
         initialized = await self._request("initialize", {"clientInfo": {"name": "taxsentry", "title": "TaxSentry", "version": __version__}, "capabilities": {"experimentalApi": False}})
@@ -143,9 +144,7 @@ class CodexAppServerProvider:
         return await self._request("account/login/start", params)
 
     async def wait_login(self, login_id: str) -> None:
-        assert self.process and self.process.stdout
-        while line := await self.process.stdout.readline():
-            message = json.loads(line)
+        while (message := await self._read_jsonl("login")) is not None:
             if message.get("method") != "account/login/completed":
                 continue
             payload = message.get("params", {})
@@ -222,9 +221,7 @@ class CodexAppServerProvider:
         if output_schema:
             params["outputSchema"] = output_schema
         await self._send_request("turn/start", params)
-        assert self.process and self.process.stdout
-        while line := await self.process.stdout.readline():
-            message = json.loads(line)
+        while (message := await self._read_jsonl("turn")) is not None:
             method, payload = message.get("method", ""), message.get("params", {})
             if method == "item/agentMessage/delta":
                 yield AgentEvent(EventType.TEXT_DELTA, text=str(payload.get("delta", "")))
@@ -255,14 +252,30 @@ class CodexAppServerProvider:
 
     async def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         request_id = await self._send_request(method, params)
-        assert self.process and self.process.stdout
-        while line := await self.process.stdout.readline():
-            message = json.loads(line)
+        while (message := await self._read_jsonl(method)) is not None:
             if message.get("id") == request_id:
                 if "error" in message:
                     raise ProviderError(str(message["error"]))
                 return message.get("result", {})
         raise ProviderError("Codex app-server closed unexpectedly.")
+
+    async def _read_jsonl(self, stage: str) -> dict[str, Any] | None:
+        assert self.process and self.process.stdout
+        try:
+            line = await self.process.stdout.readline()
+        except (ValueError, asyncio.LimitOverrunError) as exc:
+            raise ProviderError(
+                f"Codex app-server JSONL exceeded {CODEX_JSONL_LIMIT} bytes (at least {CODEX_JSONL_LIMIT} bytes) during {stage}."
+            ) from exc
+        if not line:
+            return None
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ProviderError(f"Codex app-server returned invalid JSONL during {stage}.") from exc
+        if not isinstance(message, dict):
+            raise ProviderError(f"Codex app-server returned a non-object JSONL message during {stage}.")
+        return message
 
     async def _notify(self, method: str, params: dict[str, Any]) -> None:
         await self._write({"method": method, "params": params})

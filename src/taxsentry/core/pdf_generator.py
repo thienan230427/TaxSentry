@@ -14,7 +14,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import HRFlowable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from taxsentry.config import DOWNLOAD_DIR
 
@@ -248,6 +248,10 @@ class TaxSentryPDFGenerator:
                         flowables.append(Spacer(1, 10))
                     in_table = False
                     table_rows = []
+                continue
+
+            if stripped == "[[PAGE_BREAK]]":
+                flowables.append(PageBreak())
                 continue
 
             # 2. Xử lý bảng biểu Markdown (đường kẻ phân tách |---|---|...)

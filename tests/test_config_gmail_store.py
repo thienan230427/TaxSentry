@@ -7,7 +7,7 @@ import pytest
 
 from taxsentry import config as config_module
 from taxsentry.config import DEFAULT_SETTINGS
-from taxsentry.reporting import REPORT_SCHEMA, normalize_report, parse_report
+from taxsentry.reporting import REPORT_SCHEMA, normalize_report, normalize_report_v3, parse_report
 from taxsentry.store import JobStore
 
 
@@ -98,6 +98,97 @@ def test_report_schema_is_strict_at_every_object_level():
     assert REPORT_SCHEMA["additionalProperties"] is False
     for name in ("metrics", "findings", "tax_risks", "recommendations", "sources"):
         assert REPORT_SCHEMA["properties"][name]["items"]["additionalProperties"] is False
+
+
+def test_report_v3_adapter_preserves_currency_and_evidence():
+    legacy = normalize_report({
+        "executive_summary": "USD report",
+        "performance": [],
+        "tax_risks": [],
+        "missing_data": [],
+        "recommendations": [],
+        "confidence": 0.9,
+    })
+    legacy["metrics"] = [{"id": "revenue", "label": "Revenue", "current": 43.5, "previous": None, "budget": None, "benchmark": None, "unit": "USD", "source_ids": ["s"], "assessment": ""}]
+    legacy["sources"] = [{"id": "s", "kind": "file", "title": "statement", "locator": "sheet=PL;cell=C5", "fetched_at": "", "effective_from": "", "verified_current": True}]
+    v3 = normalize_report_v3(legacy)
+    parsed = parse_report(json.dumps(v3))
+    assert parsed["schema_version"] == 3
+    assert parsed["metrics"][0]["current"]["currency"] == "USD"
+    assert parsed["metrics"][0]["current"]["evidence_ids"] == ["s"]
+
+
+def test_report_v3_adapter_converts_legacy_vnd_scenarios_and_impacts():
+    legacy = normalize_report({
+        "executive_summary": "Legacy report",
+        "performance": [],
+        "tax_risks": [],
+        "missing_data": [],
+        "recommendations": [],
+        "confidence": 0.9,
+    })
+    legacy["sources"] = [{"id": "s", "kind": "file", "title": "statement", "locator": "sheet=PL;cell=C5", "fetched_at": "", "effective_from": "", "verified_current": True}]
+    legacy["scenario_model"] = {
+        "model_type": "pnl_driver",
+        "drivers": [{"key": "growth", "label": "Growth", "base": 0.1, "downside": 0.0, "upside": 0.2, "unit": "%", "source_ids": []}],
+        "primary_output": "revenue",
+        "scenarios": [{"name": "base", "assumptions": "Driver is illustrative.", "revenue_vnd": 100, "net_income_vnd": 10, "cash_effect_vnd": 5}],
+    }
+    legacy["findings"] = [{"id": "f1", "category": "cash", "severity": "high", "statement": "Cash mismatch", "root_cause": "Source disagreement", "estimated_impact_vnd": 20, "assumptions": ["Legacy range"], "evidence_ids": [], "confidence": 0.8}]
+    v3 = normalize_report_v3(legacy)
+    parsed = parse_report(json.dumps(v3))
+    scenario = parsed["scenario_model"]["scenarios"][0]
+    assert scenario["revenue"]["currency"] == "VND"
+    assert scenario["revenue"]["normalized_value"] == "100"
+    assert scenario["revenue"]["scenario"] == "base"
+    impact = parsed["findings"][0]["impact_estimate"]
+    assert impact["label"] == "EXPERT_ESTIMATE"
+    assert impact["base"]["currency"] == "VND"
+    assert impact["base"]["confidence"] <= 0.60
+
+    def keys(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                yield key
+                yield from keys(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from keys(child)
+
+    assert not any(str(key).endswith("_vnd") for key in keys(parsed))
+
+
+def test_report_v3_rejects_unknown_money_currency():
+    legacy = normalize_report({
+        "executive_summary": "Legacy report",
+        "performance": [],
+        "tax_risks": [],
+        "missing_data": [],
+        "recommendations": [],
+        "confidence": 0.9,
+    })
+    legacy["metrics"] = [{"id": "revenue", "label": "Revenue", "current": 10, "previous": None, "budget": None, "benchmark": None, "unit": "USD", "source_ids": ["s"], "assessment": ""}]
+    legacy["sources"] = [{"id": "s", "kind": "file", "title": "statement", "locator": "sheet=PL;cell=C5", "fetched_at": "", "effective_from": "", "verified_current": True}]
+    report = normalize_report_v3(legacy)
+    report["metrics"][0]["current"]["currency"] = "ZZZ"
+    with pytest.raises(ValueError, match="unknown ISO currency"):
+        parse_report(json.dumps(report))
+
+
+def test_legacy_scenario_uses_metric_currency_in_v3():
+    legacy = normalize_report({
+        "executive_summary": "Legacy report",
+        "performance": [],
+        "tax_risks": [],
+        "missing_data": [],
+        "recommendations": [],
+        "confidence": 0.9,
+    })
+    legacy["metrics"] = [{"id": "revenue", "label": "Revenue", "current": 43_500_000_000, "previous": None, "budget": None, "benchmark": None, "unit": "USD", "source_ids": ["s"], "assessment": ""}]
+    legacy["sources"] = [{"id": "s", "kind": "file", "title": "statement", "locator": "sheet=PL;cell=C5", "fetched_at": "", "effective_from": "", "verified_current": True}]
+    legacy["scenario_model"] = {"model_type": "percentage_change", "drivers": [], "primary_output": "revenue", "scenarios": [{"name": "base", "assumptions": "", "revenue_vnd": 43_500_000_000, "net_income_vnd": None, "cash_effect_vnd": None}]}
+    report = normalize_report_v3(legacy)
+    assert report["scenario_model"]["scenarios"][0]["revenue"]["currency"] == "USD"
 
 
 def test_report_parser_rejects_formatted_financial_strings_and_unknown_fields():

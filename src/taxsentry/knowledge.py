@@ -171,7 +171,7 @@ class KnowledgeBase:
         try:
             request = Request(
                 source["url"],
-                headers={"User-Agent": "TaxSentry/2 knowledge freshness check"},
+                headers={"User-Agent": "TaxSentry/3.0.2 knowledge freshness check"},
             )
             with urlopen(request, timeout=15) as response:  # noqa: S310 - allowlisted HTTPS host
                 final_host = urlparse(response.geturl()).hostname
@@ -200,7 +200,16 @@ class KnowledgeBase:
             result["error"] = str(exc) or type(exc).__name__
         return result
 
-    def search(self, query: str, limit: int = 4) -> tuple[str, list[dict]]:
+    def search(
+        self,
+        query: str,
+        limit: int = 4,
+        *,
+        jurisdiction: str = "",
+        topic: str = "",
+        industry: str = "",
+        scope: str = "",
+    ) -> tuple[str, list[dict]]:
         status = self.status()
         sections = self._sections()
         wanted = _tokens(query)
@@ -240,7 +249,17 @@ class KnowledgeBase:
             "trị",
             "thu",
         }
-        registry = self._registry()
+        registry = [
+            item
+            for item in self._registry()
+            if (
+                (not jurisdiction or str(item.get("jurisdiction", "VN")).casefold() == jurisdiction.casefold())
+                and (not topic or topic.casefold() in str(item.get("topic", "tax")).casefold())
+                and (not industry or str(item.get("industry", "")).casefold() == industry.casefold())
+                and (not scope or scope.casefold() in str(item.get("scope", "")).casefold())
+                and _effective_for_search(item)
+            )
+        ]
         source_status = self._status_data().get("sources", {})
         sources = []
         ranked_sources = []
@@ -262,8 +281,16 @@ class KnowledgeBase:
                     "kind": item.get("kind", "knowledge"),
                     "title": item["title"],
                     "locator": item["url"],
+                    "authority": item.get("issuer", "") if item.get("kind") == "knowledge" else item.get("issuer", ""),
+                    "jurisdiction": item.get("jurisdiction", "VN") if item.get("kind") == "knowledge" else item.get("jurisdiction", ""),
+                    "topic": item.get("topic", "tax" if item.get("kind") == "knowledge" else "benchmark"),
                     "fetched_at": checked.get("fetched_at", ""),
+                    "retrieved_at": checked.get("fetched_at", ""),
+                    "verified_at": status.get("verified_at", ""),
+                    "checksum": checked.get("checksum", ""),
                     "effective_from": item.get("effective_from", ""),
+                    "effective_to": item.get("effective_to", ""),
+                    "status": "current" if checked.get("verified_current") and not status["stale"] else "superseded_or_unverified",
                     "verified_current": bool(
                         checked.get("verified_current") and not status["stale"]
                     ),
@@ -324,3 +351,8 @@ def _safe_https_url(value: str) -> bool:
             address.is_reserved,
         )
     )
+
+
+def _effective_for_search(source: dict) -> bool:
+    end = _parse_time(str(source.get("effective_to", "")))
+    return end is None or end >= _utcnow()

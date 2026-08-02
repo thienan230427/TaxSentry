@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import re
@@ -10,6 +11,16 @@ from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
 
 from taxsentry.config import APP_HOME
+from taxsentry.measurements import (
+    detect_currency,
+    detect_scale,
+    infer_measure,
+    make_measurement,
+    parse_decimal,
+)
+from taxsentry.measurements import (
+    normalize_text as normalize_measurement_text,
+)
 
 EXCEL_PATH = APP_HOME / "mock_report.xlsx"
 JSON_PATH = APP_HOME / "parsed_report.json"
@@ -27,6 +38,14 @@ CANONICAL_LABEL_KEYWORDS = {
     "ebt": ["loi nhuan truoc thue", "ebt", "profit before tax"],
     "tax_expense": ["thue tndn", "chi phi thue", "tax expense", "thue phai nop"],
     "net_income": ["loi nhuan sau thue", "loi nhuan rong", "net income", "profit after tax"],
+    "operating_profit": ["loi nhuan tu hoat dong kinh doanh", "operating profit", "ebit"],
+    "assets": ["tong tai san", "total assets", "assets"],
+    "liabilities": ["tong no phai tra", "total liabilities", "liabilities"],
+    "equity": ["von chu so huu", "total equity", "equity"],
+    "cash": ["tien va tuong duong tien", "tien va chung khoan ngan han", "cash and cash equivalents", "cash"],
+    "beginning_cash": ["tien dau ky", "beginning cash", "opening cash"],
+    "net_cash_movement": ["luu chuyen tien thuan", "net cash flow", "net cash movement"],
+    "ending_cash": ["tien cuoi ky", "ending cash", "closing cash"],
     "total_income": ["tong thu nhap", "tong tien luong", "tong quy luong", "tong quỹ lương", "gross payroll", "tong cong"],
     "personal_income_tax": ["thue tncn", "personal income tax", "pit"],
     "social_insurance": ["bhxh", "bao hiem xa hoi", "social insurance", "bhxh/bhyt/bhtn"],
@@ -49,6 +68,14 @@ FIELD_ALIASES = {
     "ebt": "ebt",
     "tax_expense": "tax_expense",
     "net_income": "net_income",
+    "operating_profit": "operating_profit",
+    "assets": "assets",
+    "liabilities": "liabilities",
+    "equity": "equity",
+    "cash": "cash",
+    "beginning_cash": "beginning_cash",
+    "net_cash_movement": "net_cash_movement",
+    "ending_cash": "ending_cash",
 }
 
 
@@ -67,6 +94,9 @@ class TaxSentryParser:
         self.analysis = {}
         self._analysis_done = False
         self._formula_cache = {}
+        self.workbook_unit_context = ""
+        self.workbook_currency = None
+        self.workbook_scale = "1"
 
     def load(self):
         """Nạp workbook ở cả chế độ raw formula và cached values."""
@@ -78,6 +108,9 @@ class TaxSentryParser:
             self.wb_values = load_workbook(self.file_path, data_only=True)
         except Exception:
             self.wb_values = None
+        self.workbook_unit_context = self._detect_workbook_unit_context()
+        self.workbook_currency, _ = detect_currency(self.workbook_unit_context)
+        self.workbook_scale = str(detect_scale(self.workbook_unit_context)[0])
 
     def parse_assumptions(self):
         self._ensure_analysis()
@@ -123,6 +156,7 @@ class TaxSentryParser:
                 "file_name": self.file_path.name,
                 "sheet_count": len(self.wb.sheetnames) if self.wb else 0,
                 "sheet_names": self.wb.sheetnames if self.wb else [],
+                "file_hash": self._file_hash(),
                 "document_types": self.document_types,
                 "provenance": provenance,
             },
@@ -159,6 +193,13 @@ class TaxSentryParser:
                     metadata={"kind": "excel_export", "document_types": self.document_types, "provenance": provenance},
                 )
         return json_str
+
+    def _file_hash(self) -> str:
+        digest = hashlib.sha256()
+        with self.file_path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
 
     def log_to_database(self, trace_context: dict | None = None, job_id: str | None = None) -> bool:
         """Ghi nhận báo cáo đã phân tích vào SQLite Database."""
@@ -263,6 +304,7 @@ class TaxSentryParser:
         report = {
             "name": ws.title,
             "type": sheet_type,
+            "unit_context": self._detect_sheet_unit_context(ws),
             "dimensions": {"rows": ws.max_row, "cols": ws.max_column},
             "headers": generic.get("headers", []),
             "line_items": generic.get("line_items", []),
@@ -295,6 +337,19 @@ class TaxSentryParser:
                     preview_texts.append(text)
         corpus = " | ".join([title] + preview_texts)
 
+        if any(keyword in title for keyword in ("dashboard", "tong quan", "summary")):
+            return "dashboard"
+        if any(keyword in title for keyword in ("kich ban", "scenario", "bull", "bear", "base")):
+            return "scenario"
+        if any(keyword in title for keyword in ("dinh gia", "valuation", "multiple")):
+            return "valuation"
+        if re.search(r"(?:^|\s)kqkd(?:$|\s)", title) or "ket qua kinh doanh" in title:
+            return "income_statement"
+        if "can doi" in title or "balance sheet" in title:
+            return "balance_sheet"
+        if "luu chuyen" in title or "cash flow" in title:
+            return "cash_flow"
+
         if any(
             keyword in title
             for keyword in ("tong hop thue", "tax summary", "thue-bh", "thue va bao hiem")
@@ -317,6 +372,57 @@ class TaxSentryParser:
             if any(keyword in corpus for keyword in keywords):
                 return sheet_type
         return "generic_table"
+
+    def _detect_workbook_unit_context(self) -> str:
+        if not self.wb:
+            return ""
+        values: list[str] = []
+        for ws in self.wb.worksheets:
+            for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 30), max_col=min(ws.max_column, 20), values_only=True):
+                for value in row:
+                    values.extend(self._unit_hints(value))
+        return " | ".join(dict.fromkeys(values))
+
+    def _detect_sheet_unit_context(self, ws) -> str:
+        values: list[str] = []
+        for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 15), max_col=min(ws.max_column, 20), values_only=True):
+            for value in row:
+                values.extend(self._unit_hints(value))
+        return " | ".join(dict.fromkeys(values))
+
+    def _unit_hints(self, value: Any) -> list[str]:
+        """Return short unit declarations, never whole narrative cells."""
+        text = self._stringify(value)
+        if not text or text.startswith("="):
+            return []
+        candidates = [text]
+        match = re.search(r"(?:đơn vị|don vi|unit|currency)\s*[:\-]\s*([^,;|]+)", text, re.IGNORECASE)
+        if match:
+            candidates.insert(0, match.group(1).strip())
+        hints = []
+        for candidate in candidates:
+            if len(candidate) > 80:
+                continue
+            normalized = normalize_measurement_text(candidate)
+            if not normalized:
+                continue
+            currency, ambiguous = detect_currency(candidate)
+            explicit_marker = bool(re.search(r"(?:đơn vị|don vi|unit|currency)", candidate, re.IGNORECASE))
+            standalone_scale = bool(
+                re.fullmatch(
+                    r"(?:[a-z]{3}\s*)?(?:k|mm?|bn?|tn|thousand|million|billion|trillion|ngh[iì]n|ng[aà]n|tri[eệ]u|t[ỷy]|lakh|crore)(?:\s*[a-z]{3})?(?:\s*/\s*[a-z]+)?",
+                    normalized,
+                    re.IGNORECASE,
+                )
+            )
+            if not explicit_marker and not currency and not standalone_scale:
+                continue
+            if not explicit_marker and len(candidate) > 32:
+                continue
+            scale, _, _ = detect_scale(candidate)
+            if currency or (not ambiguous and scale != 1):
+                hints.append(candidate)
+        return hints[:1]
 
     def _extract_assumptions_from_sheet(self, ws, generic):
         assumptions = {}
@@ -505,6 +611,21 @@ class TaxSentryParser:
         best_headers = {}
 
         max_scan_row = min(ws.max_row, 20)
+        # Statement/dashboard tables conventionally expose the period columns
+        # beside a ``Chỉ tiêu`` column. Resolve that structural header before
+        # scoring narrative rows containing formula references.
+        for row_idx in range(1, max_scan_row + 1):
+            headers = {}
+            for col_idx in range(1, ws.max_column + 1):
+                value = ws.cell(row=row_idx, column=col_idx).value
+                text = self._stringify(value)
+                if text and not text.startswith("="):
+                    headers[col_idx] = text
+            normalized = {self._normalize_text(text) for text in headers.values()}
+            period_headers = sum(bool(re.search(r"(?:19|20)\d{2}[ae]?", text)) for text in normalized)
+            if any("chi tieu" in text for text in normalized) and period_headers >= 2:
+                return row_idx, headers
+
         for row_idx in range(1, max_scan_row + 1):
             texts = {}
             score = 0
@@ -515,6 +636,8 @@ class TaxSentryParser:
                 if not norm:
                     continue
                 texts[col_idx] = text
+                if text.startswith("="):
+                    continue
                 if any(ch.isalpha() for ch in norm):
                     score += 1
                 if any(keyword in norm for keyword in ["thang", "month", "quy", "nam", "actual", "input", "ghi chu", "chi tieu", "ho va ten", "chuc vu", "thuc linh", "doanh thu"]):
@@ -581,11 +704,22 @@ class TaxSentryParser:
             if col_idx > last_numeric_col:
                 note_texts.append(text)
 
+        cell_metadata = {}
+        for col_idx, value in numeric_cells:
+            cell = ws.cell(row=row_idx, column=col_idx)
+            header = headers_map.get(col_idx) or f"Cột {get_column_letter(col_idx)}"
+            cell_metadata[header] = {
+                "cell": cell.coordinate,
+                "number_format": cell.number_format,
+                "formula": cell.value if isinstance(cell.value, str) and cell.value.startswith("=") else "",
+            }
+
         item = {
             "row": row_idx,
             "label": label_text,
             "code": code,
             "values": values,
+            "cells": cell_metadata,
         }
         if note_texts:
             item["note"] = " | ".join(note_texts)
@@ -612,53 +746,151 @@ class TaxSentryParser:
     def _derive_canonical_metrics(self, reports):
         candidates = defaultdict(list)
 
-        for report in reports:
+        for report_index, report in enumerate(reports):
             sheet_type = report.get("type")
+            unit_context = report.get("unit_context") or self.workbook_unit_context
+            report_currency, _ = detect_currency(unit_context)
 
-            for item in report.get("line_items", []):
+            for item_index, item in enumerate(report.get("line_items", [])):
                 matched_key = self._match_canonical_label(item.get("label"))
                 if not matched_key:
                     continue
-                value = self._preferred_numeric_value(item)
-                if value is None:
-                    continue
-                norm = self._normalize_text(item.get("label"))
-                candidates[matched_key].append({
-                    "value": value,
-                    "sheet": report.get("name"),
-                    "sheet_type": sheet_type,
-                    "label": item.get("label"),
-                    "row": item.get("row"),
-                    "score": self._candidate_score(sheet_type, item.get("label"))
-                    + (2 if matched_key == "revenue" and "doanh thu thuan" in norm else 0),
-                    "periods": list(item.get("values", {}).keys()),
-                })
+                for period, value in self._value_candidates(item):
+                    header = period or ""
+                    cell = item.get("cells", {}).get(header, {})
+                    if self._is_non_amount_header(header, cell.get("number_format", "")):
+                        continue
+                    measure = infer_measure(item.get("label"), header, f"{unit_context} {cell.get('number_format', '')}")
+                    if matched_key not in {"employee_count"} and measure != "money":
+                        continue
+                    norm = self._normalize_text(item.get("label"))
+                    source_rank = self._source_rank(sheet_type)
+                    scenario = self._scenario_for(report, period)
+                    candidates[matched_key].append({
+                        "value": value,
+                        "sheet": report.get("name"),
+                        "sheet_type": sheet_type,
+                        "label": item.get("label"),
+                        "row": item.get("row"),
+                        "cell": cell.get("cell", ""),
+                        "formula": cell.get("formula", ""),
+                        "number_format": cell.get("number_format", ""),
+                        "period": period,
+                        "basis": self._basis_for(period),
+                        "scenario": scenario,
+                        "measure": measure,
+                        "label_priority": self._label_priority(matched_key, item.get("label")),
+                        "source_rank": source_rank,
+                        "score": source_rank * 1_000_000
+                        + self._label_priority(matched_key, item.get("label")) * 100
+                        + self._period_rank(period)
+                        + (2 if matched_key == "revenue" and "doanh thu thuan" in norm else 0),
+                        "periods": list(item.get("values", {}).keys()),
+                        "order": (report_index, item_index),
+                        "unit_context": unit_context,
+                        "currency": report_currency or self.workbook_currency,
+                    })
 
             totals = report.get("summary", {}).get("totals", {})
             for label, value in totals.items():
                 matched_key = self._match_canonical_label(label)
                 if matched_key and isinstance(value, (int, float)):
+                    if matched_key not in {"employee_count"} and infer_measure(label, label, unit_context) != "money":
+                        continue
                     candidates[matched_key].append({
                         "value": value,
                         "sheet": report.get("name"),
                         "sheet_type": sheet_type,
                         "label": label,
                         "row": None,
-                        "score": self._candidate_score(sheet_type, label) + 1,
+                        "cell": "",
+                        "formula": "",
+                        "number_format": "",
+                        "period": str(label),
+                        "basis": "actual",
+                        "scenario": self._scenario_for(report, str(label)),
+                        "measure": "money",
+                        "label_priority": self._label_priority(matched_key, label),
+                        "source_rank": self._source_rank(sheet_type),
+                        "score": self._source_rank(sheet_type) + self._label_priority(matched_key, label) * 100 + self._period_rank(str(label)) + 1,
                         "periods": [label],
+                        "order": (report_index, len(candidates[matched_key])),
+                        "unit_context": unit_context,
+                        "currency": report_currency or self.workbook_currency,
                     })
 
         canonical = {}
         for key, bucket in candidates.items():
-            best = max(bucket, key=lambda x: x["score"])
+            non_scenario = [
+                item for item in bucket
+                if item.get("sheet_type") not in {"scenario", "valuation"}
+                and item.get("scenario") == "none"
+            ]
+            eligible = non_scenario or bucket
+            statement_candidates = [
+                item for item in eligible
+                if item.get("sheet_type") in {"income_statement", "balance_sheet", "cash_flow"}
+            ]
+            if statement_candidates:
+                eligible = statement_candidates
+            elif key in {"beginning_cash", "net_cash_movement", "ending_cash"}:
+                # These values are statement facts; a dashboard/valuation fallback
+                # would turn a missing source into a fabricated cash number.
+                continue
+            best = max(eligible, key=lambda x: (x["score"], x.get("order", (0, 0))))
+            same_scope = [
+                item for item in eligible
+                if item.get("source_rank") == best.get("source_rank")
+                and item.get("label_priority", 2) == best.get("label_priority", 2)
+                and self._period_scope(item.get("period")) == self._period_scope(best.get("period"))
+                and item.get("basis") == best.get("basis")
+                and item.get("scenario") == best.get("scenario")
+            ]
+            conflicting_values = [item for item in same_scope if not self._values_equal(item.get("value"), best.get("value"))]
+            source_id = f"sheet:{best.get('sheet')}!{best.get('cell')}" if best.get("cell") else f"sheet:{best.get('sheet')}!row={best.get('row')}"
+            measurement = make_measurement(
+                best.get("value"),
+                label=best.get("label"),
+                header=best.get("period"),
+                unit=best.get("unit_context") or self.workbook_unit_context,
+                currency=best.get("currency"),
+                number_format=best.get("number_format", ""),
+                period={"label": best.get("period") or "", "basis": self._basis_for(best.get("period"))},
+                scenario=best.get("scenario", "none"),
+                status="conflict" if conflicting_values else ("calculated" if best.get("formula") else "reported"),
+                confidence=0.49 if conflicting_values else (0.95 if best.get("formula") else 0.98),
+                evidence_ids=(source_id,),
+            )
             canonical[key] = {
                 "value": best["value"],
                 "source_sheet": best["sheet"],
                 "source_type": best["sheet_type"],
                 "source_label": best["label"],
                 "source_row": best.get("row"),
+                "source_cell": best.get("cell", ""),
+                "source_formula": best.get("formula", ""),
+                "source_number_format": best.get("number_format", ""),
+                "source_period": best.get("period", ""),
+                "scenario": best.get("scenario", "none"),
+                "unit": measurement.display_unit,
+                "currency": measurement.currency,
+                "scale_multiplier": measurement.scale_multiplier,
+                "measurement": measurement.to_dict(),
+                "status": measurement.status,
+                "confidence": measurement.confidence,
                 "periods": best.get("periods", []),
+                "basis": best.get("basis", "actual"),
             }
+            if conflicting_values:
+                canonical[key]["conflicts"] = [
+                    {
+                        "value": item.get("value"),
+                        "sheet": item.get("sheet"),
+                        "cell": item.get("cell", ""),
+                        "label": item.get("label", ""),
+                    }
+                    for item in conflicting_values
+                ]
         return canonical
 
     def _populate_income_statement_fallback(self, reports):
@@ -704,43 +936,139 @@ class TaxSentryParser:
         if "doanh thu hoat dong tai chinh" in norm or "financial income" in norm:
             return None
         for canonical, keywords in CANONICAL_LABEL_KEYWORDS.items():
-            if any(keyword in norm for keyword in keywords):
-                return canonical
+            for keyword in sorted(keywords, key=len, reverse=True):
+                alias = self._normalize_text(keyword)
+                if re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", norm):
+                    if canonical == "gross_profit" and any(token in norm for token in ("bien ", "margin", "ty le", "%")):
+                        continue
+                    if canonical == "cash" and any(token in norm for token in ("cash burn", "cash flow", "net cash flow")):
+                        continue
+                    if canonical == "revenue" and any(token in norm for token in ("multiple", "arr", "valuation", "financial income")):
+                        continue
+                    if canonical in {"assets", "liabilities"} and any(token in norm for token in ("ngan han", "dai han", "current ", "non current")):
+                        continue
+                    return canonical
         return None
 
-    def _candidate_score(self, sheet_type: str, label: str) -> int:
-        score = 1
-        if sheet_type == "income_statement":
-            score += 5
-        elif sheet_type == "payroll":
-            score += 4
-        elif sheet_type == "tax_summary":
-            score += 3
-        elif sheet_type in {"balance_sheet", "cash_flow"}:
-            score += 2
+    def _label_priority(self, canonical: str, label: Any) -> int:
+        """Prefer statement totals over current/non-current component rows."""
         norm = self._normalize_text(label)
-        if any(token in norm for token in ["tong", "total", "thuc te", "actual", "thang", "quy"]):
-            score += 1
-        return score
+        if canonical in {"assets", "liabilities", "equity"}:
+            if norm.startswith(("tong ", "total ")):
+                return 3
+            if any(token in norm for token in ("ngan han", "dai han", "current ", "non current", "retained earnings", "loi nhuan chua phan phoi")):
+                return 1
+        return 2
+
+    @staticmethod
+    def _values_equal(left: Any, right: Any) -> bool:
+        try:
+            from decimal import Decimal
+
+            first, second = Decimal(str(left)), Decimal(str(right))
+            tolerance = max(Decimal("0.000000001"), max(abs(first), abs(second), Decimal("1")) * Decimal("1e-12"))
+            return abs(first - second) <= tolerance
+        except Exception:
+            return left == right
+
+    def _candidate_score(self, sheet_type: str, label: str) -> int:
+        return self._source_rank(sheet_type) + (2 if self._normalize_text(label).startswith(("tong ", "total ")) else 0)
+
+    def _source_rank(self, sheet_type: str) -> int:
+        return {
+            "income_statement": 100,
+            "balance_sheet": 90,
+            "cash_flow": 90,
+            "tax_summary": 80,
+            "generic_table": 60,
+            "payroll": 55,
+            "dashboard": 40,
+            "assumptions": 25,
+            "scenario": 20,
+            "valuation": 10,
+        }.get(sheet_type, 30)
+
+    def _period_rank(self, period: Any) -> int:
+        value = self._normalize_text(period)
+        basis = self._basis_for(period)
+        if any(token in value for token in ("ky nay", "current", "actual", "thuc hien")):
+            return 1_000_000
+        if any(token in value for token in ("ky truoc", "previous", "last period", "cung ky")):
+            return 100
+        year_match = re.search(r"(?:19|20)\d{2}", value)
+        year = int(year_match.group(0)) if year_match else 0
+        basis_rank = {"actual": 3, "forecast": 2, "estimate": 2, "budget": 1, "benchmark": 0}.get(basis, 0)
+        return year * 100 + basis_rank if year else basis_rank
+
+    def _basis_for(self, period: Any) -> str:
+        value = self._normalize_text(period)
+        if any(token in value for token in ("budget", "ke hoach", "plan", "target")):
+            return "budget"
+        if re.search(r"(?:\bforecast\b|\bestimate\b|\bdu phong\b|\d{4}\s*e\b|fy\d{4}e\b)", value):
+            return "forecast"
+        if "benchmark" in value or "trung binh nganh" in value:
+            return "benchmark"
+        if any(token in value for token in ("ky truoc", "previous", "last period", "cung ky")):
+            return "actual"
+        return "actual"
+
+    def _period_scope(self, period: Any) -> str:
+        value = self._normalize_text(period)
+        year = re.search(r"(?:19|20)\d{2}", value)
+        quarter = re.search(r"(?:q|quy)\s*([1-4])", value)
+        month = re.search(r"(?:thang|month)\s*(\d{1,2})", value)
+        if year:
+            suffix = f"-{year.group(0)}"
+            if quarter:
+                suffix += f"-q{quarter.group(1)}"
+            if month:
+                suffix += f"-m{month.group(1)}"
+            return suffix
+        return value
+
+    def _scenario_for(self, report: dict[str, Any], period: Any) -> str:
+        text = self._normalize_text(f"{report.get('name', '')} {period or ''}")
+        for scenario in ("base", "bull", "bear"):
+            if re.search(rf"(?<![a-z]){scenario}(?![a-z])", text):
+                return scenario
+        return "none"
 
     def _last_numeric_value(self, item):
         values = [v for v in item.get("values", {}).values() if isinstance(v, (int, float))]
         return values[-1] if values else None
 
     def _preferred_numeric_value(self, item):
+        return self._preferred_period_value(item, {})[1]
+
+    def _value_candidates(self, item):
+        for period, value in item.get("values", {}).items():
+            if isinstance(value, (int, float)) and not self._is_metadata_header(period):
+                yield str(period), value
+
+    def _preferred_period_value(self, item, report):
         values = item.get("values", {})
         for period, value in values.items():
-            if self._normalize_text(period) in {"ky nay", "current", "this period"} and isinstance(value, (int, float)):
-                return value
+            if self._normalize_text(period) in {"ky nay", "current", "this period", "actual", "thuc hien"} and isinstance(value, (int, float)):
+                return period, value
         candidates = [
-            value
+            (period, value)
             for period, value in values.items()
             if isinstance(value, (int, float)) and not self._is_metadata_header(period)
         ]
-        return candidates[-1] if candidates else None
+        if not candidates:
+            return "", None
+        non_previous = [item for item in candidates if self._period_rank(item[0]) > 2]
+        return (non_previous or candidates)[-1]
 
     def _is_metadata_header(self, header):
         return self._normalize_text(header) in {"ma so", "code", "stt", "thuyet minh", "note", "notes"}
+
+    def _is_non_amount_header(self, header: Any, number_format: str = "") -> bool:
+        text = self._normalize_text(f"{header} {number_format}")
+        return "%" in text or any(
+            token in text
+            for token in ("tang truong", "thay doi", "growth", "margin", "bien ", "ratio", "ty le", "percent")
+        )
 
     def _resolved_cell_value(self, sheet_name: str, row_idx: int, col_idx: int, visited=None):
         cell_ref = f"{get_column_letter(col_idx)}{row_idx}"
@@ -885,6 +1213,8 @@ class TaxSentryParser:
     def _looks_like_nonlabel(self, norm_text: str) -> bool:
         if not norm_text:
             return True
+        if norm_text.startswith("="):
+            return True
         if norm_text in {"stt", "no", "ma", "code", "id"}:
             return True
         if re.fullmatch(r"[0-9\-\./]+", norm_text):
@@ -911,14 +1241,15 @@ class TaxSentryParser:
                 text = "-" + text[1:-1]
             if text.endswith("%"):
                 try:
-                    return float(text[:-1]) / 100.0
+                    parsed = parse_decimal(text[:-1])
+                    return float(parsed) / 100.0 if parsed is not None else None
                 except Exception:
                     return None
-            if re.fullmatch(r"-?\d+(\.\d+)?", text):
-                try:
-                    return float(text)
-                except Exception:
-                    return None
+            try:
+                parsed = parse_decimal(text)
+                return float(parsed) if parsed is not None else None
+            except Exception:
+                return None
         return None
 
     def _normalize_text(self, value: Any) -> str:

@@ -23,7 +23,7 @@
 > gốc và nguồn chính thức trước khi sử dụng.
 
 > [!NOTE]
-> Phiên bản mã nguồn và gói phát hành hiện tại là **3.0.1**. Bản vá này bổ sung
+> Phiên bản mã nguồn và gói phát hành hiện tại là **3.0.2**. Bản nâng cấp này bổ sung
 > khả năng đọc workbook thiếu dimension metadata. Huy hiệu npm phía trên luôn
 > hiển thị phiên bản `latest` đã được công bố trên registry.
 
@@ -231,10 +231,10 @@ MinIO HTTP và credential phát triển. Production phải dùng cấu hình b�
 
 | Kênh | Phiên bản | Cách dùng |
 | --- | --- | --- |
-| GitHub `main` | 3.0.1 | Mã nguồn và bản vá Excel mới nhất |
-| npm package | 3.0.1 | Gói được chuẩn bị để phát hành bằng `npm publish` |
+| GitHub `main` | 3.0.2 | Mã nguồn và bản nâng cấp Excel/PDF/DOCX mới nhất |
+| npm package | 3.0.2 | Gói được chuẩn bị để phát hành bằng `npm publish` |
 
-Mã 3.0.1 đã có test unit/integration/security, CI đa nền tảng và fixture file
+Mã 3.0.2 đã có test unit/integration/security, CI đa nền tảng và fixture file
 lớn. Việc này không thay thế rehearsal trên dữ liệu sản xuất: migration/rollback
 thực tế, shadow run với bản đang vận hành, TLS đa máy, backup mã hóa và restore vẫn phải
 được tổ chức triển khai xác nhận.
@@ -261,7 +261,7 @@ Tùy nhu cầu:
 
 ### Cài bản mới nhất từ npm
 
-Sau khi chủ package phát hành 3.0.1, các lệnh sau cài và xác minh bản mới nhất:
+Sau khi chủ package phát hành 3.0.2, các lệnh sau cài và xác minh bản mới nhất:
 
 ```powershell
 npm install -g taxsentry
@@ -276,7 +276,7 @@ TypeScript launcher tự tạo Python virtual environment ở
 `~/.taxsentry/runtime/venv`, cài wheel đi kèm và chuyển tiếp lệnh sang Python
 core.
 
-### Cài TaxSentry 3.0.1 từ mã nguồn
+### Cài TaxSentry 3.0.2 từ mã nguồn
 
 ```powershell
 git clone https://github.com/thienan230427/TaxSentry.git

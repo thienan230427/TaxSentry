@@ -1,4 +1,4 @@
-"""TaxSentry v2 package."""
+"""TaxSentry 3 package."""
 
 __all__ = ["__version__"]
-__version__ = "3.0.1"
+__version__ = "3.0.2"
